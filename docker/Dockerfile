@@ -36,7 +36,7 @@ RUN if [ "$TORCH_CUDA" = "cpu" ]; then \
         --index-url https://download.pytorch.org/whl/cu121 ; \
     fi
 
-# Core Python deps (pin only what's needed; avoid huge transitive installs)
+# Core Python dependencies
 RUN pip3 install \
     numpy==1.26.2 \
     tqdm==4.67.1 \
@@ -48,7 +48,6 @@ RUN pip3 install \
     praatio==6.2.0 \
     jiwer==3.1.0
 
-# (Optional) your extras — keep if you need them
 RUN pip3 install \
     psutil==5.9.5 \
     loguru==0.7.0 \
