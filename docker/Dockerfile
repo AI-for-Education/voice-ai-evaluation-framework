@@ -39,8 +39,8 @@ RUN if [ "$TORCH_CUDA" = "cpu" ]; then \
 # Core Python deps (pin only what's needed; avoid huge transitive installs)
 RUN pip3 install \
     numpy==1.26.2 \
-    tqdm \
-    soundfile \
+    tqdm==4.67.1 \
+    soundfile==0.13.1 \
     librosa==0.10.1 \
     sentencepiece==0.2.0 \
     pandas==2.2.2 \
