@@ -219,10 +219,10 @@ All evaluation outputs land in `input_output_data/output/`:
 1. **`egra_eval_detailed.csv`** — One row per EGRA item with:
    - Keys: `learner_id`, `audio_type`, `audio_file`.
    - Texts: `CAN` (canonical), `REF` (annotator), `HYP` (ASR).
-   - **CAN vs REF** metrics: `WER_can_ref`, `ACC_can_ref`, `EGRA_COR`, `EGRA_ACC`, plus counts `S_`, `D_`, `I_`, `C_`, `N_`.
-   - **CAN vs HYP** metrics: `WER_can_hyp`, `ACC_can_hyp`, `ASR_EGRA_COR`, `ASR_EGRA_ACC`, plus counts.
-   - **REF vs HYP** metrics: `WER_asr`, `ASR_precision`, `ASR_recall`, `ASR_f1`, plus counts.
-   - **Agreement**: `MAE_COR = |EGRA_COR − ASR_EGRA_COR|`.
+   - **CAN vs REF** metrics: `WER_can_ref`, `ACC_can_ref (EGRA_ACC)` plus counts `S_can_ref`, `D_can_ref`, `I_can_ref`, `C_can_ref (EGRA_COR)`, `N_can_ref`.
+   - **CAN vs HYP** metrics: `WER_can_hyp`, `ACC_can_hyp (ASR_EGRA_ACC)` plus counts `S_can_hyp`, `D_can_hyp`, `I_can_hyp`, `C_can_hyp (ASR_EGRA_COR)`, `N_can_hyp`.
+   - **REF vs HYP** metrics: `WER_asr`, `ASR_precision`, `ASR_recall`, `ASR_f1` plus counts `S_ref_hyp`, `D_ref_hyp`, `I_ref_hyp`, `C_ref_hyp`, `N_ref_hyp`.
+   - **Agreement**: `MAE_COR = |EGRA_COR − ASR_EGRA_COR|` which represents the absolute difference in number of correct tokens between annotator-based and ASR-based evaluations.
    - All learner metadata merged in (e.g., `gender`, `age`).
 
 2. **`egra_eval_summary.csv`** — Macro summary **by gender × audio_type** with mean values of core metrics.
@@ -237,7 +237,7 @@ Use these to compare:
 - Human annotator performance (CAN vs REF).
 - Automated EGRA performance (CAN vs HYP).
 - ASR quality vs human (REF vs HYP).
-- Agreement between automated and human EGRA (`MAE_COR` closer to 0 is better).
+- Agreement between automated and human EGRA, how closely automated and human scores match (`MAE_COR` closer to 0 is better).
 
 ---
 
@@ -249,8 +249,8 @@ We compute standard ASR alignment counts via `jiwer`:
 - **S** — substitutions  
 - **D** — deletions  
 - **I** — insertions  
-- **C** — correct matches (hits)  
-- **N** — number of truth tokens
+- **C** — correct matches 
+- **N** — number of total reference tokens (groundtruth)
 
 From those:
 
@@ -260,12 +260,12 @@ From those:
 We apply the same counts to derive **EGRA-style** KPIs:
 
 - **EGRA (Annotator-based)** from **CAN vs REF**  
-  - `EGRA_COR = N_ref − S − D`  (Equivalent to `C_can_ref`)  
-  - `EGRA_ACC = EGRA_COR / N_ref` (Equivalent to `ACC_can_ref`)
+  - `C_can_ref (EGRA_COR) = number of correct tokens = N_ref − S_can_ref − D_can_ref` 
+  - `ACC_can_ref (EGRA_ACC) = EGRA_COR / N_ref`
 
 - **ASR-based EGRA** from **CAN vs HYP**  
-  - `ASR_EGRA_COR = N_can − S − D` (Equivalent to `C_can_hyp`)  
-  - `ASR_EGRA_ACC = ASR_EGRA_COR / N_can` (Equivalent to `ACC_can_hyp`)
+  - `C_can_hyp (ASR_EGRA_COR) = N_can − S_can_hyp − D_can_hyp`
+  - `ACC_can_hyp (ASR_EGRA_ACC) = ASR_EGRA_COR / N_can`
 
 - **Agreement** between annotator- and ASR-based correctness  
   - `MAE_COR = |EGRA_COR − ASR_EGRA_COR|`
@@ -275,7 +275,7 @@ We apply the same counts to derive **EGRA-style** KPIs:
   - Precision/Recall are computed from counts:  
     - `precision = C / (C + I)`  
     - `recall    = C / (C + D)`  
-    - `F1        = 2PR / (P+R)` when defined
+    - `F1        = 2PR / (P+R)`
 
 ---
 
@@ -287,14 +287,13 @@ If you prefer percentage-style reporting, multiply these values by 100 when disp
 | Metric | Description | Typical Range / Unit | Interpretation |
 |:--|:--|:--|:--|
 | **WER_can_ref**, **WER_can_hyp**, **WER_asr** | Word Error Rate (substitutions + deletions + insertions) / N | 0.0–1.0 (can exceed 1.0 with many insertions) | Lower is better |
-| **ACC_can_ref**, **ACC_can_hyp** | Accuracy = Correct / N | 0.0–1.0 | Higher is better |
+| **ACC_can_ref (EGRA_ACC)**, **ACC_can_hyp (ASR_EGRA_ACC)** | Accuracy = C / N | 0.0–1.0 | Higher is better |
 | **ASR_precision**, **ASR_recall**, **ASR_f1** | Precision/Recall/F1 between REF and HYP | 0.0–1.0 | Higher is better |
-| **EGRA_COR**, **ASR_EGRA_COR** | Correctness count = N − S − D | Integer ≥ 0 | Count of correct tokens |
-| **EGRA_ACC**, **ASR_EGRA_ACC** | Correctness ratio = EGRA_COR / N | 0.0–1.0 | Higher is better |
+| **C_can_ref (EGRA_COR)**, **C_can_hyp (ASR_EGRA_COR)** | Correctness count = N − S − D | Integer ≥ 0 | Count of correct tokens |
 | **S_\***, **D_\***, **I_\***, **C_\***, **N_\*** | Alignment counts (Substitutions, Deletions, Insertions, Correct, Total) | Integers ≥ 0 | Raw counts |
 | **MAE_COR** | Mean Absolute Error between EGRA_COR and ASR_EGRA_COR | Integer ≥ 0 | Lower indicates better agreement |
 
-**Edge cases:**  
+**Note:**  
 If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC, precision, recall, F1) are undefined and will appear as `NaN` in the output CSVs.
 
 ---
