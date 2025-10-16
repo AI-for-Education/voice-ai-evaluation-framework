@@ -8,15 +8,15 @@ from egra_eval.metrics.scoring import score
 def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
     """
     Row-wise evaluation:
-      - Annotator-based EGRA (CAN vs REF): EGRA_COR, EGRA_ACC
-      - ASR-based   EGRA (CAN vs HYP): ASR_EGRA_COR, ASR_EGRA_ACC
-      - ASR quality vs human (REF vs HYP): WER + P/R/F1
-      - Agreement: MAE between the two COR measures
+      - Annotator-based EGRA (CAN vs REF): C_can_ref (EGRA_COR), ACC_can_ref (EGRA_ACC)
+      - ASR-based EGRA (CAN vs HYP): C_can_hyp (ASR_EGRA_COR), ACC_can_hyp (ASR_EGRA_ACC)
+      - ASR quality vs human (REF vs HYP): WER, P/R/F1
+      - Agreement: MAE between the two COR measures (|C_can_ref - C_can_hyp|)
     """
     logger = logging.getLogger("egra_eval")
 
     rows = []
-    for idx, r in df_egra.iterrows():
+    for _, r in df_egra.iterrows():
         can = r.get("canonical_text", "")  # CAN
         ref = r.get("ref_text", "")        # REF (annotator)
         hyp = r.get("hyp_text", "")        # HYP (ASR)
@@ -30,43 +30,35 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
         # 3) REF vs HYP -> ASR quality vs human
         s_ref_hyp = score(ref, hyp)
 
-        egra_cor     = s_can_ref.C
-        egra_acc     = s_can_ref.ACC
-        asr_egra_cor = s_can_hyp.C
-        asr_egra_acc = s_can_hyp.ACC
-        mae_cor      = abs(egra_cor - asr_egra_cor)
+        # Agreement on correctness between (CAN, REF) and (CAN, HYP)
+        mae_cor = abs(s_can_ref.C - s_can_hyp.C)
 
         rows.append({
             "learner_id": r["learner_id"],
             "audio_type": r["audio_type"],
             "audio_file": r["audio_file"],
 
-            # Raw texts
             "CAN": can, "REF": ref, "HYP": hyp,
 
-            # Annotator-based EGRA
+            # Annotator-based EGRA (CAN vs REF)
             "WER_can_ref": s_can_ref.WER,
-            "ACC_can_ref": s_can_ref.ACC,
-            "EGRA_COR": egra_cor,
-            "EGRA_ACC": egra_acc,
+            "ACC_can_ref (EGRA_ACC)": s_can_ref.ACC,
             "S_can_ref": s_can_ref.S,
             "D_can_ref": s_can_ref.D,
             "I_can_ref": s_can_ref.I,
-            "C_can_ref": s_can_ref.C,
+            "C_can_ref (EGRA_COR)": s_can_ref.C,
             "N_can_ref": s_can_ref.N,
 
-            # ASR-based EGRA
+            # ASR-based EGRA (CAN vs HYP)
             "WER_can_hyp": s_can_hyp.WER,
-            "ACC_can_hyp": s_can_hyp.ACC,
-            "ASR_EGRA_COR": asr_egra_cor,
-            "ASR_EGRA_ACC": asr_egra_acc,
+            "ACC_can_hyp (ASR_EGRA_ACC)": s_can_hyp.ACC,
             "S_can_hyp": s_can_hyp.S,
             "D_can_hyp": s_can_hyp.D,
             "I_can_hyp": s_can_hyp.I,
-            "C_can_hyp": s_can_hyp.C,
+            "C_can_hyp (ASR_EGRA_COR)": s_can_hyp.C,
             "N_can_hyp": s_can_hyp.N,
 
-            # ASR quality vs human (REF–HYP)
+            # ASR quality vs human (REF vs HYP)
             "WER_asr": s_ref_hyp.WER,
             "ASR_precision": s_ref_hyp.precision,
             "ASR_recall": s_ref_hyp.recall,
@@ -77,7 +69,7 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             "C_ref_hyp": s_ref_hyp.C,
             "N_ref_hyp": s_ref_hyp.N,
 
-            # Agreement
+            # --- Agreement between annotator-based and ASR-based EGRA correctness
             "MAE_COR": mae_cor,
         })
 
@@ -90,4 +82,4 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
     if missing_meta:
         logger.warning(f"Metadata merge left {missing_meta} rows without a match on learner_id.")
     return out
-
+:
