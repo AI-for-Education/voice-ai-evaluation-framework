@@ -10,6 +10,4 @@ docker compose run --rm --entrypoint "" \
     --meta_csv /io/input/egradata/Student_Dummy_MetaData_EGRA_030925.csv \
     --passages_csv /io/input/passages/oral_passages.csv \
     --nemo_manifest /io/input/nemo_asr_output/transcriptions.jsonl \
-    --out_csv /io/output/egra_eval_detailed.csv \
-    --summary_csv /io/output/egra_eval_summary.csv
-
+    --out_csv /io/output/egra_eval_detailed.csv

@@ -86,7 +86,7 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
   - **CAN vs REF** (annotator-based EGRA).
   - **CAN vs HYP** (ASR-based EGRA).
   - **REF vs HYP** (ASR quality vs human).
-- Produces a **detailed CSV** and multiple **summaries**.
+- Produces a **detailed CSV** and per-alignment summary folders (`can_ref/`, `can_hyp/`, `ref_hyp/`).
 
 ---
 
@@ -221,23 +221,32 @@ All evaluation outputs land in `input_output_data/output/`:
    - Texts: `CAN` (canonical), `REF` (annotator), `HYP` (ASR).
    - **CAN vs REF** metrics: `WER_can_ref`, `ACC_can_ref (EGRA_ACC)` plus counts `S_can_ref`, `D_can_ref`, `I_can_ref`, `C_can_ref (EGRA_COR)`, `N_can_ref`.
    - **CAN vs HYP** metrics: `WER_can_hyp`, `ACC_can_hyp (ASR_EGRA_ACC)` plus counts `S_can_hyp`, `D_can_hyp`, `I_can_hyp`, `C_can_hyp (ASR_EGRA_COR)`, `N_can_hyp`.
-   - **REF vs HYP** metrics: `WER_asr`, `ASR_precision`, `ASR_recall`, `ASR_f1` plus counts `S_ref_hyp`, `D_ref_hyp`, `I_ref_hyp`, `C_ref_hyp`, `N_ref_hyp`.
+   - **REF vs HYP** metrics: `WER_ref_hyp`, `ACC_ref_hyp` plus counts `S_ref_hyp`, `D_ref_hyp`, `I_ref_hyp`, `C_ref_hyp`, `N_ref_hyp`.
+   - Column names that include aliases (e.g., `ACC_can_ref (EGRA_ACC)`) expose both the base metric and the traditional EGRA naming.
+   - WER and ACC values are percentages (0–100); the raw counts remain absolute integers.
    - **Agreement**: `MAE_COR = |EGRA_COR − ASR_EGRA_COR|` which represents the absolute difference in number of correct tokens between annotator-based and ASR-based evaluations.
    - All learner metadata merged in (e.g., `gender`, `age`).
 
-2. **`egra_eval_summary.csv`** — Macro summary **by gender × audio_type** with mean values of core metrics.
+2. **Pair-specific summary folders** — the pipeline creates three sibling directories under `input_output_data/output/`:
 
-3. **`egra_eval_summary_per_learner.csv`** — **Per-learner** mean of all metrics.
+   | Folder | Alignment pair | Files inside |
+   |--|--|--|
+   | `can_ref/` | Canonical vs Reference (annotator EGRA) | `egra_eval_summary_per_speaker_global.csv`, `egra_eval_summary_per_speaker_macro.csv`, `egra_eval_summary_per_speaker_subcat.csv` |
+   | `can_hyp/` | Canonical vs ASR hypothesis (automated EGRA) | same filenames as above |
+   | `ref_hyp/` | Reference vs ASR hypothesis (ASR quality) | same filenames as above |
 
-4. **`egra_eval_summary_per_learner_audio.csv`** — **Per-learner × audio_type** mean of all metrics.
+   Each summary file reports **micro-averages** derived from the raw counts:
+   - `*_per_speaker_global.csv` — one row per `learner_id` plus a final `__GLOBAL__` row aggregating every sample.
+   - `*_per_speaker_macro.csv` — per learner × macro category (letters / syllables / nonwords / passage).
+   - `*_per_speaker_subcat.csv` — per learner × macro category × subcategory (e.g., `letters` + `isolated`).
 
-5. **`egra_eval_summary_overall.csv`** — **Single-row** overall mean across all items.
+   The columns mirror the metric block in the detailed CSV (WER, ACC, counts). Use them to compare annotator vs ASR EGRA scores or inspect performance by task type.
 
-Use these to compare:
-- Human annotator performance (CAN vs REF).
-- Automated EGRA performance (CAN vs HYP).
-- ASR quality vs human (REF vs HYP).
-- Agreement between automated and human EGRA, how closely automated and human scores match (`MAE_COR` closer to 0 is better).
+Use these artifacts to track:
+- Human annotator performance (`can_ref`).
+- Automated EGRA performance (`can_hyp`).
+- ASR quality with respect to the human reference (`ref_hyp`).
+- Agreement between automated and human EGRA via `MAE_COR` (closer to 0 is better).
 
 ---
 
@@ -252,10 +261,10 @@ We compute standard ASR alignment counts via `jiwer`:
 - **C** — correct matches 
 - **N** — number of total reference tokens (groundtruth)
 
-From those:
+From those we derive:
 
-- **WER** = (S + D + I) / N  
-- **ACC** = C / N
+- **WER** = (S + D + I) / N → reported in the CSVs as a **percentage** (value × 100).
+- **ACC** = C / N → also reported as a **percentage** in the detailed and summary files.
 
 We apply the same counts to derive **EGRA-style** KPIs:
 
@@ -271,11 +280,7 @@ We apply the same counts to derive **EGRA-style** KPIs:
   - `MAE_COR = |EGRA_COR − ASR_EGRA_COR|`
 
 - **ASR quality vs human** from **REF vs HYP**  
-  - `WER_asr`, **precision**, **recall**, **F1**  
-  - Precision/Recall are computed from counts:  
-    - `precision = C / (C + I)`  
-    - `recall    = C / (C + D)`  
-    - `F1        = 2PR / (P+R)`
+  - `WER_ref_hyp`, `ACC_ref_hyp` and the count fields `S_ref_hyp`, `D_ref_hyp`, `I_ref_hyp`, `C_ref_hyp`, `N_ref_hyp`.
 
 ---
 
@@ -286,15 +291,14 @@ If you prefer percentage-style reporting, multiply these values by 100 when disp
 
 | Metric | Description | Typical Range / Unit | Interpretation |
 |:--|:--|:--|:--|
-| **WER_can_ref**, **WER_can_hyp**, **WER_asr** | Word Error Rate (substitutions + deletions + insertions) / N | 0.0–1.0 (can exceed 1.0 with many insertions) | Lower is better |
-| **ACC_can_ref (EGRA_ACC)**, **ACC_can_hyp (ASR_EGRA_ACC)** | Accuracy = C / N | 0.0–1.0 | Higher is better |
-| **ASR_precision**, **ASR_recall**, **ASR_f1** | Precision/Recall/F1 between REF and HYP | 0.0–1.0 | Higher is better |
+| **WER_can_ref**, **WER_can_hyp**, **WER_ref_hyp** | Word Error Rate (substitutions + deletions + insertions) / N | 0.0–100.0 (%); can exceed 100 with many insertions | Lower is better |
+| **ACC_can_ref (EGRA_ACC)**, **ACC_can_hyp (ASR_EGRA_ACC)**, **ACC_ref_hyp** | Accuracy = C / N | 0.0–100.0 (%) | Higher is better |
 | **C_can_ref (EGRA_COR)**, **C_can_hyp (ASR_EGRA_COR)** | Correctness count = N − S − D | Integer ≥ 0 | Count of correct tokens |
 | **S_\***, **D_\***, **I_\***, **C_\***, **N_\*** | Alignment counts (Substitutions, Deletions, Insertions, Correct, Total) | Integers ≥ 0 | Raw counts |
-| **MAE_COR** | Mean Absolute Error between EGRA_COR and ASR_EGRA_COR | Integer ≥ 0 | Lower indicates better agreement |
+| **MAE_COR** | Absolute difference between EGRA_COR and ASR_EGRA_COR per row | Integer ≥ 0 | Lower indicates better agreement |
 
 **Note:**  
-If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC, precision, recall, F1) are undefined and will appear as `NaN` in the output CSVs.
+If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC) are undefined and will appear as `NaN` in the output CSVs.
 
 ---
 
@@ -323,12 +327,15 @@ DEFAULTS = {
   "nemo_manifest": IO_ROOT / "input" / "nemo_asr_output" / "transcriptions.jsonl",
   "textgrids_dir": IO_ROOT / "input" / "audio_and_texgrid",
   "out_csv":       IO_ROOT / "output" / "egra_eval_detailed.csv",
-  "summary_csv":   IO_ROOT / "output" / "egra_eval_summary.csv",
+  "summary_can_ref_dir": IO_ROOT / "output" / "can_ref",
+  "summary_can_hyp_dir": IO_ROOT / "output" / "can_hyp",
+  "summary_ref_hyp_dir": IO_ROOT / "output" / "ref_hyp",
 }
 ```
 
 You can run `evaluation.py` without arguments (inside the container) and it will use those paths.  
 If you need to override any input/output path, pass the CLI flags (see `--help`).
+Notable options: `--summary_can_ref_dir`, `--summary_can_hyp_dir`, `--summary_ref_hyp_dir` to redirect each alignment pair’s summaries.
 
 ---
 
@@ -349,10 +356,10 @@ If you need to override any input/output path, pass the CLI flags (see `--help`)
   Scans audio, resamples to 16k, optionally slices by TextGrid intervals, transcribes via NeMo (`ASRModel.restore_from(...)`), writes a NeMo-style JSONL manifest with `pred_text`.
 
 - **`evaluation.py`**  
-  Orchestrates the evaluation pipeline. Loads EGRA & META tables, attaches HYP from manifest, reads REF from TextGrids, fills missing canonical passages, computes metrics and writes detailed + summary CSVs.
+  Orchestrates the evaluation pipeline. Loads EGRA & META tables, attaches HYP from manifest, reads REF from TextGrids, fills missing canonical passages, computes metrics and writes the detailed CSV plus the per-alignment summary folders.
 
 - **`egra_eval/metrics/scoring.py`**  
-  Wraps `jiwer` to produce counts (**S, D, I, C, N**), **WER**, **ACC** and **precision/recall/F1**. Uses `normalize/textnorm.py` for simple text normalization.
+  Wraps `jiwer` to produce counts (**S, D, I, C, N**), **WER** and **ACC** (all expressed as percentages in downstream outputs). Uses `normalize/textnorm.py` for simple text normalization.
 
 - **`egra_eval/data/textgrid_io.py`**  
   Finds the requested tier case-insensitively (default `child`), gathers labeled intervals, concatenates labels to form **REF** per item.
@@ -367,10 +374,11 @@ If you need to override any input/output path, pass the CLI flags (see `--help`)
   Parses the passages CSV (various encodings handled), extracts `passage_num` and fills missing `canonical_text` for `passage_numX` rows.
 
 - **`egra_eval/report/summarize.py`**  
-  - `macro_summary(df, by=...)` — means of key metrics, grouped by the provided columns.  
-  - `per_learner_full(df)` — mean of all metrics per learner.  
-  - `overall_full(df)` — overall mean (single row).  
-  - `mean_by(df, by=[...])` — generic group mean for all metrics.
+  Builds micro-averaged summaries for each alignment pair:
+  - `summary_for_pair(df, prefix, by=None)` — aggregates metrics for one of `can_ref`, `can_hyp`, or `ref_hyp` (optionally grouped by columns).
+  - `summary_per_speaker(df, prefix)` — per learner.
+  - `summary_per_speaker_macro(df, prefix)` — per learner × macro category.
+  - `summary_per_speaker_subcategory(df, prefix)` — per learner × macro category × subcategory.
 
 - **`docker/Dockerfile`**  
   Debian 12 base with PyTorch (CPU or CUDA), NeMo ASR 2.4.1 and all Python dependencies pinned for reproducibility.
@@ -383,6 +391,8 @@ If you need to override any input/output path, pass the CLI flags (see `--help`)
 
 - **`run_inference.sh` / `run_eval.sh`**  
   Thin wrappers to run the right compose service with the right command.
+- **`run_nemo_offline_eval.sh`**  
+  Generates normalized REF/CAN manifests and runs NVIDIA NeMo’s own `speech_to_text_eval.py` script for REF↔HYP and CAN↔HYP scoring. Handy for cross-checking the internal metrics against the official NeMo implementation.
 
 ---
 
@@ -397,4 +407,6 @@ If you need to override any input/output path, pass the CLI flags (see `--help`)
    ./run_inference.sh
    ./run_eval.sh
    ```
-6. Read `input_output_data/output/*.csv` for item-level details and summaries.
+6. Inspect `input_output_data/output/`:
+   - `egra_eval_detailed.csv` for per-item results.
+   - `can_ref/`, `can_hyp/`, `ref_hyp/` for the aggregated summaries.

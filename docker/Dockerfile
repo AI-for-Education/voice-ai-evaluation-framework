@@ -11,6 +11,7 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 # Basic deps (audio I/O + build essentials for a few pip wheels)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget ca-certificates \
     python3 python3-pip python3-dev \
     git \
     ffmpeg sox libsndfile1 \

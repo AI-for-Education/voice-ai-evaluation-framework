@@ -8,7 +8,6 @@ from egra_eval.normalize.textnorm import normalize
 
 @dataclass
 class Counts:
-    
     S: int
     D: int
     I: int
@@ -17,14 +16,13 @@ class Counts:
 
     @property
     def WER(self) -> float:
-        return (self.S + self.D + self.I) / self.N if self.N else math.nan
+        return ((self.S + self.D + self.I) / self.N) * 100.0 if self.N else math.nan
 
     @property
     def ACC(self) -> float:
-        # EGRA-ACC: C / N
         return self.C / self.N if self.N else math.nan
 
-    # Macro precision/recall/F1 at the token level (REF = truth, HYP = system)
+    # Macro precision/recall/F1 at token level (REF = truth, HYP = system)
     @property
     def precision(self) -> float:
         denom = self.C + self.I
@@ -42,10 +40,6 @@ class Counts:
 
 
 def score(truth: str, hyp: str) -> Counts:
-    """
-    Returns substitution / deletion / insertion / correct / N.
-    N equals number of tokens in TRUTH (after normalization).
-    """
     t = normalize(truth or "")
     h = normalize(hyp or "")
 
@@ -53,6 +47,7 @@ def score(truth: str, hyp: str) -> Counts:
         return Counts(S=0, D=0, I=0, C=0, N=0)
 
     res = compute_measures(t, h)
+    # jiwer >=3.1 -> 'truth_len'; older -> 'truth_words'
     n_ref = res.get("truth_len", res.get("truth_words"))
     if n_ref is None:
         n_ref = res["hits"] + res["substitutions"] + res["deletions"]
@@ -64,4 +59,3 @@ def score(truth: str, hyp: str) -> Counts:
         C=res["hits"],
         N=int(n_ref),
     )
-

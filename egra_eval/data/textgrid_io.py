@@ -37,7 +37,17 @@ def _entries_from_tier(tier) -> List[Tuple[float, float, str]]:
 
 
 def _labels_from_tier(tier) -> list[str]:
-    return [lab for _s, _e, lab in _entries_from_tier(tier) if lab]
+    """
+    Return the text labels for a tier, ignoring the <enumerator> tag.
+    """
+    labels = []
+    for _s, _e, lab in _entries_from_tier(tier):
+        if not lab:
+            continue
+        if lab.strip().lower() == "<enumerator>":
+            continue
+        labels.append(lab)
+    return labels
 
 
 def read_ref_from_textgrid(path: str, tier_name: str = "child") -> str:
@@ -109,4 +119,3 @@ def add_refs_from_textgrid(
     out["ref_text"] = ref_texts
     logger.info(f"Attached REF text for {len(out):,} rows (missing={missing}, failed={failed}).")
     return out
-
