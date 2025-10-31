@@ -9,6 +9,7 @@ from egra_eval.data.textgrid_io import add_refs_from_textgrid
 from egra_eval.data.passage_merge import attach_passage_texts
 from egra_eval.data.nemo_manifest import load_many_manifests
 from egra_eval.normalize.textnorm import normalize
+from egra_eval.data.dataset_layout import resolve_dataset_paths, DatasetLayoutError
 
 
 def _abs_audio_path(audio_root: Path, learner_id: str, audio_file: str) -> str:
@@ -29,20 +30,55 @@ def _maybe_norm(s: str, do_norm: bool) -> str:
 
 
 def main():
-    ap = argparse.ArgumentParser(
-        description="Create NeMo JSONL manifests for offline scoring (only_score_manifest=true)."
-    )
-    ap.add_argument("--egra_csv", required=True)
-    ap.add_argument("--passages_csv", required=False, default=None)
-    ap.add_argument("--textgrids_dir", required=True, help="Root with <learner_id> subfolders.")
-    ap.add_argument("--audio_root",   required=True, help="Same as textgrids_dir in your layout.")
-    ap.add_argument("--nemo_hyp_manifest", required=True,
-                    help="Your ASR output JSONL with audio_filepath + pred_text")
-    ap.add_argument("--out_ref", required=True, help="Output JSONL: text=REF, pred_text from ASR if available.")
-    ap.add_argument("--out_can", required=True, help="Output JSONL: text=CAN, pred_text from ASR if available.")
+    ap = argparse.ArgumentParser(description="Create NeMo JSONL manifests for offline scoring.")
+    ap.add_argument("--dataset_root", default=None, help="Root folder containing 0_Audio/ and 2_TextGrid/.")
+    ap.add_argument("--dataset_annotator", default=None, help="Specific annotator folder under 2_TextGrid/ to use.")
+    ap.add_argument("--output_dir", default=None, help="Directory where manifests will be written (defaults next to dataset).")
+
+    ap.add_argument("--egra_csv", default=None)
+    ap.add_argument("--passages_csv", default=None)
+    ap.add_argument("--textgrids_dir", default=None, help="Root with <learner_id> subfolders.")
+    ap.add_argument("--audio_root", default=None, help="Root containing learner audio folders.")
+    ap.add_argument("--nemo_hyp_manifest", default=None,
+                    help="ASR output JSONL with audio_filepath + pred_text")
+    ap.add_argument("--out_ref", default=None, help="Output JSONL: text=REF, pred_text from ASR if available.")
+    ap.add_argument("--out_can", default=None, help="Output JSONL: text=CAN, pred_text from ASR if available.")
     ap.add_argument("--normalize_for_nemo", action="store_true",
-                    help="If set, will normalize both text and pred_text like in our pipeline (recommended).")
+                    help="If set, normalize both text and pred_text like in the main pipeline (recommended).")
     args = ap.parse_args()
+
+    if args.dataset_root:
+        try:
+            layout = resolve_dataset_paths(args.dataset_root, annotator=args.dataset_annotator)
+        except DatasetLayoutError as exc:  # pragma: no cover - CLI validation
+            raise SystemExit(str(exc)) from exc
+
+        args.egra_csv = args.egra_csv or str(layout.canonical_csv)
+        args.textgrids_dir = args.textgrids_dir or str(layout.textgrid_root)
+        args.audio_root = args.audio_root or str(layout.audio_root)
+        args.passages_csv = args.passages_csv or ""
+
+        if args.output_dir:
+            output_dir = Path(args.output_dir)
+        else:
+            output_dir = layout.root / "nemo_asr_output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        args.out_ref = args.out_ref or str(output_dir / "ref_manifest_norm.jsonl")
+        args.out_can = args.out_can or str(output_dir / "can_manifest_norm.jsonl")
+        args.nemo_hyp_manifest = args.nemo_hyp_manifest or str(output_dir / "transcriptions.jsonl")
+    else:
+        if not all((args.egra_csv, args.textgrids_dir, args.audio_root, args.nemo_hyp_manifest, args.out_ref, args.out_can)):
+            raise SystemExit("Please provide either --dataset_root or explicit paths for CSVs, audio/textgrid roots, manifests, and outputs.")
+        if args.output_dir:
+            output_dir = Path(args.output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            if args.out_ref is None:
+                args.out_ref = str(output_dir / "ref_manifest_norm.jsonl")
+            if args.out_can is None:
+                args.out_can = str(output_dir / "can_manifest_norm.jsonl")
+
+    if not Path(args.nemo_hyp_manifest).exists():
+        raise SystemExit(f"NeMo hypothesis manifest not found: {args.nemo_hyp_manifest}")
 
     # 1) EGRA rows + join keys
     egra = pd.read_csv(args.egra_csv)
@@ -113,4 +149,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

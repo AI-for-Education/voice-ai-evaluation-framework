@@ -1,40 +1,36 @@
 #!/usr/bin/env python3
+
+from __future__ import annotations
+
 import argparse
+import inspect
 import json
 import os
-import re
-import inspect
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
+import librosa
 import numpy as np
 import soundfile as sf
-import librosa
-from tqdm import tqdm
-from praatio import textgrid
-
 import torch
 from nemo.collections.asr.models import ASRModel
+from praatio import textgrid
+from tqdm import tqdm
 
-# =====================================
-# Constants
-# =====================================
-TARGET_SR = 16000  # model's training sample rate
-DEFAULT_ROOT = "input_output_data/input/audio_and_texgrid"
-DEFAULT_OUT = "input_output_data/input/nemo_asr_output/transcriptions.jsonl"
+from egra_eval.data.dataset_layout import DatasetLayoutError, resolve_dataset_paths
+
+TARGET_SR = 16000
 DEFAULT_TMP = "nemo_inference/tmp"
 
 
-# =====================================
+# ---------------------------------------------------------------------------
 # Audio helpers
-# =====================================
+# ---------------------------------------------------------------------------
+
 def load_audio_and_resample(path: str, target_sr: int = TARGET_SR) -> Tuple[np.ndarray, int, bool]:
-    """
-    Load audio (mono) and resample if needed.
-    """
     audio, sr = sf.read(path, always_2d=False)
     if audio.ndim > 1:
-        audio = np.mean(audio, axis=1)  # mono mixdown
+        audio = np.mean(audio, axis=1)
 
     was_resampled = False
     if sr != target_sr:
@@ -54,38 +50,47 @@ def seconds_to_samples(s: float, sr: int) -> int:
     return int(round(s * sr))
 
 
-# =====================================
+# ---------------------------------------------------------------------------
 # TextGrid helpers
-# =====================================
-def find_passage_textgrid(
+# ---------------------------------------------------------------------------
+
+def find_textgrid_for_audio(
     wav_path: str,
     textgrid_dir: Optional[str],
-    keyword: str = "passage",
+    audio_root: Optional[str] = None,
     debug: bool = False,
 ) -> Optional[Path]:
-    """
-      Try a .TextGrid with the SAME STEM as the wav. Then search the folder for any *.TextGrid that contains `keyword` (case-insensitive).
-    """
     wav = Path(wav_path)
-    search_dir = Path(textgrid_dir) if textgrid_dir else wav.parent
+    search_dirs: List[Path] = []
+    seen: set[Path] = set()
 
-    # exact stem match
-    exact = search_dir / f"{wav.stem}.TextGrid"
-    if exact.exists():
-        if debug:
-            print(f"[DEBUG] Using TextGrid (exact stem): {exact}")
-        return exact
+    def add_dir(path: Optional[Path]) -> None:
+        if path and path.exists() and path not in seen:
+            search_dirs.append(path)
+            seen.add(path)
 
-    # keyword match
-    pattern = re.compile(rf".*{re.escape(keyword)}.*\.TextGrid$", re.IGNORECASE)
-    for candidate in search_dir.glob("*.TextGrid"):
-        if pattern.match(candidate.name):
-            if debug:
-                print(f"[DEBUG] Using TextGrid (keyword match): {candidate}")
-            return candidate
+    add_dir(wav.parent)
+
+    if textgrid_dir:
+        base = Path(textgrid_dir)
+        if audio_root:
+            try:
+                rel_parent = wav.relative_to(Path(audio_root)).parent
+                add_dir(base / rel_parent)
+            except ValueError:
+                pass
+        add_dir(base)
+
+    for directory in search_dirs:
+        for ext in (".TextGrid", ".textgrid"):
+            candidate = directory / f"{wav.stem}{ext}"
+            if candidate.exists():
+                if debug:
+                    print(f"[DEBUG] Using TextGrid: {candidate}")
+                return candidate
 
     if debug:
-        print(f"[DEBUG] No TextGrid found for {wav_path} in {search_dir} (keyword='{keyword}')")
+        print(f"[DEBUG] No TextGrid found for {wav_path}; searched {search_dirs}")
     return None
 
 
@@ -97,9 +102,6 @@ def _get_tier_case_insensitive(tg: textgrid.Textgrid, tier_name: str):
 
 
 def _entries_from_tier(tier) -> List[Tuple[float, float, str]]:
-    """
-    Normalize Praatio 5.x / 6.x tier entries into a list of (start, end, label).
-    """
     entries = getattr(tier, "entries", None)
     if entries is None:
         entries = getattr(tier, "entryList", [])
@@ -118,7 +120,11 @@ def _entries_from_tier(tier) -> List[Tuple[float, float, str]]:
     return out
 
 
-def read_passage_intervals(tg_path: Path, tier_name: str, debug: bool = False) -> List[Tuple[float, float, str]]:
+def read_textgrid_intervals(
+    tg_path: Path,
+    tier_name: str,
+    debug: bool = False,
+) -> List[Tuple[float, float, str]]:
     tg = textgrid.openTextgrid(str(tg_path), includeEmptyIntervals=False, reportingMode="silence")
     tier = _get_tier_case_insensitive(tg, tier_name)
     if tier is None:
@@ -126,7 +132,17 @@ def read_passage_intervals(tg_path: Path, tier_name: str, debug: bool = False) -
             print(f"[DEBUG] Tier '{tier_name}' not found in {tg_path}. Available: {tg.tierNames}")
         return []
     raw = _entries_from_tier(tier)
-    labeled = [(s, e, lab) for (s, e, lab) in raw if lab]
+    labeled = []
+    for start, end, label in raw:
+        if not label:
+            continue
+        normalized = label.strip().lower()
+        if normalized == "<enumerator>":
+            if debug:
+                print(f"[DEBUG] Skipping enumerator interval [{start:.3f}, {end:.3f}] in {tg_path.name}")
+            continue
+        labeled.append((start, end, label))
+
     if debug:
         print(f"[DEBUG] {tg_path.name}: {len(raw)} intervals on tier, {len(labeled)} labeled.")
     return labeled
@@ -142,142 +158,144 @@ def slice_by_intervals(audio: np.ndarray, sr: int, intervals: List[Tuple[float, 
     return chunks
 
 
-# =====================================
-# NeMo transcribe compatibility
-# =====================================
-def transcribe_compat(model, paths: List[str], batch_size=16):
-    """
-    Choose the right kwarg for model.transcribe() across NeMo 1.x / 2.x.
-    """
-    fn = getattr(model, "transcribe", None)
-    if fn is None:
-        raise RuntimeError("Model has no .transcribe() method")
-
-    sig = inspect.signature(fn)
-    params = sig.parameters
-
-    if "paths" in params:
-        return fn(paths=paths, batch_size=batch_size)
-    if "paths2audio_files" in params:
-        return fn(paths2audio_files=paths, batch_size=batch_size)
-
-    try:
-        return fn(paths)
-    except TypeError:
-        return fn(paths2audio_files=paths)
-
-
-def transcribe_batches(model, files: List[str], batch_size=16) -> List[str]:
+# ---------------------------------------------------------------------------
+# NeMo transcriber
+# ---------------------------------------------------------------------------
+def transcribe_batches(model, files: list[str], batch_size: int = 16, num_workers: int | None = None) -> list[str]:
+   
     hyps = []
     model.eval()
     with torch.no_grad():
         for i in range(0, len(files), batch_size):
-            batch = files[i:i + batch_size]
-            preds = transcribe_compat(model, batch, batch_size=batch_size)
+            batch = files[i : i + batch_size]
+            preds = model.transcribe(batch, batch_size=batch_size, num_workers=num_workers)
+
+            # Handle possible object outputs with `.text` attributes
             if preds and hasattr(preds[0], "text"):
                 preds = [p.text for p in preds]
+
             hyps.extend(preds)
     return hyps
 
+# ---------------------------------------------------------------------------
+# Discovery helpers
+# ---------------------------------------------------------------------------
 
-# =====================================
-# Discovery wavs
-# =====================================
 def discover_wavs(root_dir: str) -> List[str]:
     root = Path(root_dir)
-    files = [str(p) for p in sorted(root.rglob("*.wav"))]
-    return files
+    return [str(p) for p in sorted(root.rglob("*.wav"))]
 
 
-# =====================================
-# Main
-# =====================================
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, help="Path to .nemo model")
+# ---------------------------------------------------------------------------
+# CLI / main
+# ---------------------------------------------------------------------------
 
-    ap.add_argument("--root_audio_dir", default=DEFAULT_ROOT,
-                    help="Root folder to scan for WAV files recursively.")
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Offline NeMo transcription helper")
+    parser.add_argument("--model", required=True, help="Path to .nemo model")
+    parser.add_argument("--dataset_root", required=True, help="Dataset root containing 0_Audio and 2_TextGrid directories.")
+    parser.add_argument("--dataset_annotator", default=None, help="Annotator folder inside 2_TextGrid to use.")
+    parser.add_argument("--root_audio_dir", default=None, help="Explicit audio root (overrides dataset discovery).")
+    parser.add_argument("--textgrid_dir", default=None, help="Explicit TextGrid directory (overrides dataset discovery).")
+    parser.add_argument("--tier_name", default="child")
+    parser.add_argument(
+        "--output_root",
+        required=True,
+        help="Directory where transcriptions.jsonl will be written.",
+    )
+    parser.add_argument("--batch_size", type=int, default=os.cpu_count() or 1, help="Batch size (defaults to number of CPU cores)")
+    parser.add_argument("--tmp_dir", default=DEFAULT_TMP)
+    parser.add_argument("--cpu_workers", type=int, default=None, help="CPU workers when GPU is unavailable (default: all cores).")
+    parser.add_argument("--debug", action="store_true")
+    return parser.parse_args()
 
-    ap.add_argument("--textgrid_dir", default=None,
-                    help="Optional override: where to look for TextGrids. "
-                         "If not set, search next to each WAV.")
 
-    ap.add_argument("--textgrid_keyword", default="passage",
-                    help="Fallback keyword to match TextGrids if exact stem is not found.")
+def resolve_io_paths(args: argparse.Namespace) -> None:
+    """Update CLI args in-place when dataset_root/output_root are supplied."""
 
-    ap.add_argument("--tier_name", default="child", help="Tier name in TextGrid (case-insensitive)")
+    try:
+        layout = resolve_dataset_paths(args.dataset_root, annotator=args.dataset_annotator)
+    except DatasetLayoutError as exc:
+        raise SystemExit(str(exc)) from exc
 
-    ap.add_argument("--output_manifest", default=DEFAULT_OUT,
-                    help="NeMo-style output JSONL path.")
+    args.root_audio_dir = args.root_audio_dir or str(layout.audio_root)
+    args.textgrid_dir = args.textgrid_dir or str(layout.textgrid_root)
 
-    ap.add_argument("--batch_size", type=int, default=16)
-    ap.add_argument("--tmp_dir", default=DEFAULT_TMP,
-                    help="Where to write temporary 16k segments.")
-    ap.add_argument("--debug", action="store_true")
-    args = ap.parse_args()
+    out_root = Path(args.output_root)
+    out_root.mkdir(parents=True, exist_ok=True)
+    args.output_manifest = str(out_root / "transcriptions.jsonl")
 
-    # Discover audio files
+    Path(args.tmp_dir).mkdir(parents=True, exist_ok=True)
+    Path(args.output_manifest).parent.mkdir(parents=True, exist_ok=True)
+
+
+def main() -> None:
+    args = parse_args()
+    resolve_io_paths(args)
+
     audio_paths = discover_wavs(args.root_audio_dir)
     if not audio_paths:
         raise SystemExit(f"No .wav files found under: {args.root_audio_dir}")
 
-    # Ensure dirs exist
-    Path(args.tmp_dir).mkdir(parents=True, exist_ok=True)
-    Path(args.output_manifest).parent.mkdir(parents=True, exist_ok=True)
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    if device.startswith("cuda"):
+        print("[INFO] GPU detected. Using CUDA for inference.")
+        num_workers = None
+    else:
+        workers = args.cpu_workers or os.cpu_count() or 1
+        print(f"[INFO] GPU not available. Using CPU with {workers} worker(s).")
+        try:
+            torch.set_num_threads(workers)
+        except Exception:
+            pass
+        try:
+            torch.set_num_interop_threads(min(4, workers))
+        except Exception:
+            pass
+        os.environ.setdefault("OMP_NUM_THREADS", str(workers))
+        os.environ.setdefault("MKL_NUM_THREADS", str(workers))
+        num_workers = workers
 
-    # Device
-    device_str = "cuda:0" if torch.cuda.is_available() else "cpu"
-    print(f"[INFO] Using {'GPU' if device_str.startswith('cuda') else 'CPU'} for inference.")
+    model = ASRModel.restore_from(args.model, map_location=device)
+    model.to(device).eval()
 
-    # Load model
-    model = ASRModel.restore_from(args.model, map_location=device_str)
-    model.to(device_str).eval()
-
-    # Output
     with open(args.output_manifest, "w", encoding="utf-8") as out:
         for wav_path in tqdm(audio_paths, desc="Files"):
             wav_path = str(wav_path)
-
-            # Load + resample if needed
             try:
                 audio, sr, was_resampled = load_audio_and_resample(wav_path, TARGET_SR)
-            except Exception as e:
+            except Exception as exc:
                 out.write(json.dumps({
                     "audio_filepath": wav_path,
                     "duration": 0.0,
                     "pred_text": "",
-                    "error": f"failed_to_read_audio: {e}"
+                    "error": f"failed_to_read_audio: {exc}"
                 }) + "\n")
                 continue
 
             duration = float(len(audio) / sr)
 
-            # Find TextGrid
-            tg_path = find_passage_textgrid(
+            tg_path = find_textgrid_for_audio(
                 wav_path,
                 args.textgrid_dir,
-                keyword=args.textgrid_keyword,
+                audio_root=args.root_audio_dir,
                 debug=args.debug,
             )
 
-            # Build list of segment files
             segment_files: List[str] = []
             cleanup_paths: List[Path] = []
 
             if tg_path is not None:
-                intervals = read_passage_intervals(tg_path, args.tier_name, debug=args.debug)
-                if intervals:
-                    for idx, chunk in enumerate(slice_by_intervals(audio, sr, intervals)):
-                        seg_path = Path(args.tmp_dir) / f"{Path(wav_path).stem}_seg{idx:03d}.wav"
-                        write_wav(str(seg_path), chunk, sr)
-                        if args.debug:
-                            s, e, lab = intervals[idx]
-                            print(f"[DEBUG] Wrote segment {idx}: {seg_path} [{s:.3f},{e:.3f}] '{lab}'")
-                        segment_files.append(str(seg_path))
-                        cleanup_paths.append(seg_path)
+                intervals = read_textgrid_intervals(tg_path, args.tier_name, debug=args.debug)
+                for idx, chunk in enumerate(slice_by_intervals(audio, sr, intervals)):
+                    seg_path = Path(args.tmp_dir) / f"{Path(wav_path).stem}_seg{idx:03d}.wav"
+                    write_wav(str(seg_path), chunk, sr)
+                    if args.debug:
+                        start, end, label = intervals[idx]
+                        print(f"[DEBUG] Wrote segment {idx}: {seg_path} [{start:.3f}, {end:.3f}] '{label}'")
+                    segment_files.append(str(seg_path))
+                    cleanup_paths.append(seg_path)
 
-            # If no intervals or empty tier, use full file
             if not segment_files:
                 if was_resampled:
                     seg_path = Path(args.tmp_dir) / f"{Path(wav_path).stem}_full16k.wav"
@@ -287,25 +305,27 @@ def main():
                 else:
                     segment_files = [wav_path]
 
-            # Transcribe and combine
-            hyps = transcribe_batches(model, segment_files, batch_size=args.batch_size)
-            combined_hyp = " ".join([h.strip() for h in hyps if h and h.strip()]).strip()
+            predictions = transcribe_batches(
+                model,
+                segment_files,
+                batch_size=args.batch_size,
+                num_workers=num_workers,
+            )
+            combined = " ".join([p.strip() for p in predictions if p and p.strip()]).strip()
 
             out.write(json.dumps({
                 "audio_filepath": wav_path,
                 "duration": round(duration, 3),
-                "pred_text": combined_hyp
+                "pred_text": combined,
             }, ensure_ascii=False) + "\n")
 
-            # Cleanup temp files unless debugging
             if not args.debug:
-                for p in cleanup_paths:
+                for tmp_path in cleanup_paths:
                     try:
-                        p.unlink(missing_ok=True)
+                        tmp_path.unlink(missing_ok=True)
                     except Exception:
                         pass
 
 
 if __name__ == "__main__":
     main()
-

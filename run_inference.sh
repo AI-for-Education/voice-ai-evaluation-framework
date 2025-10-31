@@ -1,20 +1,69 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p input_output_data/input/nemo_asr_output
-mkdir -p nemo_inference/tmp
+usage() {
+  cat <<'EOF' >&2
+Usage:
+  ./run_inference.sh --dataset_root PATH --output_dir PATH --model PATH [extra options]
 
-docker compose run --rm --entrypoint "" \
+Example:
+  ./run_inference.sh \
+    --dataset_root /io/input/1_Batch2_Data \
+    --output_dir /io/output/1_Batch2_Data/nemo_asr_output \
+    --model /models/Swahili_exp1_100epochs.nemo \
+    --dataset_annotator Flora
+EOF
+  exit 1
+}
+
+DATASET_ROOT=""
+OUTPUT_DIR=""
+MODEL_PATH=""
+EXTRA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dataset_root)
+      DATASET_ROOT="$2"
+      shift 2
+      ;;
+    --output_dir|--output_root)
+      OUTPUT_DIR="$2"
+      shift 2
+      ;;
+    --model)
+      MODEL_PATH="$2"
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      ;;
+    *)
+      EXTRA_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$DATASET_ROOT" || -z "$OUTPUT_DIR" || -z "$MODEL_PATH" ]]; then
+  usage
+fi
+
+USER_FLAG=(--user "$(id -u):$(id -g)")
+ENV_VARS=(
+  --env HOME=/tmp
+  --env MPLCONFIGDIR=/tmp/matplotlib
+  --env NUMBA_CACHE_DIR=/tmp/numba_cache
+  --env XDG_CACHE_HOME=/tmp/.cache
+  --env LHOTSE_TOOLS_DIR=/tmp/lhotse_tools
+  --env LHOTSE_DATA_HOME=/tmp/lhotse_data
+)
+
+docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" \
   nemo-asr \
   python3 /work/infer.py \
-    --model /models/Swahili_exp1_100epochs.nemo \
-    --root_audio_dir /io/input/audio_and_texgrid \
-    --output_manifest /io/input/nemo_asr_output/transcriptions.jsonl \
-    --tmp_dir /tmp_segments \
-    --tier_name child \
-    --textgrid_keyword passage \
-    --debug
-
-# If you want GPU and have the runtime, just add --gpus all in the docker compose run command
-
-
+    --model "$MODEL_PATH" \
+    --dataset_root "$DATASET_ROOT" \
+    --output_root "$OUTPUT_DIR" \
+    --debug \
+    "${EXTRA_ARGS[@]}"

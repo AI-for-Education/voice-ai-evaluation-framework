@@ -19,17 +19,11 @@ dist/
 # Keep the folder structure via .gitkeep files inside each dir.
 
 # input_output_data
-input_output_data/*
-!input_output_data/**/
+input_output_data/**
 !input_output_data/.gitkeep
 !input_output_data/**/.gitkeep
-!input_output_data/.gitignore
-!input_output_data/**/.gitignore
 
 # nemo_inference
-nemo_inference/*
-!nemo_inference/**/
+nemo_inference/**
 !nemo_inference/.gitkeep
 !nemo_inference/**/.gitkeep
-!nemo_inference/.gitignore
-!nemo_inference/**/.gitignore
