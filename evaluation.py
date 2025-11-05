@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 from pathlib import Path
 from typing import Dict, List
 
@@ -22,6 +23,42 @@ from egra_eval.report.summarize import (
     summary_per_speaker_macro,
     summary_per_speaker_subcategory,
 )
+
+CONSONANTS = set("bcdfghjklmnpqrstvwxyz")
+
+
+def _append_a_to_consonant_letters(text: str) -> str:
+    if text is None or pd.isna(text):
+        return text
+    parts = re.split(r"(\s+)", str(text))
+
+    def transform_token(token: str) -> str:
+        cleaned = re.sub(r"[^a-z]", "", token.lower())
+        if not cleaned:
+            return token
+        first_char = cleaned[0]
+        if first_char in CONSONANTS:
+            if token.lower().endswith("a"):
+                return token
+            return f"{token}a"
+        return token
+
+    return "".join(
+        transform_token(part) if idx % 2 == 0 else part
+        for idx, part in enumerate(parts)
+    )
+
+
+def adjust_letter_canonical_text(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
+    if "audio_type" not in df.columns or "canonical_text" not in df.columns:
+        return df
+    mask = df["audio_type"].astype(str).str.contains("letter", case=False, na=False)
+    if not mask.any():
+        return df
+    logger.info("Adjusting canonical texts for %d letter row(s).", int(mask.sum()))
+    out = df.copy()
+    out.loc[mask, "canonical_text"] = out.loc[mask, "canonical_text"].apply(_append_a_to_consonant_letters)
+    return out
 
 # ---------------------------------------------------------------------------
 # Logging / CLI
@@ -43,12 +80,15 @@ def setup_logger() -> logging.Logger:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run EGRA evaluation using canonical/ASR data.")
     p.add_argument("--dataset_root", required=True, help="Root folder containing 0_Audio/2_TextGrid and Student_* CSVs.")
-    p.add_argument("--dataset_annotator", default=None, help="Annotator name under 2_TextGrid to use (defaults to first alphabetically).")
     p.add_argument("--output_root", required=True, help="Directory where outputs will be written (detailed CSV + summary subfolders).")
 
     p.add_argument("--egra_csv", default=None)
     p.add_argument("--meta_csv", default=None)
-    p.add_argument("--passages_csv", default=None)
+    p.add_argument(
+        "--passages_csv",
+        required=True,
+        help="CSV mapping passage numbers to canonical text (e.g. oral_passages.csv).",
+    )
     p.add_argument("--nemo_manifest", action="append", default=None, help="Path(s) to NeMo JSON manifests with ASR hypotheses (can be supplied multiple times).")
     p.add_argument("--manifest_audio_key", default="audio_filepath")
     p.add_argument("--manifest_hyp_key", default="pred_text")
@@ -68,14 +108,16 @@ def parse_args() -> argparse.Namespace:
 def resolve_inputs(args: argparse.Namespace, logger: logging.Logger) -> tuple[Path, Dict[str, Path]]:
     """Resolve dataset layout and output dirs; mutate args with defaults."""
     try:
-        layout = resolve_dataset_paths(args.dataset_root, annotator=args.dataset_annotator)
+        layout = resolve_dataset_paths(args.dataset_root)
     except DatasetLayoutError as exc:
         raise SystemExit(str(exc)) from exc
 
     # Fill inferred CSVs
     args.egra_csv = args.egra_csv or str(layout.canonical_csv)
     args.meta_csv = args.meta_csv or str(layout.metadata_csv)
-    args.passages_csv = args.passages_csv or ""
+    passages_path = Path(args.passages_csv)
+    if not passages_path.exists():
+        raise SystemExit(f"--passages_csv file not found: {passages_path}")
 
     # Resolve manifest(s)
     if not args.nemo_manifest:
@@ -89,8 +131,8 @@ def resolve_inputs(args: argparse.Namespace, logger: logging.Logger) -> tuple[Pa
             )
 
     logger.info(
-        "Dataset root resolved: audio=%s | textgrids=%s (annotator=%s) | canonical=%s | metadata=%s",
-        layout.audio_root, layout.textgrid_root, layout.annotator, layout.canonical_csv, layout.metadata_csv,
+        "Dataset root resolved: audio=%s | textgrids=%s | canonical=%s | metadata=%s",
+        layout.audio_root, layout.textgrid_root, layout.canonical_csv, layout.metadata_csv,
     )
 
     # Prepare outputs
@@ -139,6 +181,12 @@ def write_detailed_csv(df: pd.DataFrame, path: str, logger: logging.Logger) -> N
         "C_can_ref": "C_can_ref (EGRA_COR)",
         "ACC_can_hyp": "ACC_can_hyp (ASR_EGRA_ACC)",
         "C_can_hyp": "C_can_hyp (ASR_EGRA_COR)",
+        "EGRA_COR": "EGRA-COR",
+        "EGRA_ACC": "EGRA-ACC",
+        "ASR_EGRA_COR": "ASR-EGRA-COR",
+        "ASR_EGRA_ACC": "ASR-EGRA-ACC",
+        "MAE_EGRA_COR": "MAE_EGRA_COR",
+        "ASR_WER": "ASR_WER",
     }).to_csv(path, index=False)
     logger.info("Wrote detailed results -> %s (rows: %d)", path, len(df))
 
@@ -151,8 +199,13 @@ def write_summary_csvs(df: pd.DataFrame, summary_dirs: Dict[str, Path], logger: 
         global_row = summary_for_pair(df, pair, by=None)
         global_row.insert(0, "learner_id", "__GLOBAL__")
 
-        combined = global_row if per_speaker.empty else pd.concat(
-            [per_speaker, global_row[per_speaker.columns]], ignore_index=True
+        combined = (
+            global_row
+            if per_speaker.empty
+            else pd.concat(
+                [global_row[per_speaker.columns], per_speaker],
+                ignore_index=True,
+            )
         )
         per_speaker_path = directory / "egra_eval_summary_per_speaker_global.csv"
         combined.to_csv(per_speaker_path, index=False)
@@ -173,6 +226,52 @@ def write_summary_csvs(df: pd.DataFrame, summary_dirs: Dict[str, Path], logger: 
         _write_one(pair, directory)
 
     return written
+
+
+def write_text_summary(df: pd.DataFrame, out_csv: str, logger: logging.Logger) -> Path:
+    summary_path = Path(out_csv).parent / "egra_eval_summary.txt"
+
+    metrics: Dict[str, float] = {
+        "EGRA-COR": float("nan"),
+        "EGRA-ACC": float("nan"),
+        "ASR-EGRA-COR": float("nan"),
+        "ASR-EGRA-ACC": float("nan"),
+        "MAE_EGRA_COR": float("nan"),
+        "ASR_WER": float("nan"),
+    }
+
+    can_ref = summary_for_pair(df, "can_ref")
+    if not can_ref.empty:
+        metrics["EGRA-COR"] = can_ref["C_can_ref"].iloc[0]
+        metrics["EGRA-ACC"] = can_ref["ACC_can_ref"].iloc[0]
+
+    can_hyp = summary_for_pair(df, "can_hyp")
+    if not can_hyp.empty:
+        metrics["ASR-EGRA-COR"] = can_hyp["C_can_hyp"].iloc[0]
+        metrics["ASR-EGRA-ACC"] = can_hyp["ACC_can_hyp"].iloc[0]
+
+    if "MAE_EGRA_COR" in df.columns and not df["MAE_EGRA_COR"].dropna().empty:
+        metrics["MAE_EGRA_COR"] = float(df["MAE_EGRA_COR"].dropna().mean())
+
+    ref_hyp = summary_for_pair(df, "ref_hyp")
+    if not ref_hyp.empty:
+        metrics["ASR_WER"] = ref_hyp["WER_ref_hyp"].iloc[0]
+
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    with summary_path.open("w", encoding="utf-8") as f:
+        for key in ["EGRA-COR", "EGRA-ACC", "ASR-EGRA-COR", "ASR-EGRA-ACC", "MAE_EGRA_COR", "ASR_WER"]:
+            value = metrics[key]
+            if isinstance(value, float):
+                if pd.isna(value):
+                    formatted = "NaN"
+                else:
+                    formatted = f"{value:.2f}"
+            else:
+                formatted = str(value)
+            f.write(f"{key}\t{formatted}\n")
+
+    logger.info("Wrote text summary -> %s", summary_path)
+    return summary_path
 
 # ---------------------------------------------------------------------------
 # Main
@@ -195,6 +294,7 @@ def main() -> None:
     df_meta = pd.read_csv(args.meta_csv)
     logger.info("Loaded EGRA rows: %d | META rows: %d", len(df_egra), len(df_meta))
 
+    df_egra = adjust_letter_canonical_text(df_egra, logger)
     df_egra = add_audio_keys(df_egra, audio_col="audio_file")
     manifest_df = load_manifest(args, logger)
     df_egra = attach_hypotheses(df_egra, manifest_df, match_on=args.match_on)
@@ -206,17 +306,16 @@ def main() -> None:
         logger=logger,
     )
 
-    if args.passages_csv and Path(args.passages_csv).exists():
-        logger.info("Attaching passage texts from %s", args.passages_csv)
-        df_egra = attach_passage_texts(df_egra, args.passages_csv, logger=logger)
-    else:
-        logger.info("No passages CSV provided or file not found; skipping canonical pass-through.")
+    logger.info("Attaching passage texts from %s", args.passages_csv)
+    df_egra = attach_passage_texts(df_egra, args.passages_csv, logger=logger)
 
     df_results = evaluate(df_egra, df_meta)
     write_detailed_csv(df_results, args.out_csv, logger)
+    summary_txt_path = write_text_summary(df_results, args.out_csv, logger)
     summary_paths = write_summary_csvs(df_results, summary_dirs, logger)
 
     print("Detailed results:", args.out_csv)
+    print("Summary text:", summary_txt_path)
     print("Summary directories/files:")
     for path in summary_paths:
         print("  ", path)

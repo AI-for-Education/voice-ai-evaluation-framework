@@ -43,7 +43,7 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             if (s_ref_hyp and not math.isnan(s_ref_hyp.ACC)) else math.nan
         )
 
-        rows.append({
+        row = {
             "learner_id": r.get("learner_id"),
             "audio_type": r.get("audio_type"),
             "audio_file": r.get("audio_file"),
@@ -79,9 +79,17 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             "N_ref_hyp": s_ref_hyp.N if s_ref_hyp else 0,
 
             # --- Acord între EGRA uman și EGRA-ASR
-            "MAE_COR": mae_cor,
             "has_hyp": has_hyp,
-        })
+        }
+
+        row["EGRA_COR"] = egra_cor
+        row["EGRA_ACC"] = acc_can_ref
+        row["ASR_EGRA_COR"] = asr_egra_cor
+        row["ASR_EGRA_ACC"] = acc_can_hyp
+        row["MAE_EGRA_COR"] = mae_cor
+        row["ASR_WER"] = s_ref_hyp.WER if s_ref_hyp else math.nan
+
+        rows.append(row)
 
     df_scores = pd.DataFrame(rows)
     logger.info(f"Scored {len(df_scores):,} rows. Merging metadata...")
@@ -98,12 +106,19 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
         "S_can_hyp", "D_can_hyp", "I_can_hyp", "C_can_hyp", "N_can_hyp",
         "WER_ref_hyp", "ACC_ref_hyp",
         "S_ref_hyp", "D_ref_hyp", "I_ref_hyp", "C_ref_hyp", "N_ref_hyp",
-        "MAE_COR",
+    ]
+    extra_cols_order = [
+        "EGRA_COR",
+        "EGRA_ACC",
+        "ASR_EGRA_COR",
+        "ASR_EGRA_ACC",
+        "MAE_EGRA_COR",
+        "ASR_WER",
     ]
     base_cols = [
         "learner_id", "audio_type", "audio_file",
         "CAN", "REF", "HYP",
-    ] + metric_cols_order + ["has_hyp"]
+    ] + metric_cols_order + extra_cols_order + ["has_hyp"]
     existing_base = [c for c in base_cols if c in out.columns]
     other_cols = [c for c in out.columns if c not in existing_base]
     out = out[existing_base + other_cols]

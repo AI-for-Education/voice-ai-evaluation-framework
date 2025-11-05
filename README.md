@@ -4,12 +4,42 @@
 1) **Transcribe** raw EGRA audio with a NeMo ASR model  
 2) **Evaluate** the results against human references using EGRA-style metrics and standard ASR metrics.
 
+---
+
+## Straight forward steps
+
+1. **Build the Docker image** (CPU by default):  
+   `docker compose build`
+2. **Prepare the dataset and model**  
+   - Copy the dataset (including `0_Audio/`, `2_TextGrid/`, `Student_Full_Canonical_EGRA_*.csv`, `Student_MetaData_EGRA_*.csv`, and your passages CSV) into `input_output_data/input/<dataset_name>/`. Use the oral passages file from [this link](https://drive.google.com/file/d/1n50XR0TD557eYD2bkKmJ6Uem5n3SLJOc/view?usp=sharing) if it isn’t bundled.  
+   - Download your NeMo ASR model (the default scripts expect [Swahili_exp1_100epochs.nemo](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-/view?usp=sharing)) and place it in `nemo_inference/models/`.
+3. **Run inference (mandatory arguments only)**  
+   ```bash
+   ./run_inference.sh \
+     --dataset_root /io/input/<dataset_name> \
+     --output_dir /io/output/<dataset_name>/nemo_asr_output \
+     --model /models/<model>.nemo
+   ```
+4. **Run evaluation (mandatory arguments only)**  
+   ```bash
+   ./run_eval.sh \
+     --dataset_root /io/input/<dataset_name> \
+     --output_root /io/output/experiments/<experiment> \
+     --passages_csv /io/input/<dataset_name>/oral_passages.csv \
+     --nemo_manifest /io/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
+   ```
+5. **Inspect the outputs** under `input_output_data/output/experiments/<experiment>/`:  
+   - `egra_eval_detailed.csv` (now includes EGRA/ASR summary metrics per row)  
+   - `egra_eval_summary.txt` (6-line global summary)  
+   - Summary folders: `can_ref/`, `can_hyp/`, `ref_hyp/`
+
 Everything runs in Docker setup (CPU-only or GPU-enabled).
 
 ---
 
 ## Contents
 
+- [Straight forward steps](#straight-forward-steps)
 - [Project structure](#project-structure)  
 - [What the pipeline does](#what-the-pipeline-does)  
 - [Input data format](#input-data-format)  
@@ -22,7 +52,6 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 - [Configuration knobs](#configuration-knobs)  
 - [Troubleshooting](#troubleshooting)  
 - [Source files](#source-files)
-- [Straight forward steps](#straight-forward-steps)
 
 ---
 
@@ -42,7 +71,7 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 │   │   ├── linking.py            # Build keys, attach HYPs to EGRA rows
 │   │   ├── nemo_manifest.py      # Load NeMo manifests (JSONL)
 │   │   ├── passage_merge.py      # Fill missing canonical passages from CSV
-│   │   └── textgrid_io.py        # Read REF text from TextGrid tiers
+│   │   └── textgrid_io.py        # Read REF text from TextGrid tiers (recursive search, filler-tag filtering)
 │   ├── eval/
 │   │   └── run_eval.py           # Core scoring module (CAN/REF/HYP)
 │   ├── metrics/
@@ -69,14 +98,15 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 - Resamples audio to 16 kHz as needed and, if a matching TextGrid exists (default tier `child`), slices the audio according to the intervals before transcription.
 - Emits a NeMo-style JSONL manifest containing `audio_filepath`, `duration` and `pred_text`.
 
-- **Evaluation (`evaluation.py`)**
+**Evaluation (`evaluation.py`)**
 - Discovers the student CSVs, audio and TextGrid folders from `--dataset_root` (or explicit `--egra_csv`, `--meta_csv`, etc.).
-- Reads reference transcripts from the selected annotator’s TextGrid folders and attaches ASR hypotheses from the provided manifest(s).
-- Computes metrics for:
+- Recursively searches `2_TextGrid/` for `.TextGrid` files, selects the first match for each audio stem, and strips filler tags such as `<unk>`, `<noise>`, `<um>`, etc. from the REF transcript.
+- Automatically normalizes canonical letter prompts so consonants receive a trailing `a` (e.g., `g -> ga`) prior to scoring.
+- Attaches ASR hypotheses from the provided manifest(s) and computes metrics for:
   - **CAN vs REF** (annotator-based EGRA).
   - **CAN vs HYP** (ASR-based EGRA).
   - **REF vs HYP** (ASR quality vs human).
-- Produces a **detailed CSV** and per-alignment summary folders (`can_ref/`, `can_hyp/`, `ref_hyp/`).
+- Produces a **detailed CSV**, a 6-line text summary, and per-alignment summary folders (`can_ref/`, `can_hyp/`, `ref_hyp/`).
 
 ---
 
@@ -94,17 +124,9 @@ input_output_data/input/1_Batch2_Data-v2/
     └── Student_MetaData_EGRA_*.csv
 ```
 
-- Only `0_Audio/`, `2_TextGrid/`, and the two `Student_*` CSVs are consumed; other folders (for example
-  `1_Annotation`) are ignored.
-- If you do not specify `--dataset_annotator`, the first annotator alphabetically is selected. Provide a value to pick a different annotator.
+- Only `0_Audio/`, `2_TextGrid/`, the two `Student_*` CSVs, and the passages CSV are consumed; other folders (for example `1_Annotation`) are ignored.
+- Evaluation walks every subdirectory under `2_TextGrid/` and chooses the first `.TextGrid` whose stem matches the audio; no annotator flag is required. Inference still accepts `--dataset_annotator` if you want to limit slicing to a specific folder.
 - If the dataset root already contains `nemo_asr_output/transcriptions.jsonl`, `evaluation.py` will attach it automatically unless you override with `--nemo_manifest`.
-
-### NeMo ASR model
-
-- Put your `.nemo` model in `nemo_inference/models/`.
-- The default scripts assume `nemo_inference/models/Swahili_exp1_100epochs.nemo` Download link: https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-/view?usp=sharing.
-
----
 
 ## How to run (Docker)
 
@@ -136,30 +158,10 @@ Usage:
 ./run_inference.sh \
   --dataset_root /io/input/<dataset> \
   --output_dir /io/output/<dataset>/nemo_asr_output \
-  --model /models/<model>.nemo \
-  [extra options]
+  --model /models/<model>.nemo
 ```
 
-Example (dataset copied to `input_output_data/input/1_Batch2_Data/`):
-```bash
-./run_inference.sh \
-  --dataset_root /io/input/1_Batch2_Data \
-  --output_dir /io/output/1_Batch2_Data/nemo_asr_output \
-  --model /models/Swahili_exp1_100epochs.nemo \
-  --dataset_annotator Flora
-```
 
-**What it runs under the hood:**
-```bash
-docker compose run --rm nemo-asr bash -lc '
-  python3 /work/infer.py \
-    --model /models/Swahili_exp1_100epochs.nemo \
-    --dataset_root /io/input/1_Batch2_Data \
-    --dataset_annotator Flora \
-    --output_root /io/output/1_Batch2_Data/nemo_asr_output \
-    --tier_name child
-'
-```
 
 > To use GPU at run time: add `--gpus all` after `docker compose run` or enable `gpus: "all"` in the compose file.
 
@@ -168,8 +170,8 @@ docker compose run --rm nemo-asr bash -lc '
 We provide `run_eval.sh`. It will:
 - Locate the canonical/meta CSVs plus the audio/TextGrid folders (via `--dataset_root` or explicit paths).
 - Attach ASR hypotheses from the given manifest(s).
-- Read reference transcripts from the selected annotator’s TextGrid directories.
-- Produce the detailed CSV and per-pair summary folders in the chosen output directory.
+- Read reference transcripts by searching all TextGrid folders and matching on audio stem.
+- Produce the detailed CSV, the text summary, and per-pair summary folders in the chosen output directory.
 Like the inference wrapper, it executes the container with your user ID so the resulting CSVs and summaries remain writable without sudo.
 
 Usage:
@@ -177,28 +179,10 @@ Usage:
 ./run_eval.sh \
   --dataset_root /io/input/<dataset> \
   --output_root /io/output/<experiment> \
-  [extra options]
+  --passages_csv /io/input/<dataset>/oral_passages.csv \
+  --nemo_manifest /io/output/<dataset>/nemo_asr_output/transcriptions.jsonl
 ```
 
-Example with a dataset package and a dedicated output directory:
-```bash
-./run_eval.sh \
-  --dataset_root /io/input/1_Batch2_Data \
-  --output_root /io/output/experiments/exp_batch2 \
-  --dataset_annotator Flora \
-  --nemo_manifest /io/output/1_Batch2_Data/nemo_asr_output/transcriptions.jsonl
-```
-
-**What it runs under the hood:**
-```bash
-docker compose run --rm egra-eval bash -lc '
-  python3 /work/evaluation.py \
-    --dataset_root /io/input/1_Batch2_Data \
-    --dataset_annotator Flora \
-    --output_root /io/output/experiments/exp_batch2 \
-    --nemo_manifest /io/output/1_Batch2_Data-v2/nemo_asr_output/transcriptions.jsonl
-'
-```
 
 ### 4) Optional: compare with NeMo offline scoring
 
@@ -231,12 +215,15 @@ folder contains:
    - **CAN vs REF** metrics: `WER_can_ref`, `ACC_can_ref (EGRA_ACC)` plus counts `S_can_ref`, `D_can_ref`, `I_can_ref`, `C_can_ref (EGRA_COR)`, `N_can_ref`.
    - **CAN vs HYP** metrics: `WER_can_hyp`, `ACC_can_hyp (ASR_EGRA_ACC)` plus counts `S_can_hyp`, `D_can_hyp`, `I_can_hyp`, `C_can_hyp (ASR_EGRA_COR)`, `N_can_hyp`.
    - **REF vs HYP** metrics: `WER_ref_hyp`, `ACC_ref_hyp` plus counts `S_ref_hyp`, `D_ref_hyp`, `I_ref_hyp`, `C_ref_hyp`, `N_ref_hyp`.
+   - Per-row aggregates: `EGRA-COR`, `EGRA-ACC`, `ASR-EGRA-COR`, `ASR-EGRA-ACC`, `MAE_EGRA_COR`, `ASR_WER`.
    - Column names that include aliases (e.g., `ACC_can_ref (EGRA_ACC)`) expose both the base metric and the specific EGRA naming.
    - WER and ACC values are percentages (0–100); the raw counts are absolute integers.
-   - **Agreement**: `MAE_COR = |EGRA_COR − ASR_EGRA_COR|` which represents the absolute difference in number of correct tokens between annotator-based and ASR-based evaluations.
+   - **Agreement**: `MAE_EGRA_COR = |EGRA_COR − ASR_EGRA_COR|` which represents the absolute difference in number of correct tokens between annotator-based and ASR-based evaluations.
    - All learner metadata merged in (e.g., `gender`, `age`).
 
-2. **Pair-specific summary folders** — within the same experiment directory you will find three
+2. **`egra_eval_summary.txt`** — Six-line global snapshot with the metrics `EGRA-COR`, `EGRA-ACC`, `ASR-EGRA-COR`, `ASR-EGRA-ACC`, `MAE_EGRA_COR`, and `ASR_WER` (averages where applicable), rounded to two decimals.
+
+3. **Pair-specific summary folders** — within the same experiment directory you will find three
    subfolders:
 
    | Folder | Alignment pair | Files inside |
@@ -246,7 +233,7 @@ folder contains:
    | `ref_hyp/` | Reference vs ASR hypothesis (ASR quality) | same filenames as above |
 
    Each summary file reports **micro-averages** derived from the raw counts:
-   - `*_per_speaker_global.csv` — one row per `learner_id` plus a final `__GLOBAL__` row aggregating every sample.
+   - `*_per_speaker_global.csv` — one row per `learner_id` plus a leading `__GLOBAL__` row aggregating every sample.
    - `*_per_speaker_macro.csv` — per learner × macro category (letters / syllables / nonwords / passage).
    - `*_per_speaker_subcat.csv` — per learner × macro category × subcategory (e.g., `letters` + `isolated`).
 
@@ -256,7 +243,7 @@ Use these artifacts to track:
 - Human annotator performance (`can_ref`).
 - Automated EGRA performance (`can_hyp`).
 - ASR quality with respect to the human reference (`ref_hyp`).
-- Agreement between automated and human EGRA via `MAE_COR` (closer to 0 is better).
+- Agreement between automated and human EGRA via `MAE_EGRA_COR` (closer to 0 is better).
 
 ---
 
@@ -287,7 +274,10 @@ We apply the same counts to derive **EGRA-style** KPIs:
   - `ACC_can_hyp (ASR_EGRA_ACC) = ASR_EGRA_COR / N_can`
 
 - **Agreement** between annotator- and ASR-based correctness  
-  - `MAE_COR = |EGRA_COR − ASR_EGRA_COR|`
+  - `MAE_EGRA_COR = |EGRA_COR − ASR_EGRA_COR|`
+
+- **ASR quality snapshot**  
+  - `ASR_WER = WER_ref_hyp` (same computation exposed for convenience in the detailed CSV and summary text).
 
 - **ASR quality vs human** from **REF vs HYP**  
   - `WER_ref_hyp`, `ACC_ref_hyp` and the count fields `S_ref_hyp`, `D_ref_hyp`, `I_ref_hyp`, `C_ref_hyp`, `N_ref_hyp`.
@@ -304,7 +294,8 @@ WER and ACC values are emitted as **percentages** (0.0–100.0). Count-based col
 | **ACC_can_ref (EGRA_ACC)**, **ACC_can_hyp (ASR_EGRA_ACC)**, **ACC_ref_hyp** | Accuracy = C / N | 0.0–100.0 (%) | Higher is better |
 | **C_can_ref (EGRA_COR)**, **C_can_hyp (ASR_EGRA_COR)** | Correctness count = N − S − D | Integer ≥ 0 | Count of correct tokens |
 | **S_\***, **D_\***, **I_\***, **C_\***, **N_\*** | Alignment counts (Substitutions, Deletions, Insertions, Correct, Total) | Integers ≥ 0 | Raw counts |
-| **MAE_COR** | Absolute difference between EGRA_COR and ASR_EGRA_COR per row | Integer ≥ 0 | Lower indicates better agreement |
+| **MAE_EGRA_COR** | Absolute difference between EGRA_COR and ASR_EGRA_COR per row | Integer ≥ 0 | Lower indicates better agreement |
+| **ASR_WER** | Word error rate from REF vs HYP (duplicate of `WER_ref_hyp`) | 0.0–100.0 (%) | Lower is better |
 
 **Note:**  
 If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC) are undefined and will appear as `NaN` in the output CSVs.
@@ -330,7 +321,7 @@ No implicit defaults are applied to dataset/output paths—provide them explicit
 
 Run `python3 evaluation.py --help` to see available options. Highlights:
 - `--dataset_root /io/input/<dataset>` — required; automatically discovers the `Student_*` CSVs plus `0_Audio/` and `2_TextGrid/`.
-- `--dataset_annotator Flora` — choose the annotator folder under `2_TextGrid/` (defaults to the first alphabetically).
+- `--passages_csv /io/input/<dataset>/oral_passages.csv` — required; supplies the passage text mapping for passage tasks.
 - `--output_root /io/output/<experiment>` — required; directory where results are written.
 - `--nemo_manifest /path/to/transcriptions.jsonl` — attach one or more ASR manifests.
 - `--summary_can_ref_dir`, `--summary_can_hyp_dir`, `--summary_ref_hyp_dir` — optional overrides for the summary output destinations.
@@ -341,7 +332,8 @@ Run `python3 evaluation.py --help` to see available options. Highlights:
 
 - **No GPU used**: Ensure the image was built with `--build-arg TORCH_CUDA=cu121` **and** you run with `--gpus all` or `gpus: "all"` in compose.
 - **Empty or short `pred_text`**: Check that the model matches the language/domain. Also verify sample rate conversion (the script resamples to 16 kHz automatically).
-- **Missing REF text**: Confirm in the CSV that the `textgrid` column points to the correct file under `2_TextGrid/<annotator>/<learner>/`.
+- **Missing REF text**: Ensure a `.TextGrid` with the same stem as the audio exists somewhere under `2_TextGrid/`; the evaluator searches recursively but still needs matching filenames.
+- **Passage text missing**: Double-check that `--passages_csv` points to the oral passages file bundled with the dataset.
 - **Passage segmentation not applied**: Make sure the TextGrid files contain the `child` tier and that audio/TextGrid names align; if needed, point `--tier_name` to the tier that carries spoken intervals.
 - **Manifests don’t match**: Joins default to the file stem; switch `--match_on` to `name` or `path` (or rename files consistently) if the stems differ.
 - **Permissions**: The repo root and `input_output_data` are mounted read-write. Models are mounted read-only from `nemo_inference/models`.
@@ -355,14 +347,15 @@ Run `python3 evaluation.py --help` to see available options. Highlights:
   slices by TextGrid intervals when present, and writes `transcriptions.jsonl` to the output folder.
 
 - **`evaluation.py`**  
-  Orchestrates the evaluation pipeline: selects the annotator, loads the `Student_*` CSVs, attaches
-  the ASR manifest, computes metrics, and writes the detailed CSV plus per-pair summaries.
+  Orchestrates the evaluation pipeline: loads the `Student_*` CSVs, attaches the ASR manifest, adds
+  canonical passage and letter adjustments, searches `2_TextGrid/` recursively for matching `.TextGrid`
+  files, computes metrics, and writes the detailed CSV, text summary, and per-pair summaries.
 
 - **`egra_eval/metrics/scoring.py`**  
   Wraps `jiwer` to produce counts (**S, D, I, C, N**), **WER** and **ACC** (all expressed as percentages in downstream outputs). Uses `normalize/textnorm.py` for simple text normalization.
 
 - **`egra_eval/data/textgrid_io.py`**  
-  Finds the requested tier case-insensitively (default `child`), gathers labeled intervals, concatenates labels to form **REF** per item.
+  Finds the requested tier case-insensitively (default `child`), gathers labeled intervals, strips filler tags (`<unk>`, `<noise>`, etc.), and concatenates labels to form **REF** per item while searching recursively across annotator folders.
 
 - **`egra_eval/data/linking.py`**  
   Builds join keys from the EGRA CSV (`audio_name`, `audio_stem`) and attaches ASR HYPs by the chosen key (`stem` by default).
@@ -393,32 +386,6 @@ Run `python3 evaluation.py --help` to see available options. Highlights:
   Mounts repo as `/work`, data as `/io`, models as `/models`, temp segments as `/tmp_segments`.
 
 - **`run_inference.sh` / `run_eval.sh`**  
-  Thin wrappers to run the right compose service with the right command.
+  Thin wrappers to run the right compose service with the right command (evaluation now requires `--passages_csv`).
 - **`run_nemo_offline_eval.sh`**  
   Generates normalized REF/CAN manifests and runs NVIDIA NeMo’s own `speech_to_text_eval.py` script for REF↔HYP and CAN↔HYP scoring. Handy for cross-checking the internal metrics against the official NeMo implementation.
-
----
-
-### Straight forward steps
-
-1. Copy the dataset (including `0_Audio/`, `2_TextGrid/`, and `Student_*` files) into `input_output_data/input/<dataset_name>/`.
-2. Place the `.nemo` model in `nemo_inference/models/`.
-3. Run inference:
-   ```bash
-   ./run_inference.sh \
-     --dataset_root /io/input/<dataset_name> \
-     --output_dir /io/output/<dataset_name>/nemo_asr_output \
-     --model /models/Swahili_exp1_100epochs.nemo \
-     --dataset_annotator <annotatorName>
-   ```
-4. Run evaluation:
-   ```bash
-   ./run_eval.sh \
-     --dataset_root /io/input/<dataset_name> \
-     --output_root /io/output/experiments/exp_001 \
-     --dataset_annotator <annotatorName> \
-     --nemo_manifest /io/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
-   ```
-5. Results are written to `input_output_data/output/experiments/exp_001/` (or whichever folder you choose):
-   - `egra_eval_detailed.csv`
-   - `can_ref/`, `can_hyp/`, `ref_hyp/`

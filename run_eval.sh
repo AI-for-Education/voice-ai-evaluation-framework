@@ -4,20 +4,21 @@ set -euo pipefail
 usage() {
   cat <<'EOF' >&2
 Usage:
-  ./run_eval.sh --dataset_root PATH --output_root PATH [extra options]
+  ./run_eval.sh --dataset_root PATH --output_root PATH --passages_csv PATH [extra options]
 
 Example:
   ./run_eval.sh \
     --dataset_root /io/input/1_Batch2_Data-v2 \
     --output_root /io/output/experiments/exp_batch2 \
-    --dataset_annotator Flora \
-    --nemo_manifest /io/input/1_Batch2_Data-v2/nemo_asr_output/transcriptions.jsonl
+    --nemo_manifest /io/input/1_Batch2_Data-v2/nemo_asr_output/transcriptions.jsonl \
+    --passages_csv /io/input/oral_passages.csv
 EOF
   exit 1
 }
 
 DATASET_ROOT=""
 OUTPUT_ROOT=""
+PASSAGES_CSV=""
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -30,6 +31,11 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_ROOT="$2"
       shift 2
       ;;
+    --passages_csv)
+      PASSAGES_CSV="$2"
+      EXTRA_ARGS+=("$1" "$2")
+      shift 2
+      ;;
     --help|-h)
       usage
       ;;
@@ -40,7 +46,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$DATASET_ROOT" || -z "$OUTPUT_ROOT" ]]; then
+if [[ -z "$DATASET_ROOT" || -z "$OUTPUT_ROOT" || -z "$PASSAGES_CSV" ]]; then
   usage
 fi
 

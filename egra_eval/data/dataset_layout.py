@@ -12,7 +12,7 @@ class DatasetPaths:
     textgrid_root: Path
     canonical_csv: Path
     metadata_csv: Path
-    annotator: str
+    annotator: Optional[str] = None
 
 
 class DatasetLayoutError(ValueError):
@@ -52,29 +52,23 @@ def resolve_dataset_paths(dataset_root: str | Path, annotator: Optional[str] = N
     audio_root = _find_directory(iar_dir if iar_dir else root, "0_Audio")
     textgrid_parent = _find_directory(iar_dir if iar_dir else root, "2_TextGrid")
 
-    annotator_dirs = [d for d in sorted(textgrid_parent.iterdir()) if d.is_dir()]
-    if not annotator_dirs:
-        raise DatasetLayoutError(f"No annotator folders found in '{textgrid_parent}'")
-
-    chosen_annotator_dir: Optional[Path] = None
+    chosen_textgrid_dir = textgrid_parent
+    chosen_annotator: Optional[str] = None
     if annotator:
-        for d in annotator_dirs:
-            if d.name.lower() == annotator.lower():
-                chosen_annotator_dir = d
-                break
-        if chosen_annotator_dir is None:
+        candidate = textgrid_parent / annotator
+        if candidate.is_dir():
+            chosen_textgrid_dir = candidate
+            chosen_annotator = annotator
+        else:
             raise DatasetLayoutError(
-                f"Annotator '{annotator}' not found under '{textgrid_parent}'. Available: "
-                f"{', '.join(d.name for d in annotator_dirs)}"
+                f"Annotator '{annotator}' not found under '{textgrid_parent}'."
             )
-    else:
-        chosen_annotator_dir = annotator_dirs[0]
 
     return DatasetPaths(
         root=root,
         audio_root=audio_root,
-        textgrid_root=chosen_annotator_dir,
+        textgrid_root=chosen_textgrid_dir,
         canonical_csv=canonical_csv,
         metadata_csv=metadata_csv,
-        annotator=chosen_annotator_dir.name,
+        annotator=chosen_annotator,
     )

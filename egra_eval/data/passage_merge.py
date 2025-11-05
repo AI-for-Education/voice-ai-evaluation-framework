@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Optional
 import logging
+from typing import Optional
+
 import pandas as pd
-import re
 
 
 def _read_passages_csv(path: str, logger: logging.Logger | None = None) -> pd.DataFrame:
@@ -12,9 +12,17 @@ def _read_passages_csv(path: str, logger: logging.Logger | None = None) -> pd.Da
     last_err: Optional[Exception] = None
     for enc in encodings:
         try:
-            df = pd.read_csv(path, header=None, names=["raw_num", "passage_text"],
-                             encoding=enc, engine="python", on_bad_lines="skip")
-            logger.info(f"Loaded passages CSV using encoding={enc}")
+            df = pd.read_csv(
+                path,
+                header=None,
+                names=["raw_num", "passage_text"],
+                usecols=[0, 1],
+                encoding=enc,
+                engine="python",
+                on_bad_lines="skip",
+                skip_blank_lines=True,
+            )
+            logger.info("Loaded passages CSV using encoding=%s (rows=%d)", enc, len(df))
             return df
         except Exception as e:
             last_err = e
@@ -44,12 +52,22 @@ def attach_passage_texts(
     df = df_egra.copy()
     df["passage_num"] = df["audio_type"].astype(str).str.extract(r"passage_num(\d+)").astype(float).astype("Int64")
 
-    before_missing = df[text_col].isna().sum() if text_col in df else len(df)
+    if text_col not in df:
+        df[text_col] = pd.NA
+    df[text_col] = df[text_col].astype("object")
+
+    before_missing = df[text_col].isna().sum()
     df = df.merge(df_pass, on="passage_num", how="left")
-    df[text_col] = df.get(text_col, pd.Series([None] * len(df))).fillna(df["passage_text"])
+
+    mask = df["passage_num"].notna() & df["passage_text"].notna()
+    updated_rows = int(mask.sum())
+    df.loc[mask, text_col] = df.loc[mask, "passage_text"]
+
     df.drop(columns=["passage_text"], inplace=True)
 
     after_missing = df[text_col].isna().sum()
-    logger.info(f"Passage texts merged. Missing {text_col}: before={before_missing}, after={after_missing}")
+    logger.info(
+        "Passage texts merged. Updated rows=%d. Missing %s: before=%d, after=%d",
+        updated_rows, text_col, before_missing, after_missing,
+    )
     return df
-
