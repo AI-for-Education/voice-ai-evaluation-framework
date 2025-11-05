@@ -29,8 +29,8 @@
      --nemo_manifest /io/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
    ```
 5. **Inspect the outputs** under `input_output_data/output/experiments/<experiment>/`:  
-   - `egra_eval_detailed.csv` (now includes EGRA/ASR summary metrics per row)  
-   - `egra_eval_summary.txt` (6-line global summary)  
+   - `egra_eval_detailed.csv` (very detailed evaluation, all metrics for each audio file)  
+   - `egra_eval_summary.txt` (6-line metrics global summary)  
    - Summary folders: `can_ref/`, `can_hyp/`, `ref_hyp/`
 
 Everything runs in Docker setup (CPU-only or GPU-enabled).
