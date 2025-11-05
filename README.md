@@ -11,22 +11,22 @@
 1. **Build the Docker image** (CPU by default):  
    `docker compose build`
 2. **Prepare the dataset and model**  
-   - Copy the dataset (including `0_Audio/`, `2_TextGrid/`, `Student_Full_Canonical_EGRA_*.csv`, `Student_MetaData_EGRA_*.csv`, and your passages CSV) into `input_output_data/input/<dataset_name>/`. Use the oral passages file from [this link](https://drive.google.com/file/d/1n50XR0TD557eYD2bkKmJ6Uem5n3SLJOc/view?usp=sharing) if it isn’t bundled.  
+   - Copy the dataset (including `0_Audio/`, `2_TextGrid/`, `Student_Full_Canonical_EGRA_*.csv`, `Student_MetaData_EGRA_*.csv` into `input_output_data/input/<dataset_name>/`. Use the oral passages file from [this link](https://drive.google.com/file/d/1n50XR0TD557eYD2bkKmJ6Uem5n3SLJOc/view?usp=sharing) and place it in `input_output_data/input/oral_passages.csv`.  
    - Download your NeMo ASR model (the default scripts expect [Swahili_exp1_100epochs.nemo](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-/view?usp=sharing)) and place it in `nemo_inference/models/`.
 3. **Run inference (mandatory arguments only)**  
    ```bash
    ./run_inference.sh \
-     --dataset_root /io/input/<dataset_name> \
-     --output_dir /io/output/<dataset_name>/nemo_asr_output \
-     --model /models/<model>.nemo
+     --dataset_root input_output_data/input/<dataset_name> \
+     --output_dir input_output_data/output/<dataset_name>/nemo_asr_output \
+     --model nemo_inference/models/<model>.nemo
    ```
 4. **Run evaluation (mandatory arguments only)**  
    ```bash
    ./run_eval.sh \
-     --dataset_root /io/input/<dataset_name> \
-     --output_root /io/output/experiments/<experiment> \
-     --passages_csv /io/input/<dataset_name>/oral_passages.csv \
-     --nemo_manifest /io/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
+     --dataset_root input_output_data/input/<dataset_name> \
+     --output_root input_output_data/output/experiments/<experiment> \
+     --passages_csv input_output_data/input/oral_passages.csv \
+     --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
    ```
 5. **Inspect the outputs** under `input_output_data/output/experiments/<experiment>/`:  
    - `egra_eval_detailed.csv` (very detailed evaluation, all metrics for each audio file)  
