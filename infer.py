@@ -89,9 +89,16 @@ def find_textgrid_for_audio(
                     print(f"[DEBUG] Using TextGrid: {candidate}")
                 return candidate
 
-    if debug:
-        print(f"[DEBUG] No TextGrid found for {wav_path}; searched {search_dirs}")
-    return None
+    if textgrid_dir:
+        base = Path(textgrid_dir)
+        matches: List[Path] = []
+        for suffix in (".TextGrid", ".textgrid"):
+            matches.extend(base.rglob(f"{wav.stem}{suffix}"))
+        if matches:
+            chosen = sorted(matches, key=lambda p: str(p).lower())[0]
+            if debug:
+                print(f"[DEBUG] Using TextGrid (recursive search): {chosen}")
+            return chosen
 
 
 def _get_tier_case_insensitive(tg: textgrid.Textgrid, tier_name: str):

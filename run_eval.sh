@@ -8,10 +8,10 @@ Usage:
 
 Example:
   ./run_eval.sh \
-    --dataset_root /io/input/1_Batch2_Data-v2 \
-    --output_root /io/output/experiments/exp_batch2 \
-    --nemo_manifest /io/input/1_Batch2_Data-v2/nemo_asr_output/transcriptions.jsonl \
-    --passages_csv /io/input/oral_passages.csv
+    --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
+    --output_root input_output_data/output/experiments/1_Batch2_Data_16spk_subset \
+    --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl \
+    --passages_csv input_output_data/input/oral_passages.csv
 EOF
   exit 1
 }

@@ -8,9 +8,9 @@ Usage:
 
 Example:
   ./run_inference.sh \
-    --dataset_root /io/input/1_Batch2_Data \
-    --output_dir /io/output/1_Batch2_Data/nemo_asr_output \
-    --model /models/Swahili_exp1_100epochs.nemo \
+    --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset/ \
+    --output_dir input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/ \
+    --model nemo_inference/models/Swahili_exp1_100epochs.nemo \
     --dataset_annotator Flora
 EOF
   exit 1
