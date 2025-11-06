@@ -13,14 +13,14 @@
 2. **Prepare the dataset and model**  
    - Copy the dataset (including `0_Audio/`, `2_TextGrid/`, `Student_Full_Canonical_EGRA_*.csv`, `Student_MetaData_EGRA_*.csv` into `input_output_data/input/<dataset_name>/`. Use the oral passages file from [this link](https://drive.google.com/file/d/1n50XR0TD557eYD2bkKmJ6Uem5n3SLJOc/view?usp=sharing) and place it in `input_output_data/input/oral_passages.csv`.  
    - Download your NeMo ASR model (the default scripts expect [Swahili_exp1_100epochs.nemo](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-/view?usp=sharing)) and place it in `nemo_inference/models/`.
-3. **Run inference (mandatory arguments only)**  
+3. **Run inference**  
    ```bash
    ./run_inference.sh \
      --dataset_root input_output_data/input/<dataset_name> \
      --output_dir input_output_data/output/<dataset_name>/nemo_asr_output \
      --model nemo_inference/models/<model>.nemo
    ```
-4. **Run evaluation (mandatory arguments only)**  
+4. **Run evaluation**  
    ```bash
    ./run_eval.sh \
      --dataset_root input_output_data/input/<dataset_name> \
@@ -32,6 +32,10 @@
    - `egra_eval_detailed.csv` (very detailed evaluation, all metrics for each audio file)  
    - `egra_eval_summary.txt` (6-line metrics global summary)  
    - Summary folders: `can_ref/`, `can_hyp/`, `ref_hyp/`
+6. **Explore interactively **  
+   - Dependencies: `pip install streamlit pandas numpy` (preferably inside a virtualenv).  
+   - Run: `streamlit run egra_dashboard.py -- --csv <path/to/egra_eval_detailed.csv>`  
+   - Open the browser tab (Streamlit serves on `http://localhost:8501` by default) to sort, group and aggregate metrics.
 
 Everything runs in Docker setup (CPU-only or GPU-enabled).
 
