@@ -1,8 +1,24 @@
-# EGRA ASR Evaluation Pipeline
+The purpose of this project is to evaluate NeMo ASR models on the task of early grade reading assessments (EGRA) for kiswahili child speech.
 
+**Input (you need to provide!):**
+- NeMo ASR model
+- dataset of kiswahili child speech comprising:
+  - audio files, 
+  - cannonical texts, i.e. what the child should have uttered and 
+  - reference text, i.e. what the child actually uttered
 
-1) **Transcribe** raw EGRA audio with a NeMo ASR model  
-2) **Evaluate** the results against human references using EGRA-style metrics and standard ASR metrics.
+**Output:**
+- KPIs to evaluate child:
+  - EGRA-COR - the EGRA-style correctness; based on the canonical text and the reference text
+  - EGRA-ACC - the EGRA accuracy; based on the canonical text and the reference text
+- KPIs to evaluate the ASR (used instead of an ennumerator):
+  - ASR-EGRA-COR - the EGRA-style correctness; uses ASR transcripts instead of reference texts
+  - ASR-EGRA-ACC - the EGRA accuracy; uses ASR transcripts are instead of reference texts
+  - MAE_EGRA_COR - the mean absolute error of the EGRA correctness when using ASR transcripts instead of reference texts
+  - ASR_WER - the word error rate for the ASR model
+
+The project transcribes the audio files in the input dataset using the input ASR model and computes the KPIs listed above.
+
 
 ---
 
