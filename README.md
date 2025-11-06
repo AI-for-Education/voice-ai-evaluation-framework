@@ -32,7 +32,7 @@
    - `egra_eval_detailed.csv` (very detailed evaluation, all metrics for each audio file)  
    - `egra_eval_summary.txt` (6-line metrics global summary)  
    - Summary folders: `can_ref/`, `can_hyp/`, `ref_hyp/`
-6. **Explore interactively **  
+6. **Explore interactively**  
    - Dependencies: `pip install streamlit pandas numpy` (preferably inside a virtualenv).  
    - Run: `streamlit run egra_dashboard.py -- --csv <path/to/egra_eval_detailed.csv>`  
    - Open the browser tab (Streamlit serves on `http://localhost:8501` by default) to sort, group and aggregate metrics.
