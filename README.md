@@ -67,6 +67,7 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
   - [1) Build the image](#1-build-the-image)  
   - [2) Run inference (ASR)](#2-run-inference-asr)  
   - [3) Run evaluation](#3-run-evaluation)  
+  - [Optional: Build a reference manifest](#optional-build-a-reference-manifest)  
 - [Outputs & how to interpret them](#outputs--how-to-interpret-them)  
 - [Metrics & definitions](#metrics--definitions)  
 - [Configuration knobs](#configuration-knobs)  
@@ -201,6 +202,27 @@ Usage:
   --output_root /io/output/<experiment> \
   --passages_csv /io/input/<dataset>/oral_passages.csv \
   --nemo_manifest /io/output/<dataset>/nemo_asr_output/transcriptions.jsonl
+```
+
+### Optional: Build a reference manifest
+
+If you need a NeMo-ready JSONL manifest that includes both canonical (`can_text`) and TextGrid-derived reference transcripts (`ref_text`), for example, before training or validating ASR models outside this repo, use `tools/make_ref_manifest.py`. The script relies on the same helpers as `evaluation.py`, so it enforces identical dataset layout and passage handling.
+
+Required arguments:
+
+- `--dataset_root` — dataset folder containing `0_IAR/0_Audio/`, `0_IAR/2_TextGrid/`, and the `Student_*` CSVs.
+- `--passages_csv` — oral passages file ( `input_output_data/input/oral_passages.csv`).
+- `--output_jsonl` — destination JSONL path.
+
+Optional flags: `--dataset_annotator` (limit TextGrid search to one annotator), `--tier_name` (default `child`), `--path_prefix` (rewrite audio paths, e.g., `/io/input/<dataset>`).
+
+Example:
+
+```bash
+python tools/make_ref_manifest.py \
+  --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset/ \
+  --passages_csv input_output_data/input/oral_passages.csv \
+  --output_jsonl nemo_manifest.jsonl
 ```
 
 
