@@ -43,13 +43,28 @@ def resolve_dataset_paths(dataset_root: str | Path, annotator: Optional[str] = N
     canonical_csv = _find_csv(root, "Student_Full_Canonical_EGRA*.csv", "Student Full Canonical CSV")
     metadata_csv = _find_csv(root, "Student_MetaData_EGRA*.csv", "Student MetaData CSV")
 
-    # locate 0_IAR hub directory if present; otherwise rely on specific subdirectories
-    try:
-        iar_dir = _find_directory(root, "0_IAR")
-    except DatasetLayoutError:
-        iar_dir = None
-
-    audio_root = _find_directory(iar_dir if iar_dir else root, "0_Audio")
+    # locate 0_IAR or 0IAR hub directory if present; otherwise rely on specific subdirectories
+    iar_dir = None
+    for iar_name in ["0_IAR", "0IAR"]:
+        try:
+            iar_dir = _find_directory(root, iar_name)
+            break
+        except DatasetLayoutError:
+            continue
+    
+    # Try to find audio directory (optional for evaluation if transcriptions already exist)
+    audio_root = None
+    for audio_name in ["0_Audio", "0Audio"]:
+        try:
+            audio_root = _find_directory(iar_dir if iar_dir else root, audio_name)
+            break
+        except DatasetLayoutError:
+            continue
+    
+    # If audio not found, create a dummy path (evaluation doesn't always need audio)
+    if audio_root is None:
+        audio_root = root / "0_Audio"  # Dummy path, won't be used if transcriptions exist
+    
     textgrid_parent = _find_directory(iar_dir if iar_dir else root, "2_TextGrid")
 
     chosen_textgrid_dir = textgrid_parent

@@ -59,6 +59,32 @@ ENV_VARS=(
   --env LHOTSE_DATA_HOME=/tmp/lhotse_data
 )
 
+# Detect host NVIDIA GPU and enable docker GPU flag when available.
+# This makes the script automatically pass GPU access to the container when
+# the host has NVIDIA drivers and the container runtime supports it.
+DOCKER_GPU_FLAG=()
+if command -v nvidia-smi >/dev/null 2>&1; then
+  if nvidia-smi >/dev/null 2>&1; then
+    # If the host has an NVIDIA GPU, ask Docker to expose GPUs to the container.
+    # Note: this requires the host to have the NVIDIA container toolkit installed
+    # (nvidia-container-toolkit) and a recent Docker / Compose that supports gpus.
+    echo "[INFO] NVIDIA GPU detected on host - enabling Docker GPU access"
+    DOCKER_GPU_FLAG=(--gpus all)
+  fi
+fi
+
+# If GPU access was requested, ensure the image is built with a CUDA-enabled PyTorch
+# backend. The Dockerfile supports a build-arg TORCH_CUDA (cpu|cu121). Building with
+# cu121 will install CUDA-enabled PyTorch wheels in the image.
+if [ "${#DOCKER_GPU_FLAG[@]}" -gt 0 ]; then
+  if [ -n "${NO_DOCKER_BUILD-}" ]; then
+    echo "[INFO] NO_DOCKER_BUILD is set - skipping docker image rebuild (would build with TORCH_CUDA=cu121)"
+  else
+    echo "[INFO] Building Docker image with CUDA-enabled PyTorch (TORCH_CUDA=cu121). This may take a while..."
+    docker compose build --build-arg TORCH_CUDA=cu121 nemo-asr
+  fi
+fi
+
 docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" \
   nemo-asr \
   python3 /work/infer.py \

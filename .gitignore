@@ -1,29 +1,26 @@
-# Ignore Python builds
-__pycache__/
-**/__pycache__/
-*.py[cod]
-*.so
+# Ignore large model files and common large artifacts
+# Model artifacts produced by NeMo or checkpoints
+nemo_inference/models/**/*.nemo
+nemo_inference/models/**/*.ckpt
+nemo_inference/models/*.nemo
+nemo_inference/models/*.ckpt
+
+# Generic binary model files
+*.nemo
+*.ckpt
+
+# Temporary / generated files
+nemo_inference/tmp/
 *.egg-info/
-.build/
-dist/
-.env
-.venv/
-.env*/
+__pycache__/
 .venv*/
-.ipynb_checkpoints/
-.mypy_cache/
 .pytest_cache/
+venv/
+env/
+*.pyc
+*.pyo
+*.so
+
+# OS files
 .DS_Store
-
-# Keep away of git the project data & models
-# Keep the folder structure via .gitkeep files inside each dir.
-
-# input_output_data
-input_output_data/**
-!input_output_data/.gitkeep
-!input_output_data/**/.gitkeep
-
-# nemo_inference
-nemo_inference/**
-!nemo_inference/.gitkeep
-!nemo_inference/**/.gitkeep
+Thumbs.db

@@ -46,7 +46,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$DATASET_ROOT" || -z "$OUTPUT_ROOT" || -z "$PASSAGES_CSV" ]]; then
+# If output root not provided, default to input_output_data/output/experiments/exp_{datetime}
+if [[ -z "$OUTPUT_ROOT" ]]; then
+  DEFAULT_DIR="input_output_data/output/experiments/exp_$(date '+%Y_%m_%d_%H_%M_%S')"
+  echo "No --output_root supplied. Using default: $DEFAULT_DIR"
+  OUTPUT_ROOT="$DEFAULT_DIR"
+fi
+
+if [[ -z "$DATASET_ROOT" || -z "$PASSAGES_CSV" ]]; then
   usage
 fi
 

@@ -18,7 +18,8 @@ services:
   nemo-asr:
     <<: *egra_base
     container_name: nemo-asr
-    # If you have NVIDIA runtime and want GPU, uncomment the next line
+    # GPU access is disabled by default to avoid nvidia-container errors on hosts
+    # without a properly configured NVIDIA driver / toolkit. To enable GPU, uncomment:
     # gpus: "all"
 
   egra-eval:

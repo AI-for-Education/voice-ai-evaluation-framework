@@ -19,10 +19,80 @@ The purpose of this project is to evaluate NeMo ASR models on the task of early 
 
 The project transcribes the audio files in the input dataset using the input ASR model and computes the KPIs listed above.
 
+There are 43 recordings per child that can be categorised into 7 tasks being tested. The [Task Mapping TSV](tools/task_mapping.tsv) organises the recordings into the respective task categories to be used for calculating the egra_eval_summary.txt.
+
+
+Metrics needed in summary.txt
+Passage and grid reading (T1, T2, T4, T6 each need all of these metrics: wer_ref_hyp, r, scatter plot, MAE_correct_counts, MER, subs_prec, subs_r, subs_f1, insert_p, insert_r, insert_f1, del_prec, del_r, del_f1, mistakes_prec, mistakes_r, mistakes_f1). More info about these are given below:
+ASR WER: wer_ref_hyp
+EGRA:
+Correlation coefficient r (see next slide) between predicted (hyp-ref) and actual number of correct (can-ref) words per utterance (segment)
+Scatter plot in code
+MAE between correct counts. This is MAE between EGRA_ACC and ASR_EGRA_ACC (not normalised)
+EGRA_ACC = can_ref
+ASR_EGRA_ACC = hyp_ref
+Finer grained:
+Mistake error rate (MER)
+Substitution P, R, F1
+Insertion P, R, F1
+Deletion P, R, F1
+All mistakes P, R, F1
+Isolated letters, syllables and non-words (T3, T5, T7 and each has the metrics: wer_ref_hyp, egra_acc, corr_mistake_pred_prec,  corr_mistake_pred_r,  corr_mistake_pred_f1, baseline_prec, baseline_r, baseline_f1):
+ASR WER: wer_ref_hyp
+EGRA accuracy = {TP + TN}/{N}
+P, R, F1 for correct mistake prediction (label 1 = {mistake})
+P, R, F1 for majority baseline
+
+Context
+
+This repository evaluates an ASR (Automatic Speech Recognition) system for Swahili children completing EGRA-style speech tests.
+
+Each child performs 42 tests, grouped into 7 categories (T1–T7).
+The mapping from test → category is defined in the project README.
+
+For each test item, we have three string forms:
+
+Canonical — the target / intended word shown to the child.
+
+Reference (REF) — what the child actually said, human-annotated.
+
+Hypothesis (HYP) — what the ASR system predicted the child said.
+
+The current evaluation pipeline already produces an egra_eval_summary.txt file with several metrics.
+
+Additional metrics (described in the README under Task for New Metrics) and ensure they appear in the generated egra_eval_summary.txt, aggregated per test category (T1–T7) and overall.
+
+New Metrics to Add
+
+The README defines multiple phonological metrics that must now be computed using the canonical, reference, and hypothesis forms.
+
+A typical example:
+
+Substitution Precision Example
+
+True substitutions = differences between reference and canonical
+Predicted substitutions = differences between hypothesis and canonical
+Metric = How well HYP predicts the same substitutions that REF made.
+
+Each metric follows this pattern:
+Compare REF vs CANONICAL → child’s true phonological process
+Compare HYP vs CANONICAL → system’s predicted phonological process
+
+Compute true positives, false positives, false negatives
+
+Derive:
+Precision
+Recall
+F1-score
+
+Counts as needed (TP, FP, FN)
+
+These metrics must be computed inside each test category and optionally aggregated across all tests.
 
 ---
 
 ## Straight forward steps
+
 
 1. **Build the Docker image** (CPU by default):  
    `docker compose build`
@@ -36,21 +106,37 @@ The project transcribes the audio files in the input dataset using the input ASR
      --output_dir input_output_data/output/<dataset_name>/nemo_asr_output \
      --model nemo_inference/models/<model>.nemo
    ```
+  Example
+  ```bash
+  ./run_inference.sh \
+     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
+     --output_dir input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output \
+     --model nemo_inference/models/Swahili_exp1_100epochs.nemo
+   ```
 4. **Run evaluation**  
    ```bash
    ./run_eval.sh \
      --dataset_root input_output_data/input/<dataset_name> \
-     --output_root input_output_data/output/experiments/<experiment> \
      --passages_csv input_output_data/input/oral_passages.csv \
      --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
    ```
+    Example
+    ```bash
+    ./run_eval.sh \
+      --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
+      --passages_csv input_output_data/input/oral_passages.csv \
+      --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl
+    ```
+    
 5. **Inspect the outputs** under `input_output_data/output/experiments/<experiment>/`:  
    - `egra_eval_detailed.csv` (very detailed evaluation, all metrics for each audio file)  
    - `egra_eval_summary.txt` (6-line metrics global summary)  
    - Summary folders: `can_ref/`, `can_hyp/`, `ref_hyp/`
 6. **Explore results interactively**  
    - Dependencies: `pip install streamlit pandas numpy` (preferably inside a virtualenv).  
+     - Specific example: `python3 -m venv .venv_streamlit && . .venv_streamlit/bin/activate && pip install --upgrade pip setuptools wheel && pip install streamlit pandas numpy`
    - Run: `streamlit run egra_dashboard.py -- --csv <path/to/egra_eval_detailed.csv>`  
+     - Specific example: ` . .venv_streamlit/bin/activate && streamlit run egra_dashboard.py -- --csv input_output_data/output/experiments/exp1/egra_eval_detailed.csv`
    - Open the browser tab (Streamlit serves on `http://localhost:8501` by default) to sort, group and aggregate metrics.
 
 Everything runs in Docker setup (CPU-only or GPU-enabled).
@@ -60,18 +146,22 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 ## Contents
 
 - [Straight forward steps](#straight-forward-steps)
-- [Project structure](#project-structure)  
-- [What the pipeline does](#what-the-pipeline-does)  
-- [Input data format](#input-data-format)  
-- [How to run (Docker)](#how-to-run-docker)  
-  - [1) Build the image](#1-build-the-image)  
-  - [2) Run inference (ASR)](#2-run-inference-asr)  
-  - [3) Run evaluation](#3-run-evaluation)  
-  - [Optional: Build a reference manifest](#optional-build-a-reference-manifest)  
-- [Outputs & how to interpret them](#outputs--how-to-interpret-them)  
-- [Metrics & definitions](#metrics--definitions)  
-- [Configuration knobs](#configuration-knobs)  
-- [Troubleshooting](#troubleshooting)  
+- [Contents](#contents)
+- [Project structure](#project-structure)
+- [What the pipeline does](#what-the-pipeline-does)
+- [Input data format](#input-data-format)
+- [How to run (Docker)](#how-to-run-docker)
+  - [1) Build the image](#1-build-the-image)
+  - [2) Run inference (ASR)](#2-run-inference-asr)
+  - [3) Run evaluation](#3-run-evaluation)
+  - [4) Optional: compare with NeMo offline scoring](#4-optional-compare-with-nemo-offline-scoring)
+- [Outputs \& how to interpret them](#outputs--how-to-interpret-them)
+- [Metrics \& definitions](#metrics--definitions)
+  - [Metric ranges \& units](#metric-ranges--units)
+- [Configuration knobs](#configuration-knobs)
+  - [Inference (`infer.py`)](#inference-inferpy)
+  - [Evaluation (`evaluation.py`)](#evaluation-evaluationpy)
+- [Troubleshooting](#troubleshooting)
 - [Source files](#source-files)
 
 ---
@@ -202,27 +292,6 @@ Usage:
   --output_root /io/output/<experiment> \
   --passages_csv /io/input/<dataset>/oral_passages.csv \
   --nemo_manifest /io/output/<dataset>/nemo_asr_output/transcriptions.jsonl
-```
-
-### Optional: Build a reference manifest
-
-If you need a NeMo-ready JSONL manifest that includes both canonical (`can_text`) and TextGrid-derived reference transcripts (`ref_text`), for example, before training or validating ASR models outside this repo, use `tools/make_ref_manifest.py`. The script relies on the same helpers as `evaluation.py`, so it enforces identical dataset layout and passage handling.
-
-Required arguments:
-
-- `--dataset_root` — dataset folder containing `0_IAR/0_Audio/`, `0_IAR/2_TextGrid/`, and the `Student_*` CSVs.
-- `--passages_csv` — oral passages file ( `input_output_data/input/oral_passages.csv`).
-- `--output_jsonl` — destination JSONL path.
-
-Optional flags: `--dataset_annotator` (limit TextGrid search to one annotator), `--tier_name` (default `child`), `--path_prefix` (rewrite audio paths, e.g., `/io/input/<dataset>`).
-
-Example:
-
-```bash
-python tools/make_ref_manifest.py \
-  --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset/ \
-  --passages_csv input_output_data/input/oral_passages.csv \
-  --output_jsonl nemo_manifest.jsonl
 ```
 
 
