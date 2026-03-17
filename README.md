@@ -120,6 +120,14 @@ These metrics must be computed inside each test category and optionally aggregat
      --passages_csv input_output_data/input/oral_passages.csv \
      --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
    ```
+  Example
+  ```bash
+  ./run_manifest.sh \
+     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
+     --output_root input_output_data/output/experiments/1_Batch2_Data_16spk_subset \
+     --passages_csv input_output_data/input/oral_passages.csv \
+     --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl
+  ```
    This generates:
    - `<output_root>/manifests/ref_manifest.raw.jsonl`
    - `<output_root>/manifests/ref_manifest.clean.jsonl`
