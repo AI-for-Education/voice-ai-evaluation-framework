@@ -112,27 +112,40 @@ These metrics must be computed inside each test category and optionally aggregat
      --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
      --output_dir input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output \
      --model nemo_inference/models/Swahili_exp1_100epochs.nemo
+  ```
+4. **Create manifest and save it on disk**  
+   ```bash
+   ./run_manifest.sh \
+     --dataset_root input_output_data/input/<dataset_name> \
+     --passages_csv input_output_data/input/oral_passages.csv \
+     --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
    ```
-4. **Run evaluation**  
+   This generates:
+   - `<output_root>/manifests/ref_manifest.raw.jsonl`
+   - `<output_root>/manifests/ref_manifest.clean.jsonl`
+
+5. **Run evaluation**  
    ```bash
    ./run_eval.sh \
      --dataset_root input_output_data/input/<dataset_name> \
      --passages_csv input_output_data/input/oral_passages.csv \
-     --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
+     --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl \
+     --manifest_in input_output_data/output/experiments/<experiment>/manifests/ref_manifest.clean.jsonl
    ```
     Example
     ```bash
     ./run_eval.sh \
       --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
       --passages_csv input_output_data/input/oral_passages.csv \
-      --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl
+      --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl \
+      --manifest_in input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.clean.jsonl
     ```
     
-5. **Inspect the outputs** under `input_output_data/output/experiments/<experiment>/`:  
+6. **Inspect the outputs** under `input_output_data/output/experiments/<experiment>/`:  
    - `egra_eval_detailed.csv` (very detailed evaluation, all metrics for each audio file)  
    - `egra_eval_summary.txt` (6-line metrics global summary)  
    - Summary folders: `can_ref/`, `can_hyp/`, `ref_hyp/`
-6. **Explore results interactively**  
+7. **Explore results interactively**  
    - Dependencies: `pip install streamlit pandas numpy` (preferably inside a virtualenv).  
      - Specific example: `python3 -m venv .venv_streamlit && . .venv_streamlit/bin/activate && pip install --upgrade pip setuptools wheel && pip install streamlit pandas numpy`
    - Run: `streamlit run egra_dashboard.py -- --csv <path/to/egra_eval_detailed.csv>`  
@@ -152,21 +165,23 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 
 ### Mode2 mode (optional, manifest-oriented)
 - Enable with `--build_manifest_first`.
-- `evaluation.py` runs 3 explicit stages before scoring:
+- `evaluation.py` runs 3 explicit stages:
 1. Build a raw reference manifest on disk (`ref_manifest.raw.jsonl`).
 2. Clean it using the built-in aggressive cleaning profile (training-style normalization).
 3. Load cleaned manifest text and use it for REF/CAN attachment before scoring.
 - Defaults:
   - raw manifest: `<output_root>/manifests/ref_manifest.raw.jsonl`
   - cleaned manifest: `<output_root>/manifests/ref_manifest.clean.jsonl`
+- For separated execution:
+  - use `--manifest_only` to stop after stage 2
+  - use `--manifest_in <cleaned_manifest.jsonl>` in a later run to score from an existing cleaned manifest
 
 Example (Mode2 mode):
 ```bash
-./run_eval.sh \
+./run_manifest.sh \
   --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
   --passages_csv input_output_data/input/oral_passages.csv \
-  --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl \
-  --build_manifest_first
+  --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl
 ```
 
 ---
@@ -204,7 +219,8 @@ Example (Mode2 mode):
 ├── docker-compose.yml            # Compose with two services: nemo-asr (inference), egra-eval (evaluation)
 ├── evaluation.py                 # Main entrypoint for evaluation & summaries
 ├── infer.py                      # Main entrypoint for NeMo-based transcription
-├── run_eval.sh                   # Wrapper script for evaluation (dataset_root + output_root mandatory)
+├── run_eval.sh                   # Wrapper script for evaluation (supports --manifest_in for existing cleaned manifests)
+├── run_manifest.sh               # Wrapper script to build+clean manifest only (no scoring)
 ├── run_inference.sh              # Wrapper script for inference (dataset_root + output_root + model mandatory)
 ├── egra_eval/
 │   ├── data/

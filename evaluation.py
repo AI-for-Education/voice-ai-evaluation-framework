@@ -301,6 +301,16 @@ def parse_args() -> argparse.Namespace:
         help="Build and clean a reference manifest before scoring, then load it for REF/CAN texts.",
     )
     p.add_argument(
+        "--manifest_only",
+        action="store_true",
+        help="Build/clean manifest and exit without running evaluation.",
+    )
+    p.add_argument(
+        "--manifest_in",
+        default=None,
+        help="Path to an existing cleaned manifest JSONL to load for REF/CAN attachment.",
+    )
+    p.add_argument(
         "--manifest_raw_out",
         default=None,
         help="Path for the raw built reference manifest JSONL. Defaults to <output_root>/manifests/ref_manifest.raw.jsonl.",
@@ -1168,7 +1178,9 @@ def main() -> None:
     )
     df_egra = attach_passage_texts(df_egra, args.passages_csv, logger=logger)
 
-    # Optional PR2 workflow: build manifest -> clean manifest -> load cleaned text manifest.
+    manifest_to_load: Path | None = Path(args.manifest_in) if args.manifest_in else None
+
+    # Optional PR2 workflow: build manifest -> clean manifest.
     if args.build_manifest_first:
         manifests_dir = Path(args.output_root) / "manifests"
         manifests_dir.mkdir(parents=True, exist_ok=True)
@@ -1205,9 +1217,22 @@ def main() -> None:
             clean_stats["dropped_empty_text"],
         )
 
-        logger.info("Stage C: loading cleaned manifest for REF/CAN attachment.")
+        manifest_to_load = clean_manifest_path
+
+    if args.manifest_only:
+        if not args.build_manifest_first:
+            raise SystemExit("--manifest_only requires --build_manifest_first.")
+        logger.info("Manifest-only mode enabled; skipping evaluation stage.")
+        print("Raw manifest:", raw_manifest_path)
+        print("Clean manifest:", clean_manifest_path)
+        return
+
+    if manifest_to_load is not None:
+        if not manifest_to_load.exists():
+            raise SystemExit(f"--manifest_in file not found: {manifest_to_load}")
+        logger.info("Stage C: loading cleaned manifest for REF/CAN attachment -> %s", manifest_to_load)
         text_manifest_df = load_text_manifest(
-            str(clean_manifest_path),
+            str(manifest_to_load),
             text_key=args.manifest_text_key,
             can_key="can_text",
             logger=logger,
