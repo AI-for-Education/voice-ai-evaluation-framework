@@ -146,3 +146,123 @@ def summary_per_speaker_subcategory(df: pd.DataFrame, prefix: str) -> pd.DataFra
         cols = ["learner_id", "macro_category", "sub_category"] + _metric_columns(prefix)
         return pd.DataFrame(columns=cols)
     return summary_for_pair(df_cat, prefix, by=["learner_id", "macro_category", "sub_category"])
+
+
+def aggregate_phonological_metrics(df: pd.DataFrame, by: list[str] | None = None) -> dict[str, float]:
+    """
+    Aggregate phonological metrics (TP/FP/FN, Precision/Recall/F1) for substitutions, deletions, insertions.
+    
+    Args:
+        df: DataFrame with phonological metric columns (S_TP, S_FP, S_FN, etc.)
+        by: Optional list of columns to group by. If None, aggregates across all rows.
+    
+    Returns:
+        Dictionary with aggregated metrics
+    """
+    if df.empty:
+        return {}
+    
+    # Columns for each error type
+    error_types = {
+        'S': ['S_TP', 'S_FP', 'S_FN', 'S_Precision', 'S_Recall', 'S_F1'],
+        'D': ['D_TP', 'D_FP', 'D_FN', 'D_Precision', 'D_Recall', 'D_F1'],
+        'I': ['I_TP', 'I_FP', 'I_FN', 'I_Precision', 'I_Recall', 'I_F1'],
+    }
+    
+    # Check which columns exist
+    available_cols = set(df.columns)
+    
+    result = {}
+    
+    if by is None:
+        # Aggregate across all rows
+        for prefix, cols in error_types.items():
+            existing_cols = [c for c in cols if c in available_cols]
+            if not existing_cols:
+                continue
+            
+            # Sum TP, FP, FN
+            if f'{prefix}_TP' in existing_cols:
+                tp = df[f'{prefix}_TP'].sum()
+                fp = df[f'{prefix}_FP'].sum() if f'{prefix}_FP' in existing_cols else 0
+                fn = df[f'{prefix}_FN'].sum() if f'{prefix}_FN' in existing_cols else 0
+                
+                result[f'{prefix}_TP'] = float(tp)
+                result[f'{prefix}_FP'] = float(fp)
+                result[f'{prefix}_FN'] = float(fn)
+                
+                # Compute aggregated Precision, Recall, F1
+                precision = tp / (tp + fp) if (tp + fp) > 0 else float('nan')
+                recall = tp / (tp + fn) if (tp + fn) > 0 else float('nan')
+                f1 = 2 * (precision * recall) / (precision + recall) if not (precision + recall == 0 or (precision != precision) or (recall != recall)) else float('nan')
+                
+                result[f'{prefix}_Precision'] = precision
+                result[f'{prefix}_Recall'] = recall
+                result[f'{prefix}_F1'] = f1
+    else:
+        # Group by specified columns
+        grouped = df.groupby(by, dropna=False)
+        for keys, sub_df in grouped:
+            if not isinstance(keys, tuple):
+                keys = (keys,)
+            
+            for prefix, cols in error_types.items():
+                existing_cols = [c for c in cols if c in available_cols]
+                if not existing_cols:
+                    continue
+                
+                tp = sub_df[f'{prefix}_TP'].sum() if f'{prefix}_TP' in existing_cols else 0
+                fp = sub_df[f'{prefix}_FP'].sum() if f'{prefix}_FP' in existing_cols else 0
+                fn = sub_df[f'{prefix}_FN'].sum() if f'{prefix}_FN' in existing_cols else 0
+                
+                precision = tp / (tp + fp) if (tp + fp) > 0 else float('nan')
+                recall = tp / (tp + fn) if (tp + fn) > 0 else float('nan')
+                f1 = 2 * (precision * recall) / (precision + recall) if not (precision + recall == 0 or (precision != precision) or (recall != recall)) else float('nan')
+                
+                # Store with group keys as prefix
+                key_str = '_'.join(str(k) for k in keys)
+                result[f'{key_str}_{prefix}_TP'] = float(tp)
+                result[f'{key_str}_{prefix}_FP'] = float(fp)
+                result[f'{key_str}_{prefix}_FN'] = float(fn)
+                result[f'{key_str}_{prefix}_Precision'] = precision
+                result[f'{key_str}_{prefix}_Recall'] = recall
+                result[f'{key_str}_{prefix}_F1'] = f1
+    
+    return result
+
+
+def summary_phonological_by_category(df: pd.DataFrame) -> dict[str, dict[str, float]]:
+    """
+    Compute phonological metrics aggregated by category.
+    
+    Args:
+        df: DataFrame with phonological metrics and category columns
+    
+    Returns:
+        Dictionary mapping category names to aggregated metrics
+    """
+    df_cat = _annotate_audio_categories(df)
+    df_cat = df_cat[df_cat["macro_category"].notna()].copy()
+    
+    if df_cat.empty:
+        return {}
+    
+    results = {}
+    
+    # Overall aggregate
+    results['__OVERALL__'] = aggregate_phonological_metrics(df_cat, by=None)
+    
+    # By macro category
+    for macro_cat in df_cat["macro_category"].unique():
+        if pd.isna(macro_cat):
+            continue
+        sub_df = df_cat[df_cat["macro_category"] == macro_cat]
+        results[f'macro_{macro_cat}'] = aggregate_phonological_metrics(sub_df, by=None)
+    
+    # By macro + sub category
+    for (macro_cat, sub_cat), sub_df in df_cat.groupby(["macro_category", "sub_category"], dropna=False):
+        if pd.isna(macro_cat) or pd.isna(sub_cat):
+            continue
+        results[f'{macro_cat}_{sub_cat}'] = aggregate_phonological_metrics(sub_df, by=None)
+    
+    return results
