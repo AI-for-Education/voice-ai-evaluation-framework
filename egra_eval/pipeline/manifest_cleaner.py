@@ -42,12 +42,14 @@ def normalize_manifest_record(
     obj: Dict[str, Any],
     *,
     text_input_key: str = "ref_text",
-    text_output_key: str = "text",
+    text_output_key: str = "ref_text",
     lowercase_can_text: bool = True,
 ) -> Dict[str, Any]:
     out = dict(obj)
     source = out.get(text_input_key, "")
     out[text_output_key] = clean_text(source)
+    if text_output_key != "text":
+        out.pop("text", None)
     if lowercase_can_text and isinstance(out.get("can_text"), str):
         out["can_text"] = out["can_text"].lower()
     return out
@@ -59,7 +61,7 @@ def clean_manifest_jsonl(
     output_path: str | Path,
     drop_empty_text: bool = False,
     text_input_key: str = "ref_text",
-    text_output_key: str = "text",
+    text_output_key: str = "ref_text",
 ) -> dict[str, Any]:
     in_path = Path(input_path)
     out_path = Path(output_path)

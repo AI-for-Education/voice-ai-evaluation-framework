@@ -332,8 +332,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--manifest_text_key",
-        default="text",
-        help="Text key to load from cleaned manifest into REF (default: text).",
+        default="ref_text",
+        help="Text key to load from cleaned manifest into REF (default: ref_text).",
     )
     return p.parse_args()
 
@@ -421,7 +421,7 @@ def load_text_manifest(
     path: str,
     *,
     audio_key: str = "audio_filepath",
-    text_key: str = "text",
+    text_key: str = "ref_text",
     can_key: str = "can_text",
     logger: logging.Logger | None = None,
 ) -> pd.DataFrame:
