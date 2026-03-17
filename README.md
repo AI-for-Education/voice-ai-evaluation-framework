@@ -143,9 +143,38 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 
 ---
 
+## Working Modes (Mode1 / Mode2)
+
+### Mode1 mode (default, backward-compatible)
+- This is the existing evaluation flow.
+- `evaluation.py` loads canonical + metadata CSVs, attaches hypotheses, reads REF from TextGrid, then scores.
+- No manifest build/clean stages are required.
+
+### Mode2 mode (optional, manifest-oriented)
+- Enable with `--build_manifest_first`.
+- `evaluation.py` runs 3 explicit stages before scoring:
+1. Build a raw reference manifest on disk (`ref_manifest.raw.jsonl`).
+2. Clean it using the built-in aggressive cleaning profile (training-style normalization).
+3. Load cleaned manifest text and use it for REF/CAN attachment before scoring.
+- Defaults:
+  - raw manifest: `<output_root>/manifests/ref_manifest.raw.jsonl`
+  - cleaned manifest: `<output_root>/manifests/ref_manifest.clean.jsonl`
+
+Example (Mode2 mode):
+```bash
+./run_eval.sh \
+  --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
+  --passages_csv input_output_data/input/oral_passages.csv \
+  --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl \
+  --build_manifest_first
+```
+
+---
+
 ## Contents
 
 - [Straight forward steps](#straight-forward-steps)
+- [Working Modes (Model1 / Model2)](#working-modes-mode1--mode2)
 - [Contents](#contents)
 - [Project structure](#project-structure)
 - [What the pipeline does](#what-the-pipeline-does)
@@ -189,9 +218,14 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 │   │   └── scoring.py            # Normalization + WER counts + ACC, P/R/F1
 │   ├── normalize/
 │   │   └── textnorm.py           # Simple text normalization (lowercase, remove punctuation, collapse spaces)
+│   ├── pipeline/
+│   │   ├── manifest_builder.py   # Build reference manifests from CSV + TextGrid-enriched rows
+│   │   └── manifest_cleaner.py   # Manifest text cleaning (training-style aggressive normalization)
 │   └── report/
 │       └── summarize.py          # Summaries: macro, per-learner, overall, etc.
 ├── tools/                        # Helper scripts (NeMo manifest prep, comparisons, etc.)
+│   ├── make_ref_manifest.py      # Standalone reference manifest builder
+│   └── ...
 ├── input_output_data/
 │   ├── input/                    # place each dataset folder for every experiment here
 │   └── output/                   # experiment results (one subfolder per run)
