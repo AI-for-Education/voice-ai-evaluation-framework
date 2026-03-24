@@ -44,6 +44,18 @@ def compute_duration(path: Path) -> float:
         return float(len(f) / f.samplerate)
 
 
+def _safe_text(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    s = str(value)
+    return "" if s.lower() == "nan" else s
+
+
 def build_reference_manifest_dataframe(
     df: pd.DataFrame,
     *,
@@ -75,9 +87,9 @@ def build_reference_manifest_dataframe(
         record = {
             "audio_filepath": format_output_path(audio_path, dataset_root, path_prefix),
             "duration": compute_duration(audio_path),
-            "pred_text": "",
-            "ref_text": str(row.get("ref_text", "") or ""),
-            "can_text": str(row.get("canonical_text", "") or ""),
+            "pred_text": _safe_text(row.get("hyp_text", "")),
+            "ref_text": _safe_text(row.get("ref_text", "")),
+            "can_text": _safe_text(row.get("canonical_text", "")),
         }
         records.append(record)
 
@@ -96,4 +108,3 @@ def write_manifest_jsonl(df_manifest: pd.DataFrame, output_path: str | Path) -> 
     with out.open("w", encoding="utf-8") as f:
         for _, row in df_manifest.iterrows():
             f.write(json.dumps(row.to_dict(), ensure_ascii=False) + "\n")
-

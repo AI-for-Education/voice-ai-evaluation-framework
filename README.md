@@ -94,66 +94,132 @@ These metrics must be computed inside each test category and optionally aggregat
 ## Straight forward steps
 
 
-1. **Build the Docker image** (CPU by default):  
-   `docker compose build`
-2. **Prepare the dataset and model**  
-   - Copy the dataset (including `0_Audio/`, `2_TextGrid/`, `Student_Full_Canonical_EGRA_*.csv`, `Student_MetaData_EGRA_*.csv` into `input_output_data/input/<dataset_name>/`. Use the oral passages file from [this link](https://drive.google.com/file/d/1n50XR0TD557eYD2bkKmJ6Uem5n3SLJOc/view?usp=sharing) and place it in `input_output_data/input/oral_passages.csv`.  
-   - Download your NeMo ASR model (the default scripts expect [Swahili_exp1_100epochs.nemo](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-/view?usp=sharing)) and place it in `nemo_inference/models/`.
-3. **Run inference**  
+1. **Build the Docker image** (optional):
+
+   Generic:
+   ```bash
+   docker compose build
+   ```
+
+   Example:
+   ```bash
+   docker compose build
+   ```
+
+2. **Prepare dataset + model**
+   - Copy dataset files (`0_Audio/`, `2_TextGrid/`, `Student_Full_Canonical_EGRA_*.csv`, `Student_MetaData_EGRA_*.csv`) under `input_output_data/input/<dataset_name>/`.
+   - Place passages CSV at `input_output_data/input/oral_passages.csv`.
+   - Place your NeMo model in `nemo_inference/models/`.
+
+3. **Build base full manifest (input for segmentation)**
+
+   Generic:
+   ```bash
+   ./run_make_ref_manifest.sh \
+     --dataset_root input_output_data/input/<dataset_name> \
+     --passages_csv input_output_data/input/oral_passages.csv \
+     --output_jsonl input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw.jsonl
+   ```
+
+   Example:
+   ```bash
+   ./run_make_ref_manifest.sh \
+     --dataset_root input_output_data/input/2_Batch3_4_Data_validation \
+     --passages_csv input_output_data/input/oral_passages.csv \
+     --output_jsonl input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.raw.jsonl
+   ```
+
+4. **Segment manifest + generate segmented audio**
+
+   Generic:
+   ```bash
+   ./run_segment.sh \
+     --textgrid_root input_output_data/input/<dataset_name>/0_IAR/2_TextGrid \
+     --manifest_in input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw.jsonl \
+     --manifest_out input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl \
+     --segments_out_root input_output_data/output/experiments/<dataset_name>/audio_segments
+   ```
+
+   Example:
+   ```bash
+   ./run_segment.sh \
+     --textgrid_root input_output_data/input/2_Batch3_4_Data_validation/0_IAR/2_TextGrid \
+     --manifest_in input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.raw.jsonl \
+     --manifest_out input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.raw_segments.jsonl \
+     --segments_out_root input_output_data/output/experiments/2_Batch3_4_Data_validation/audio_segments
+   ```
+
+5. **Run ASR inference on segmented audio**
+
+   Generic:
    ```bash
    ./run_inference.sh \
      --dataset_root input_output_data/input/<dataset_name> \
-     --output_dir input_output_data/output/<dataset_name>/nemo_asr_output \
+     --root_audio_dir input_output_data/output/experiments/<dataset_name>/audio_segments \
+     --output_dir input_output_data/output/<dataset_name>/nemo_asr_output_segments \
      --model nemo_inference/models/<model>.nemo
    ```
-  Example
-  ```bash
-  ./run_inference.sh \
-     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
-     --output_dir input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output \
+
+   Example:
+   ```bash
+   ./run_inference.sh \
+     --dataset_root input_output_data/input/2_Batch3_4_Data_validation \
+     --root_audio_dir input_output_data/output/experiments/2_Batch3_4_Data_validation/audio_segments \
+     --output_dir input_output_data/output/2_Batch3_4_Data_validation/nemo_asr_output_segments \
      --model nemo_inference/models/Swahili_exp1_100epochs.nemo
-  ```
-4. **Create manifest and save it on disk**  
+   ```
+
+6. **Build final segment-level manifest (attach `pred_text` from ASR) + clean**
+
+   Generic:
    ```bash
    ./run_manifest.sh \
      --dataset_root input_output_data/input/<dataset_name> \
-     --passages_csv input_output_data/input/oral_passages.csv \
-     --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl
+     --output_root input_output_data/output/experiments/<dataset_name> \
+     --manifest_base_in input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl \
+     --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output_segments/transcriptions.jsonl \
+     --manifest_raw_out input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.segment.raw.jsonl \
+     --manifest_clean_out input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.segment.clean.jsonl
    ```
-  Example
-  ```bash
-  ./run_manifest.sh \
-     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
-     --output_root input_output_data/output/experiments/1_Batch2_Data_16spk_subset \
-     --passages_csv input_output_data/input/oral_passages.csv \
-     --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl
-  ```
-   This generates:
-   - `<output_root>/manifests/ref_manifest.raw.jsonl`
-   - `<output_root>/manifests/ref_manifest.clean.jsonl`
 
-5. **Run evaluation**  
+   Example:
+   ```bash
+   ./run_manifest.sh \
+     --dataset_root input_output_data/input/2_Batch3_4_Data_validation \
+     --output_root input_output_data/output/experiments/2_Batch3_4_Data_validation \
+     --manifest_base_in input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.raw_segments.jsonl \
+     --nemo_manifest input_output_data/output/2_Batch3_4_Data_validation/nemo_asr_output_segments/transcriptions.jsonl \
+     --manifest_raw_out input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.segment.raw.jsonl \
+     --manifest_clean_out input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.segment.clean.jsonl
+   ```
+
+   This generates:
+   - `<output_root>/manifests/ref_manifest.segment.raw.jsonl`
+   - `<output_root>/manifests/ref_manifest.segment.clean.jsonl`
+
+7. **Run evaluation from cleaned segment manifest**
+
+   Generic:
    ```bash
    ./run_eval.sh \
      --dataset_root input_output_data/input/<dataset_name> \
-     --passages_csv input_output_data/input/oral_passages.csv \
-     --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output/transcriptions.jsonl \
-     --manifest_in input_output_data/output/experiments/<experiment>/manifests/ref_manifest.clean.jsonl
+     --manifest_in input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.segment.clean.jsonl \
+     --output_root input_output_data/output/experiments/<dataset_name>
    ```
-    Example
-    ```bash
-    ./run_eval.sh \
-      --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
-      --passages_csv input_output_data/input/oral_passages.csv \
-      --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl \
-      --manifest_in input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.clean.jsonl
-    ```
-    
-6. **Inspect the outputs** under `input_output_data/output/experiments/<experiment>/`:  
+
+   Example:
+   ```bash
+   ./run_eval.sh \
+     --dataset_root input_output_data/input/2_Batch3_4_Data_validation \
+     --manifest_in input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.segment.clean.jsonl \
+     --output_root input_output_data/output/experiments/2_Batch3_4_Data_validation
+   ```
+
+8. **Inspect the outputs** under `input_output_data/output/experiments/<experiment>/`:  
    - `egra_eval_detailed.csv` (very detailed evaluation, all metrics for each audio file)  
    - `egra_eval_summary.txt` (6-line metrics global summary)  
    - Summary folders: `can_ref/`, `can_hyp/`, `ref_hyp/`
-7. **Explore results interactively**  
+9. **Explore results interactively**  
    - Dependencies: `pip install streamlit pandas numpy` (preferably inside a virtualenv).  
      - Specific example: `python3 -m venv .venv_streamlit && . .venv_streamlit/bin/activate && pip install --upgrade pip setuptools wheel && pip install streamlit pandas numpy`
    - Run: `streamlit run egra_dashboard.py -- --csv <path/to/egra_eval_detailed.csv>`  
@@ -164,40 +230,20 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 
 ---
 
-## Working Modes (Mode1 / Mode2)
+## Working Modes
 
-### Mode1 mode (default, backward-compatible)
-- This is the existing evaluation flow.
-- `evaluation.py` loads canonical + metadata CSVs, attaches hypotheses, reads REF from TextGrid, then scores.
-- No manifest build/clean stages are required.
-
-### Mode2 mode (optional, manifest-oriented)
-- Enable with `--build_manifest_first`.
-- `evaluation.py` runs 3 explicit stages:
-1. Build a raw reference manifest on disk (`ref_manifest.raw.jsonl`).
-2. Clean it using the built-in aggressive cleaning profile (training-style normalization).
-3. Load cleaned manifest text and use it for REF/CAN attachment before scoring.
-- Defaults:
-  - raw manifest: `<output_root>/manifests/ref_manifest.raw.jsonl`
-  - cleaned manifest: `<output_root>/manifests/ref_manifest.clean.jsonl`
-- For separated execution:
-  - use `--manifest_only` to stop after stage 2
-  - use `--manifest_in <cleaned_manifest.jsonl>` in a later run to score from an existing cleaned manifest
-
-Example (Mode2 mode):
-```bash
-./run_manifest.sh \
-  --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
-  --passages_csv input_output_data/input/oral_passages.csv \
-  --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl
-```
+- Segment-only flow is the default documented flow:
+- `run_segment.sh`: creates segment audio + segment manifest.
+- `run_inference.sh`: transcribes segment audio.
+- `run_manifest.sh`: builds/cleans final segment-level manifest from `--manifest_base_in`.
+- `run_eval.sh`: scores only from an existing cleaned segment manifest (`--manifest_in`).
 
 ---
 
 ## Contents
 
 - [Straight forward steps](#straight-forward-steps)
-- [Working Modes (Model1 / Model2)](#working-modes-mode1--mode2)
+- [Working Modes](#working-modes)
 - [Contents](#contents)
 - [Project structure](#project-structure)
 - [What the pipeline does](#what-the-pipeline-does)
@@ -205,14 +251,18 @@ Example (Mode2 mode):
 - [How to run (Docker)](#how-to-run-docker)
   - [1) Build the image](#1-build-the-image)
   - [2) Run inference (ASR)](#2-run-inference-asr)
-  - [3) Run evaluation](#3-run-evaluation)
-  - [4) Optional: compare with NeMo offline scoring](#4-optional-compare-with-nemo-offline-scoring)
+  - [3) Run standalone segmentation](#3-run-standalone-segmentation)
+  - [4) Run inference on segments](#4-run-inference-on-segments)
+  - [5) Build final segment manifest (REF/CAN/HYP source for evaluation)](#5-build-final-segment-manifest-refcanhyp-source-for-evaluation)
+  - [6) Run evaluation](#6-run-evaluation)
+  - [7) Optional: compare with NeMo offline scoring](#7-optional-compare-with-nemo-offline-scoring)
 - [Outputs \& how to interpret them](#outputs--how-to-interpret-them)
 - [Metrics \& definitions](#metrics--definitions)
   - [Metric ranges \& units](#metric-ranges--units)
 - [Configuration knobs](#configuration-knobs)
   - [Inference (`infer.py`)](#inference-inferpy)
-  - [Evaluation (`evaluation.py`)](#evaluation-evaluationpy)
+  - [Manifest build (`manifest_pipeline.py`)](#manifest-build-manifest_pipelinepy)
+  - [Evaluation (`eval_pipeline.py`)](#evaluation-eval_pipelinepy)
 - [Troubleshooting](#troubleshooting)
 - [Source files](#source-files)
 
@@ -225,11 +275,14 @@ Example (Mode2 mode):
 ├── docker/
 │   └── Dockerfile                # Base image with PyTorch, NeMo, audio libs, pandas, jiwer, praatio, librosa, etc.
 ├── docker-compose.yml            # Compose with two services: nemo-asr (inference), egra-eval (evaluation)
-├── evaluation.py                 # Main entrypoint for evaluation & summaries
+├── manifest_pipeline.py          # Build+clean manifest entrypoint (used by run_manifest.sh)
+├── eval_pipeline.py              # Evaluation entrypoint from existing manifest (used by run_eval.sh)
+├── evaluation.py                 # Shared evaluation utilities and legacy combined entrypoint
 ├── infer.py                      # Main entrypoint for NeMo-based transcription
 ├── run_eval.sh                   # Wrapper script for evaluation (supports --manifest_in for existing cleaned manifests)
 ├── run_manifest.sh               # Wrapper script to build+clean manifest only (no scoring)
 ├── run_inference.sh              # Wrapper script for inference (dataset_root + output_root + model mandatory)
+├── run_segment.sh                # Wrapper script for standalone manifest/audio segmentation
 ├── egra_eval/
 │   ├── data/
 │   │   ├── linking.py            # Build keys, attach HYPs to EGRA rows
@@ -244,8 +297,11 @@ Example (Mode2 mode):
 │   │   └── textnorm.py           # Simple text normalization (lowercase, remove punctuation, collapse spaces)
 │   ├── pipeline/
 │   │   ├── manifest_builder.py   # Build reference manifests from CSV + TextGrid-enriched rows
+│   │   ├── eval_utils.py         # Letter canonical adjustment + advanced dp_align metrics helpers
+│   │   ├── segmenter.py          # TextGrid-driven segmentation helpers reused by inference
 │   │   └── manifest_cleaner.py   # Manifest text cleaning (training-style aggressive normalization)
 │   └── report/
+│       ├── writers.py            # Detailed CSV + text summary + per-pair summary writers
 │       └── summarize.py          # Summaries: macro, per-learner, overall, etc.
 ├── tools/                        # Helper scripts (NeMo manifest prep, comparisons, etc.)
 │   ├── make_ref_manifest.py      # Standalone reference manifest builder
@@ -264,18 +320,18 @@ Example (Mode2 mode):
 
 **Inference (`infer.py`)**
 - Recursively scans the dataset root (either `--dataset_root` or `--root_audio_dir`) for `.wav` files.
-- Resamples audio to 16 kHz as needed and, if a matching TextGrid exists (default tier `child`), slices the audio according to the intervals before transcription.
+- Resamples audio to 16 kHz as needed and applies TextGrid-driven segmentation via `egra_eval/pipeline/segmenter.py` (all intervals, no label filtering), before transcription.
 - Emits a NeMo-style JSONL manifest containing `audio_filepath`, `duration` and `pred_text`.
 
-**Evaluation (`evaluation.py`)**
-- Discovers the student CSVs, audio and TextGrid folders from `--dataset_root` (or explicit `--egra_csv`, `--meta_csv`, etc.).
-- Recursively searches `2_TextGrid/` for `.TextGrid` files, selects the first match for each audio stem, and strips filler tags such as `<unk>`, `<noise>`, `<um>`, etc. from the REF transcript.
-- Automatically normalizes canonical letter prompts so consonants receive a trailing `a` (e.g., `g -> ga`) prior to scoring.
-- Attaches ASR hypotheses from the provided manifest(s) and computes metrics for:
-  - **CAN vs REF** (annotator-based EGRA).
-  - **CAN vs HYP** (ASR-based EGRA).
-  - **REF vs HYP** (ASR quality vs human).
-- Produces a **detailed CSV**, a 6-line text summary, and per-alignment summary folders (`can_ref/`, `can_hyp/`, `ref_hyp/`).
+**Manifest build (`manifest_pipeline.py`)**
+- In segment-only flow, loads a base segment manifest from `--manifest_base_in`.
+- Attaches ASR hypotheses from `--nemo_manifest` (optional).
+- Writes cleaned segment manifests (for example `ref_manifest.segment.raw.jsonl` and `ref_manifest.segment.clean.jsonl`).
+
+**Evaluation (`eval_pipeline.py`)**
+- Loads the cleaned manifest via `--manifest_in` and attaches `REF/CAN/HYP` by audio key.
+- Computes CAN/REF, CAN/HYP, REF/HYP metrics and advanced summaries.
+- Produces a **detailed CSV**, text summary, and per-alignment summary folders (`can_ref/`, `can_hyp/`, `ref_hyp/`).
 
 ---
 
@@ -295,7 +351,7 @@ input_output_data/input/1_Batch2_Data-v2/
 
 - Only `0_Audio/`, `2_TextGrid/`, the two `Student_*` CSVs, and the passages CSV are consumed; other folders (for example `1_Annotation`) are ignored.
 - Evaluation walks every subdirectory under `2_TextGrid/` and chooses the first `.TextGrid` whose stem matches the audio; no annotator flag is required. Inference still accepts `--dataset_annotator` if you want to limit slicing to a specific folder.
-- If the dataset root already contains `nemo_asr_output/transcriptions.jsonl`, `evaluation.py` will attach it automatically unless you override with `--nemo_manifest`.
+- Evaluation now uses a cleaned manifest as explicit input (`--manifest_in`).
 
 ## How to run (Docker)
 
@@ -318,7 +374,7 @@ docker compose build --build-arg TORCH_CUDA=cu121
 
 We provide `run_inference.sh`. It will:
 - Discover audio/TextGrid folders from `--dataset_root` (or use the explicit paths you supply).
-- Resample/slice audio as needed and run the NeMo model (`--model`).
+- Resample audio, segment it using TextGrid intervals (segmenter module), and run the NeMo model (`--model`).
 - Write a manifest (`transcriptions.jsonl`) under the chosen output folder.
 The script runs `docker compose run` with your current `uid:gid`, so all generated files inside `input_output_data` are owned by the host user.
 
@@ -334,12 +390,66 @@ Usage:
 
 > To use GPU at run time: add `--gpus all` after `docker compose run` or enable `gpus: "all"` in the compose file.
 
-### 3) Run evaluation
+### 3) Run standalone segmentation
+
+We provide `run_segment.sh` to run `segment_manifests.py` directly.
+The script is now strict segment-only:
+- rows without valid audio/TextGrid are skipped (not copied as full utterances);
+- even a single valid interval produces `*_segment1.wav`.
+
+Usage:
+```bash
+./run_segment.sh \
+  --textgrid_root /io/input/<dataset>/0_IAR/2_TextGrid \
+  --manifest_in /io/output/<experiment>/manifests/ref_manifest.raw.jsonl \
+  --manifest_out /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
+  --segments_out_root /io/output/<dataset>/audio_segments
+```
+
+Example:
+```bash
+./run_segment.sh \
+  --textgrid_root input_output_data/input/1_Batch2_Data_16spk_subset/0_IAR/2_TextGrid \
+  --manifest_in input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.raw.jsonl \
+  --manifest_out input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.raw_segments.jsonl \
+  --segments_out_root input_output_data/output/experiments/1_Batch2_Data_16spk_subset/audio_segments
+```
+
+### 4) Run inference on segments
+
+Use `run_inference.sh` with `--root_audio_dir` pointed to segmented audio:
+
+```bash
+./run_inference.sh \
+  --dataset_root /io/input/<dataset> \
+  --root_audio_dir /io/output/<experiment>/audio_segments \
+  --output_dir /io/output/<dataset>/nemo_asr_output_segments \
+  --model /models/<model>.nemo
+```
+
+### 5) Build final segment manifest (REF/CAN/HYP source for evaluation)
+
+We provide `run_manifest.sh`. It will:
+- Load base segment manifest from `--manifest_base_in` (preserve segment granularity).
+- Attach ASR hypotheses from `--nemo_manifest`.
+- Write cleaned segment manifest under `<output_root>/manifests`.
+
+Usage:
+```bash
+./run_manifest.sh \
+  --dataset_root /io/input/<dataset> \
+  --output_root /io/output/<experiment> \
+  --manifest_base_in /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
+  --nemo_manifest /io/output/<dataset>/nemo_asr_output_segments/transcriptions.jsonl \
+  --manifest_raw_out /io/output/<experiment>/manifests/ref_manifest.segment.raw.jsonl \
+  --manifest_clean_out /io/output/<experiment>/manifests/ref_manifest.segment.clean.jsonl
+```
+
+### 6) Run evaluation
 
 We provide `run_eval.sh`. It will:
-- Locate the canonical/meta CSVs plus the audio/TextGrid folders (via `--dataset_root` or explicit paths).
-- Attach ASR hypotheses from the given manifest(s).
-- Read reference transcripts by searching all TextGrid folders and matching on audio stem.
+- Load segment rows from the cleaned manifest passed via `--manifest_in` and score at segment level.
+- Attach learner metadata from dataset CSVs via `learner_id`.
 - Produce the detailed CSV, the text summary, and per-pair summary folders in the chosen output directory.
 Like the inference wrapper, it executes the container with your user ID so the resulting CSVs and summaries remain writable without sudo.
 
@@ -348,12 +458,11 @@ Usage:
 ./run_eval.sh \
   --dataset_root /io/input/<dataset> \
   --output_root /io/output/<experiment> \
-  --passages_csv /io/input/<dataset>/oral_passages.csv \
-  --nemo_manifest /io/output/<dataset>/nemo_asr_output/transcriptions.jsonl
+  --manifest_in /io/output/<experiment>/manifests/ref_manifest.segment.clean.jsonl
 ```
 
 
-### 4) Optional: compare with NeMo offline scoring
+### 7) Optional: compare with NeMo offline scoring
 
 `run_nemo_offline_eval.sh` normalizes the dataset into NeMo manifests and invokes NVIDIA’s
 `speech_to_text_eval.py` for both REF↔HYP and CAN↔HYP scoring.
@@ -479,21 +588,26 @@ If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC) a
 - **Dataset root**: `--dataset_root /io/input/<dataset>` — required.
 - **Annotator**: `--dataset_annotator <annotatorName>` to pick a specific annotator (defaults to the first alphabetically).
 - **Output root**: `--output_root /io/input/<dataset>/nemo_asr_output` — where `transcriptions.jsonl` is written.
-- **TextGrid tier**: `--tier_name child`; change this if your intervals live on a different tier.
+- **TextGrid tier**: `--tier_name` is kept for CLI compatibility, but segmentation now reads full TextGrid interval blocks and is not tier-based.
 - **CPU workers**: `--cpu_workers N` sets the number of CPU threads used when no GPU is available.
 - **Temp segments**: `--tmp_dir /work/nemo_inference/tmp` lets you keep the 16 kHz segments around for debugging.
 
 > `run_inference.sh` requires the named options `--dataset_root`, `--output_dir`, and `--model`; add any extra flags after those.
 
-### Evaluation (`evaluation.py`)
+### Manifest build (`manifest_pipeline.py`)
 No implicit defaults are applied to dataset/output paths—provide them explicitly.
 
-Run `python3 evaluation.py --help` to see available options. Highlights:
+Run `python3 manifest_pipeline.py --help` to see available options. Highlights:
 - `--dataset_root /io/input/<dataset>` — required; automatically discovers the `Student_*` CSVs plus `0_Audio/` and `2_TextGrid/`.
-- `--passages_csv /io/input/<dataset>/oral_passages.csv` — required; supplies the passage text mapping for passage tasks.
-- `--output_root /io/output/<experiment>` — required; directory where results are written.
-- `--nemo_manifest /path/to/transcriptions.jsonl` — attach one or more ASR manifests.
-- `--summary_can_ref_dir`, `--summary_can_hyp_dir`, `--summary_ref_hyp_dir` — optional overrides for the summary output destinations.
+- `--manifest_base_in /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl` — required in segment-only flow; preserves segment rows.
+- `--output_root /io/output/<experiment>` — optional; defaults to a timestamped experiment directory.
+- `--nemo_manifest /path/to/transcriptions.jsonl` — optional; if provided, `pred_text` is attached from ASR manifest.
+
+### Evaluation (`eval_pipeline.py`)
+Run `python3 eval_pipeline.py --help` to see available options. Highlights:
+- `--dataset_root /io/input/<dataset>` — required.
+- `--manifest_in /io/output/<experiment>/manifests/ref_manifest.segment.clean.jsonl` — required.
+- `--output_root /io/output/<experiment>` — optional; defaults to a timestamped experiment directory.
 
 ---
 
@@ -501,10 +615,10 @@ Run `python3 evaluation.py --help` to see available options. Highlights:
 
 - **No GPU used**: Ensure the image was built with `--build-arg TORCH_CUDA=cu121` **and** you run with `--gpus all` or `gpus: "all"` in compose.
 - **Empty or short `pred_text`**: Check that the model matches the language/domain. Also verify sample rate conversion (the script resamples to 16 kHz automatically).
-- **Missing REF text**: Ensure a `.TextGrid` with the same stem as the audio exists somewhere under `2_TextGrid/`; the evaluator searches recursively but still needs matching filenames.
-- **Passage text missing**: Double-check that `--passages_csv` points to the oral passages file bundled with the dataset.
-- **Passage segmentation not applied**: Make sure the TextGrid files contain the `child` tier and that audio/TextGrid names align; if needed, point `--tier_name` to the tier that carries spoken intervals.
-- **Manifests don’t match**: Joins default to the file stem; switch `--match_on` to `name` or `path` (or rename files consistently) if the stems differ.
+- **Missing REF text in segment base manifest**: Ensure `run_segment.sh` used the correct `--textgrid_root` and that audio/TextGrid stems align.
+- **Segment ASR not attached**: Check that `--nemo_manifest` in `run_manifest.sh` points to segmented ASR output and that `--match_on` is appropriate.
+- **Segmentation not applied in inference**: Ensure matching `.TextGrid` files exist under `2_TextGrid/` and names align with audio stems; segmentation follows all parsed intervals from TextGrid.
+- **Unexpected full rows in segment manifest**: re-run `run_segment.sh`; strict mode drops non-segmentable rows and writes only `*_segmentN.wav` entries.
 - **Permissions**: The repo root and `input_output_data` are mounted read-write. Models are mounted read-only from `nemo_inference/models`.
 
 ---
@@ -513,12 +627,13 @@ Run `python3 evaluation.py --help` to see available options. Highlights:
 
 - **`infer.py`**  
   Automatically discovers `0_Audio/` and `2_TextGrid/` under `--dataset_root`, resamples to 16 kHz,
-  slices by TextGrid intervals when present, and writes `transcriptions.jsonl` to the output folder.
+  delegates segmentation to `egra_eval/pipeline/segmenter.py`, and writes `transcriptions.jsonl`.
 
-- **`evaluation.py`**  
-  Orchestrates the evaluation pipeline: loads the `Student_*` CSVs, attaches the ASR manifest, adds
-  canonical passage and letter adjustments, searches `2_TextGrid/` recursively for matching `.TextGrid`
-  files, computes metrics, and writes the detailed CSV, text summary, and per-pair summaries.
+- **`manifest_pipeline.py`**  
+  Builds and cleans final manifests; in segment-only flow it loads `--manifest_base_in` and attaches ASR `pred_text` from `--nemo_manifest`.
+
+- **`eval_pipeline.py`**  
+  Runs scoring and report generation using only a cleaned manifest (`--manifest_in`) plus dataset metadata CSVs.
 
 - **`egra_eval/metrics/scoring.py`**  
   Wraps `jiwer` to produce counts (**S, D, I, C, N**), **WER** and **ACC** (all expressed as percentages in downstream outputs). Uses `normalize/textnorm.py` for simple text normalization.
@@ -545,16 +660,25 @@ Run `python3 evaluation.py --help` to see available options. Highlights:
   - `summary_per_speaker_macro(df, prefix)` — per learner × macro category.
   - `summary_per_speaker_subcategory(df, prefix)` — per learner × macro category × subcategory.
 
+- **`egra_eval/pipeline/eval_utils.py`**
+  Shared evaluation helpers for letter canonical normalization and advanced metrics (MER + fine-grained P/R/F1 via `dp_align`).
+
+- **`egra_eval/pipeline/segmenter.py`**
+  Shared TextGrid segmentation module used by inference; parses interval blocks and cuts audio without label/tier filtering.
+
+- **`egra_eval/report/writers.py`**
+  Writers for `egra_eval_detailed.csv`, `egra_eval_summary.txt`, T1 walkthrough, and summary CSV outputs.
+
 - **`docker/Dockerfile`**  
   Debian 12 base with PyTorch (CPU or CUDA), NeMo ASR 2.4.1 and all Python dependencies pinned for reproducibility.
 
 - **`docker-compose.yml`**  
   Two services:
   - `nemo-asr`: run inference (`infer.py`).
-  - `egra-eval`: run evaluation (`evaluation.py`).
+  - `egra-eval`: run manifest build/evaluation (`manifest_pipeline.py`, `eval_pipeline.py`).
   Mounts repo as `/work`, data as `/io`, models as `/models`, temp segments as `/tmp_segments`.
 
-- **`run_inference.sh` / `run_eval.sh`**  
-  Thin wrappers to run the right compose service with the right command (evaluation now requires `--passages_csv`).
+- **`run_inference.sh` / `run_segment.sh` / `run_manifest.sh` / `run_eval.sh`**  
+  Thin wrappers to run the right compose service with the right command.
 - **`run_nemo_offline_eval.sh`**  
   Generates normalized REF/CAN manifests and runs NVIDIA NeMo’s own `speech_to_text_eval.py` script for REF↔HYP and CAN↔HYP scoring. Handy for cross-checking the internal metrics against the official NeMo implementation.

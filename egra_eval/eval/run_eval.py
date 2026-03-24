@@ -7,11 +7,11 @@ from egra_eval.metrics.scoring import score
 
 def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
     """
-    Calculează scoruri pe fiecare rând:
+    Compute row-level scores:
       - CAN vs REF  -> WER_can_ref, ACC_can_ref, S/D/I/C/N (C_can_ref = EGRA_COR)
       - CAN vs HYP  -> WER_can_hyp, ACC_can_hyp, S/D/I/C/N (C_can_hyp = ASR_EGRA_COR)
       - REF vs HYP  -> WER_ref_hyp, precision/recall/F1, S/D/I/C/N
-      - Acord       -> MAE_COR = |C_can_ref - C_can_hyp|
+      - Agreement   -> MAE_COR = |C_can_ref - C_can_hyp|
     """
     logger = logging.getLogger("egra_eval")
     rows = []
@@ -19,7 +19,7 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
 
     for _, r in df_egra.iterrows():
         can = r.get("canonical_text", "")  # CAN
-        ref = r.get("ref_text", "")        # REF (uman)
+        ref = r.get("ref_text", "")        # REF (human)
         hyp = r.get("hyp_text", "")        # HYP (ASR)
         has_hyp = isinstance(hyp, str) and hyp.strip() != ""
         if not has_hyp:
@@ -52,7 +52,7 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             "CAN": can, "REF": ref, "HYP": hyp,
 
             # --- CAN vs REF
-            "WER_can_ref": s_can_ref.WER,   # deja în procente
+            "WER_can_ref": s_can_ref.WER,   # already in percentage units
             "ACC_can_ref": acc_can_ref,
             "S_can_ref": s_can_ref.S,
             "D_can_ref": s_can_ref.D,
@@ -69,7 +69,7 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             "C_can_hyp": s_can_hyp.C if s_can_hyp else math.nan,               # necesar pentru summary_*
             "N_can_hyp": s_can_hyp.N if s_can_hyp else 0,
 
-            # --- REF vs HYP (calitatea ASR față de uman)
+            # --- REF vs HYP (ASR quality against human reference)
             "WER_ref_hyp": s_ref_hyp.WER if s_ref_hyp else math.nan,    # procente
             "ACC_ref_hyp": acc_ref_hyp,
             "S_ref_hyp": s_ref_hyp.S if s_ref_hyp else 0,
@@ -78,7 +78,7 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             "C_ref_hyp": s_ref_hyp.C if s_ref_hyp else math.nan,
             "N_ref_hyp": s_ref_hyp.N if s_ref_hyp else 0,
 
-            # --- Acord între EGRA uman și EGRA-ASR
+            # --- Agreement between human EGRA and ASR EGRA
             "has_hyp": has_hyp,
         }
 
@@ -96,7 +96,7 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
     if missing_hyp_count:
         logger.info(f"No ASR hypothesis for {missing_hyp_count} row(s); CAN/HYP and REF/HYP metrics set to NaN.")
 
-    # atașează metadata pe learner_id (left join)
+    # Attach metadata by learner_id (left join).
     out = df_scores.merge(df_meta, on="learner_id", how="left")
 
     metric_cols_order = [

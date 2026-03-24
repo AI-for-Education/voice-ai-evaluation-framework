@@ -7,17 +7,17 @@ import inspect
 import json
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import librosa
 import numpy as np
 import soundfile as sf
 import torch
 from nemo.collections.asr.models import ASRModel
-from praatio import textgrid
 from tqdm import tqdm
 
 from egra_eval.data.dataset_layout import DatasetLayoutError, resolve_dataset_paths
+from egra_eval.pipeline.segmenter import segment_wav_from_textgrid
 
 TARGET_SR = 16000
 DEFAULT_TMP = "nemo_inference/tmp"
@@ -48,121 +48,6 @@ def write_wav(path: str, audio: np.ndarray, sr: int) -> None:
 
 def seconds_to_samples(s: float, sr: int) -> int:
     return int(round(s * sr))
-
-
-# ---------------------------------------------------------------------------
-# TextGrid helpers
-# ---------------------------------------------------------------------------
-
-def find_textgrid_for_audio(
-    wav_path: str,
-    textgrid_dir: Optional[str],
-    audio_root: Optional[str] = None,
-    debug: bool = False,
-) -> Optional[Path]:
-    wav = Path(wav_path)
-    search_dirs: List[Path] = []
-    seen: set[Path] = set()
-
-    def add_dir(path: Optional[Path]) -> None:
-        if path and path.exists() and path not in seen:
-            search_dirs.append(path)
-            seen.add(path)
-
-    add_dir(wav.parent)
-
-    if textgrid_dir:
-        base = Path(textgrid_dir)
-        if audio_root:
-            try:
-                rel_parent = wav.relative_to(Path(audio_root)).parent
-                add_dir(base / rel_parent)
-            except ValueError:
-                pass
-        add_dir(base)
-
-    for directory in search_dirs:
-        for ext in (".TextGrid", ".textgrid"):
-            candidate = directory / f"{wav.stem}{ext}"
-            if candidate.exists():
-                if debug:
-                    print(f"[DEBUG] Using TextGrid: {candidate}")
-                return candidate
-
-    if textgrid_dir:
-        base = Path(textgrid_dir)
-        matches: List[Path] = []
-        for suffix in (".TextGrid", ".textgrid"):
-            matches.extend(base.rglob(f"{wav.stem}{suffix}"))
-        if matches:
-            chosen = sorted(matches, key=lambda p: str(p).lower())[0]
-            if debug:
-                print(f"[DEBUG] Using TextGrid (recursive search): {chosen}")
-            return chosen
-
-
-def _get_tier_case_insensitive(tg: textgrid.Textgrid, tier_name: str):
-    for nm in tg.tierNames:
-        if nm.lower() == tier_name.lower():
-            return tg.getTier(nm)
-    return None
-
-
-def _entries_from_tier(tier) -> List[Tuple[float, float, str]]:
-    entries = getattr(tier, "entries", None)
-    if entries is None:
-        entries = getattr(tier, "entryList", [])
-
-    out = []
-    for e in entries:
-        if isinstance(e, (tuple, list)) and len(e) >= 3:
-            start, end, lab = e[0], e[1], e[2]
-        else:
-            start = getattr(e, "start", None)
-            end = getattr(e, "end", None)
-            lab = getattr(e, "label", "")
-        if start is None or end is None:
-            continue
-        out.append((float(start), float(end), (lab or "").strip()))
-    return out
-
-
-def read_textgrid_intervals(
-    tg_path: Path,
-    tier_name: str,
-    debug: bool = False,
-) -> List[Tuple[float, float, str]]:
-    tg = textgrid.openTextgrid(str(tg_path), includeEmptyIntervals=False, reportingMode="silence")
-    tier = _get_tier_case_insensitive(tg, tier_name)
-    if tier is None:
-        if debug:
-            print(f"[DEBUG] Tier '{tier_name}' not found in {tg_path}. Available: {tg.tierNames}")
-        return []
-    raw = _entries_from_tier(tier)
-    labeled = []
-    for start, end, label in raw:
-        if not label:
-            continue
-        normalized = label.strip().lower()
-        if normalized == "<enumerator>":
-            if debug:
-                print(f"[DEBUG] Skipping enumerator interval [{start:.3f}, {end:.3f}] in {tg_path.name}")
-            continue
-        labeled.append((start, end, label))
-
-    if debug:
-        print(f"[DEBUG] {tg_path.name}: {len(raw)} intervals on tier, {len(labeled)} labeled.")
-    return labeled
-
-
-def slice_by_intervals(audio: np.ndarray, sr: int, intervals: List[Tuple[float, float, str]]) -> List[np.ndarray]:
-    chunks = []
-    for start, end, _ in intervals:
-        s = max(0, seconds_to_samples(start, sr))
-        e = min(len(audio), seconds_to_samples(end, sr))
-        if e > s:
-            chunks.append(audio[s:e].copy())
-    return chunks
 
 
 # ---------------------------------------------------------------------------
@@ -282,26 +167,21 @@ def main() -> None:
 
             duration = float(len(audio) / sr)
 
-            tg_path = find_textgrid_for_audio(
-                wav_path,
-                args.textgrid_dir,
-                audio_root=args.root_audio_dir,
-                debug=args.debug,
-            )
-
             segment_files: List[str] = []
             cleanup_paths: List[Path] = []
 
-            if tg_path is not None:
-                intervals = read_textgrid_intervals(tg_path, args.tier_name, debug=args.debug)
-                for idx, chunk in enumerate(slice_by_intervals(audio, sr, intervals)):
-                    seg_path = Path(args.tmp_dir) / f"{Path(wav_path).stem}_seg{idx:03d}.wav"
-                    write_wav(str(seg_path), chunk, sr)
-                    if args.debug:
-                        start, end, label = intervals[idx]
-                        print(f"[DEBUG] Wrote segment {idx}: {seg_path} [{start:.3f}, {end:.3f}] '{label}'")
-                    segment_files.append(str(seg_path))
-                    cleanup_paths.append(seg_path)
+            # Segmentation logic is delegated to egra_eval.pipeline.segmenter.
+            # infer.py only consumes the produced segment file list.
+            seg_paths = segment_wav_from_textgrid(
+                wav_path=wav_path,
+                textgrid_root=args.textgrid_dir,
+                segments_out_root=args.tmp_dir,
+            )
+            if seg_paths:
+                segment_files = [str(p) for p in seg_paths]
+                cleanup_paths = list(seg_paths)
+                if args.debug:
+                    print(f"[DEBUG] Segmented {wav_path} into {len(segment_files)} file(s).")
 
             if not segment_files:
                 if was_resampled:

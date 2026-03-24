@@ -70,6 +70,14 @@ def attach_hypotheses(
     if "hyp_text_x" in out.columns and "hyp_text_y" in out.columns:
         out["hyp_text"] = out["hyp_text_x"].fillna(out["hyp_text_y"]).fillna("")
         out.drop(columns=["hyp_text_x", "hyp_text_y"], inplace=True)
+    elif "hyp_text" in out.columns and "hyp_text_from_manifest" in out.columns:
+        # Common path when left DF already has hyp_text and right adds a dedicated
+        # hyp_text_from_manifest column through merge suffixes.
+        left_vals = out["hyp_text"].astype(str)
+        right_vals = out["hyp_text_from_manifest"]
+        left_missing = out["hyp_text"].isna() | (left_vals.str.strip() == "") | (left_vals.str.lower() == "nan")
+        out.loc[left_missing, "hyp_text"] = right_vals.loc[left_missing]
+        out["hyp_text"] = out["hyp_text"].fillna("")
     elif "hyp_text" not in out.columns:
         out["hyp_text"] = out.get("hyp_text_from_manifest", "")
 
@@ -79,4 +87,3 @@ def attach_hypotheses(
     attached = out["hyp_text"].notna().sum()
     logger.info(f"Attached HYP for ~{attached:,} rows (join key: {key}; EGRA entities before merge: {before:,}).")
     return out
-
