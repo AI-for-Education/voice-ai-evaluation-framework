@@ -239,16 +239,21 @@ def build_eval_rows_from_manifest(manifest_df: pd.DataFrame, logger: logging.Log
     out["audio_file"] = out["audio_name"].astype(str)
 
     seg_mask = out["audio_name"].astype(str).str.contains(r"_segment\d+\.wav$", regex=True, na=False)
-    if seg_mask.any() and (~seg_mask).any():
-        dropped = int((~seg_mask).sum())
+    seg_count = int(seg_mask.sum())
+    nonseg_count = int((~seg_mask).sum())
+    if seg_count and nonseg_count:
         logger.warning(
-            "Manifest contains mixed granularity; dropping %d non-segment row(s) and evaluating only segment rows.",
-            dropped,
+            "Manifest contains mixed granularity; evaluating all rows (segment=%d, non-segment=%d).",
+            seg_count,
+            nonseg_count,
         )
-        out = out.loc[seg_mask].copy()
+    elif seg_count:
+        logger.info("Manifest appears segment-based (rows=%d).", seg_count)
+    else:
+        logger.info("Manifest appears non-segment-based (rows=%d).", len(out))
 
     if out.empty:
-        raise SystemExit("No segment rows found in manifest after filtering.")
+        raise SystemExit("No rows found in manifest after parsing.")
 
     out["learner_id"] = out["audio_stem"].astype(str).apply(_extract_learner_id)
     out["audio_type"] = out["audio_stem"].astype(str).apply(_infer_audio_type)
@@ -261,7 +266,7 @@ def build_eval_rows_from_manifest(manifest_df: pd.DataFrame, logger: logging.Log
     out["hypothesis_text"] = out["hyp_text"]
 
     logger.info(
-        "Prepared segment-level evaluation rows from manifest: rows=%d | non-empty REF=%d | non-empty CAN=%d | non-empty HYP=%d",
+        "Prepared evaluation rows from manifest: rows=%d | non-empty REF=%d | non-empty CAN=%d | non-empty HYP=%d",
         len(out),
         int(_valid_text_mask(out["ref_text"]).sum()),
         int(_valid_text_mask(out["canonical_text"]).sum()),

@@ -357,8 +357,18 @@ def write_text_summary(df: pd.DataFrame, out_csv: str, logger: logging.Logger) -
                 f.write(f"mistakes_f1: {m_f1:.4f}\n")
 
             if task_id in group_b:
-                f.write(f"wer_ref_hyp: {_fmt4(metrics.get('ASR_WER', 'N/A'))}\n")
-                f.write(f"egra_acc: {_fmt4(metrics.get('EGRA-ACC', 'N/A'))}\n")
+                wer_task = (
+                    sel["WER_ref_hyp"].dropna().mean()
+                    if ("WER_ref_hyp" in sel.columns and not sel["WER_ref_hyp"].dropna().empty)
+                    else metrics.get("ASR_WER", "N/A")
+                )
+                egra_acc_task = (
+                    sel["ACC_can_ref"].dropna().mean()
+                    if ("ACC_can_ref" in sel.columns and not sel["ACC_can_ref"].dropna().empty)
+                    else metrics.get("EGRA-ACC", "N/A")
+                )
+                f.write(f"wer_ref_hyp: {_fmt4(wer_task)}\n")
+                f.write(f"egra_acc: {_fmt4(egra_acc_task)}\n")
                 f.write(f"corr_mistake_pred_prec: {m_p:.4f}\n")
                 f.write(f"corr_mistake_pred_r: {m_r:.4f}\n")
                 f.write(f"corr_mistake_pred_f1: {m_f1:.4f}\n")
