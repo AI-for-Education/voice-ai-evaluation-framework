@@ -239,6 +239,24 @@ def write_text_summary(df: pd.DataFrame, out_csv: str, logger: logging.Logger) -
         f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
         return p, r, f1
 
+
+    def _weighted_wer_from_counts(frame: pd.DataFrame, prefix: str) -> float:
+        s_col, d_col, i_col, n_col = f"S_{prefix}", f"D_{prefix}", f"I_{prefix}", f"N_{prefix}"
+        needed = [s_col, d_col, i_col, n_col]
+        if frame.empty or any(c not in frame.columns for c in needed):
+            return float("nan")
+        sub = frame[needed].copy()
+        sub = sub.apply(pd.to_numeric, errors="coerce")
+        # For WER aggregation, ignore undefined rows where N<=0.
+        sub = sub[sub[n_col] > 0]
+        if sub.empty:
+            return float("nan")
+        s_sum = sub[s_col].sum()
+        d_sum = sub[d_col].sum()
+        i_sum = sub[i_col].sum()
+        n_sum = sub[n_col].sum()
+        return float((s_sum + d_sum + i_sum) * 100.0 / n_sum) if n_sum > 0 else float("nan")
+
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     with summary_path.open("w", encoding="utf-8") as f:
         def _fmt4(val) -> str:
@@ -282,10 +300,18 @@ def write_text_summary(df: pd.DataFrame, out_csv: str, logger: logging.Logger) -
                 macro, sub = cat_name.split("_", 1)
             except Exception:
                 macro, sub = (cat_name, None)
-            sel = (
-                df_cat[(df_cat["macro_category"] == macro) & (df_cat["sub_category"] == sub)]
-                if sub is not None else df_cat[df_cat["macro_category"] == macro]
-            )
+            if sub is not None:
+                if task_id in group_b and sub == "isolated":
+                    # Align isolated-task reporting with legacy NeMo-style grouping,
+                    # where random isolated prompts are part of the same category.
+                    sel = df_cat[
+                        (df_cat["macro_category"] == macro)
+                        & (df_cat["sub_category"].isin(["isolated", "random"]))
+                    ]
+                else:
+                    sel = df_cat[(df_cat["macro_category"] == macro) & (df_cat["sub_category"] == sub)]
+            else:
+                sel = df_cat[df_cat["macro_category"] == macro]
 
             if not sel.empty and "MER" in sel.columns:
                 cat_mer = float(sel["MER"].dropna().mean())
@@ -298,7 +324,9 @@ def write_text_summary(df: pd.DataFrame, out_csv: str, logger: logging.Logger) -
             m_p, m_r, m_f1 = calc_prf1(m_tp, m_fp, m_fn)
 
             if task_id in group_a:
-                wer_task = sel["WER_ref_hyp"].dropna().mean() if ("WER_ref_hyp" in sel.columns and not sel.empty) else metrics.get("ASR_WER", "N/A")
+                wer_task = _weighted_wer_from_counts(sel, "ref_hyp")
+                if pd.isna(wer_task):
+                    wer_task = metrics.get("ASR_WER", "N/A")
                 f.write(f"wer_ref_hyp: {_fmt4(wer_task)}\n")
 
                 r_val = "Not Available"
@@ -357,11 +385,9 @@ def write_text_summary(df: pd.DataFrame, out_csv: str, logger: logging.Logger) -
                 f.write(f"mistakes_f1: {m_f1:.4f}\n")
 
             if task_id in group_b:
-                wer_task = (
-                    sel["WER_ref_hyp"].dropna().mean()
-                    if ("WER_ref_hyp" in sel.columns and not sel["WER_ref_hyp"].dropna().empty)
-                    else metrics.get("ASR_WER", "N/A")
-                )
+                wer_task = _weighted_wer_from_counts(sel, "ref_hyp")
+                if pd.isna(wer_task):
+                    wer_task = metrics.get("ASR_WER", "N/A")
                 egra_acc_task = (
                     sel["ACC_can_ref"].dropna().mean()
                     if ("ACC_can_ref" in sel.columns and not sel["ACC_can_ref"].dropna().empty)

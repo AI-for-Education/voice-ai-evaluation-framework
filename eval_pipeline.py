@@ -156,6 +156,12 @@ def load_eval_manifest(
                 "manifest_ref_text": obj.get(ref_key, ""),
                 "manifest_can_text": obj.get(can_key, ""),
                 "manifest_hyp_text": obj.get(hyp_key, ""),
+                "manifest_hyp_present": hyp_key in obj,
+                "manifest_wer": obj.get("wer", None),
+                "manifest_tokens": obj.get("tokens", None),
+                "manifest_ins_rate": obj.get("ins_rate", None),
+                "manifest_del_rate": obj.get("del_rate", None),
+                "manifest_sub_rate": obj.get("sub_rate", None),
             }
         )
 
@@ -170,6 +176,12 @@ def load_eval_manifest(
                 "manifest_ref_text",
                 "manifest_can_text",
                 "manifest_hyp_text",
+                "manifest_hyp_present",
+                "manifest_wer",
+                "manifest_tokens",
+                "manifest_ins_rate",
+                "manifest_del_rate",
+                "manifest_sub_rate",
             ]
         )
     logger.info(
@@ -212,15 +224,27 @@ def _infer_audio_type(audio_stem: str) -> str:
     m = re.search(r"iso_letter_(\d+)", s)
     if m:
         return f"iso_letter_{m.group(1)}"
+    m = re.search(r"iso_random_letters(\d+)(?:_(\d+))?", s)
+    if m:
+        suffix = f"_{m.group(2)}" if m.group(2) else ""
+        return f"iso_random_letters{m.group(1)}{suffix}"
     m = re.search(r"iso_non_word_?(\d+)", s)
     if m:
         return f"iso_non_word{m.group(1)}"
+    m = re.search(r"iso_random_nw(?:_([a-z0-9]+))?(?:_(\d+))?", s)
+    if m:
+        name = m.group(1) or "unknown"
+        idx = f"_{m.group(2)}" if m.group(2) else ""
+        return f"iso_random_nw_{name}{idx}"
     m = re.search(r"iso_syllable_?(\d+)", s)
     if m:
         return f"iso_syllable{m.group(1)}"
     m = re.search(r"random_syl_?(\d+)", s)
     if m:
         return f"random_syl{m.group(1)}"
+    m = re.search(r"rand_syllable_?(\d+)", s)
+    if m:
+        return f"rand_syllable{m.group(1)}"
     m = re.search(r"passage_?(\d+)", s)
     if m:
         return f"passage_num{m.group(1)}"
@@ -260,6 +284,14 @@ def build_eval_rows_from_manifest(manifest_df: pd.DataFrame, logger: logging.Log
     out["ref_text"] = out["manifest_ref_text"].fillna("").astype(str)
     out["canonical_text"] = out["manifest_can_text"].fillna("").astype(str)
     out["hyp_text"] = out["manifest_hyp_text"].fillna("").astype(str)
+    out["hyp_is_present"] = out["manifest_hyp_present"].fillna(False).astype(bool)
+
+    # Preserve optional NeMo per-file scoring fields (if present in manifest).
+    out["nemo_wer"] = pd.to_numeric(out.get("manifest_wer"), errors="coerce")
+    out["nemo_tokens"] = pd.to_numeric(out.get("manifest_tokens"), errors="coerce")
+    out["nemo_ins_rate"] = pd.to_numeric(out.get("manifest_ins_rate"), errors="coerce")
+    out["nemo_del_rate"] = pd.to_numeric(out.get("manifest_del_rate"), errors="coerce")
+    out["nemo_sub_rate"] = pd.to_numeric(out.get("manifest_sub_rate"), errors="coerce")
 
     # Compatibility aliases expected by some metrics helpers.
     out["reference_text"] = out["ref_text"]

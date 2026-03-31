@@ -26,22 +26,17 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             missing_hyp_count += 1
 
         s_can_ref = score(can, ref)
-        s_can_hyp = score(can, hyp) if has_hyp else None
-        s_ref_hyp = score(ref, hyp) if has_hyp else None
+        s_can_hyp = score(can, hyp)
+        s_ref_hyp = score(ref, hyp)
 
         egra_cor = s_can_ref.C  # = C_can_ref
-        asr_egra_cor = s_can_hyp.C if s_can_hyp else math.nan
-        mae_cor = abs(egra_cor - asr_egra_cor) if s_can_hyp else math.nan
+        asr_egra_cor = s_can_hyp.C
+        mae_cor = abs(egra_cor - asr_egra_cor)
 
         acc_can_ref = s_can_ref.ACC * 100.0 if not math.isnan(s_can_ref.ACC) else math.nan
-        acc_can_hyp = (
-            s_can_hyp.ACC * 100.0 if (s_can_hyp and not math.isnan(s_can_hyp.ACC)) else math.nan
-        )
+        acc_can_hyp = s_can_hyp.ACC * 100.0 if not math.isnan(s_can_hyp.ACC) else math.nan
 
-        acc_ref_hyp = (
-            s_ref_hyp.ACC * 100.0
-            if (s_ref_hyp and not math.isnan(s_ref_hyp.ACC)) else math.nan
-        )
+        acc_ref_hyp = s_ref_hyp.ACC * 100.0 if not math.isnan(s_ref_hyp.ACC) else math.nan
 
         row = {
             "learner_id": r.get("learner_id"),
@@ -61,22 +56,22 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             "N_can_ref": s_can_ref.N,
 
             # --- CAN vs HYP
-            "WER_can_hyp": s_can_hyp.WER if s_can_hyp else math.nan,
+            "WER_can_hyp": s_can_hyp.WER,
             "ACC_can_hyp": acc_can_hyp,
-            "S_can_hyp": s_can_hyp.S if s_can_hyp else 0,
-            "D_can_hyp": s_can_hyp.D if s_can_hyp else 0,
-            "I_can_hyp": s_can_hyp.I if s_can_hyp else 0,
-            "C_can_hyp": s_can_hyp.C if s_can_hyp else math.nan,               # necesar pentru summary_*
-            "N_can_hyp": s_can_hyp.N if s_can_hyp else 0,
+            "S_can_hyp": s_can_hyp.S,
+            "D_can_hyp": s_can_hyp.D,
+            "I_can_hyp": s_can_hyp.I,
+            "C_can_hyp": s_can_hyp.C,               # required for summary_*
+            "N_can_hyp": s_can_hyp.N,
 
             # --- REF vs HYP (ASR quality against human reference)
-            "WER_ref_hyp": s_ref_hyp.WER if s_ref_hyp else math.nan,    # procente
+            "WER_ref_hyp": s_ref_hyp.WER,    # percent
             "ACC_ref_hyp": acc_ref_hyp,
-            "S_ref_hyp": s_ref_hyp.S if s_ref_hyp else 0,
-            "D_ref_hyp": s_ref_hyp.D if s_ref_hyp else 0,
-            "I_ref_hyp": s_ref_hyp.I if s_ref_hyp else 0,
-            "C_ref_hyp": s_ref_hyp.C if s_ref_hyp else math.nan,
-            "N_ref_hyp": s_ref_hyp.N if s_ref_hyp else 0,
+            "S_ref_hyp": s_ref_hyp.S,
+            "D_ref_hyp": s_ref_hyp.D,
+            "I_ref_hyp": s_ref_hyp.I,
+            "C_ref_hyp": s_ref_hyp.C,
+            "N_ref_hyp": s_ref_hyp.N,
 
             # --- Agreement between human EGRA and ASR EGRA
             "has_hyp": has_hyp,
@@ -87,14 +82,14 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
         row["ASR_EGRA_COR"] = asr_egra_cor
         row["ASR_EGRA_ACC"] = acc_can_hyp
         row["MAE_EGRA_COR"] = mae_cor
-        row["ASR_WER"] = s_ref_hyp.WER if s_ref_hyp else math.nan
+        row["ASR_WER"] = s_ref_hyp.WER
 
         rows.append(row)
 
     df_scores = pd.DataFrame(rows)
     logger.info(f"Scored {len(df_scores):,} rows. Merging metadata...")
     if missing_hyp_count:
-        logger.info(f"No ASR hypothesis for {missing_hyp_count} row(s); CAN/HYP and REF/HYP metrics set to NaN.")
+        logger.info(f"ASR hypothesis is empty for {missing_hyp_count} row(s); scored using empty-hypothesis behavior.")
 
     # Attach metadata by learner_id (left join).
     out = df_scores.merge(df_meta, on="learner_id", how="left")

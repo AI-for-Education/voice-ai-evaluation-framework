@@ -16,7 +16,9 @@ class Counts:
 
     @property
     def WER(self) -> float:
-        return ((self.S + self.D + self.I) / self.N) * 100.0 if self.N else math.nan
+        if self.N:
+            return ((self.S + self.D + self.I) / self.N) * 100.0
+        return math.inf if self.I > 0 else math.nan
 
     @property
     def ACC(self) -> float:
@@ -44,7 +46,11 @@ def score(truth: str, hyp: str) -> Counts:
     h = normalize(hyp or "")
 
     if not t.strip():
-        return Counts(S=0, D=0, I=0, C=0, N=0)
+        # Match NeMo-style behavior for empty reference:
+        # - empty hyp => undefined WER (NaN)
+        # - non-empty hyp => insertion-only path (WER = inf)
+        i_only = len(h.split()) if h.strip() else 0
+        return Counts(S=0, D=0, I=i_only, C=0, N=0)
 
     res = compute_measures(t, h)
     # jiwer >=3.1 -> 'truth_len'; older -> 'truth_words'
