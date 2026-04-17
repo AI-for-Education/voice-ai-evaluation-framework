@@ -65,30 +65,36 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
         ref_concat = _safe_join_text(g_sorted["ref_text"]) if "ref_text" in g_sorted.columns else ""
         hyp_concat = _safe_join_text(g_sorted["hyp_text"]) if "hyp_text" in g_sorted.columns else ""
 
-        s_can_ref = score(can, ref_concat)
+        # For EGRA (annotation-based), use ANN/REF as truth and CAN as hypothesis:
+        #   EGRA-COR = N_ann - S - D
+        #   EGRA-ACC = EGRA-COR / N_ann
+        # Keep variable name for compatibility with downstream columns.
+        s_can_ref = score(ref_concat, can)
         s_can_hyp = score(can, hyp_concat)
-        acc_can_ref = s_can_ref.ACC * 100.0 if not math.isnan(s_can_ref.ACC) else math.nan
+        egra_cor = s_can_ref.COR
+        acc_can_ref = s_can_ref.ACC_COR * 100.0 if not math.isnan(s_can_ref.ACC_COR) else math.nan
         acc_can_hyp = s_can_hyp.ACC * 100.0 if not math.isnan(s_can_hyp.ACC) else math.nan
+        asr_egra_cor = s_can_hyp.COR
         group_scores[rep_idx] = {
             "WER_can_ref": s_can_ref.WER,
             "ACC_can_ref": acc_can_ref,
             "S_can_ref": s_can_ref.S,
             "D_can_ref": s_can_ref.D,
             "I_can_ref": s_can_ref.I,
-            "C_can_ref": s_can_ref.C,
+            "C_can_ref": egra_cor,
             "N_can_ref": s_can_ref.N,
             "WER_can_hyp": s_can_hyp.WER,
             "ACC_can_hyp": acc_can_hyp,
             "S_can_hyp": s_can_hyp.S,
             "D_can_hyp": s_can_hyp.D,
             "I_can_hyp": s_can_hyp.I,
-            "C_can_hyp": s_can_hyp.C,
+            "C_can_hyp": asr_egra_cor,
             "N_can_hyp": s_can_hyp.N,
-            "EGRA_COR": s_can_ref.C,
+            "EGRA_COR": egra_cor,
             "EGRA_ACC": acc_can_ref,
-            "ASR_EGRA_COR": s_can_hyp.C,
+            "ASR_EGRA_COR": asr_egra_cor,
             "ASR_EGRA_ACC": acc_can_hyp,
-            "MAE_EGRA_COR": abs(s_can_ref.C - s_can_hyp.C),
+            "MAE_EGRA_COR": abs(egra_cor - asr_egra_cor),
         }
 
     for idx, r in work.iterrows():

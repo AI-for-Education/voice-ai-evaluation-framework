@@ -24,6 +24,20 @@ class Counts:
     def ACC(self) -> float:
         return self.C / self.N if self.N else math.nan
 
+    @property
+    def COR(self) -> int:
+        """
+        Correctness count derived from N-S-D (equivalent to hits on valid alignments).
+        """
+        return int(self.N - self.S - self.D) if self.N else 0
+
+    @property
+    def ACC_COR(self) -> float:
+        """
+        Accuracy derived from COR/N.
+        """
+        return (self.COR / self.N) if self.N else math.nan
+
     # Macro precision/recall/F1 at token level (REF = truth, HYP = system)
     @property
     def precision(self) -> float:

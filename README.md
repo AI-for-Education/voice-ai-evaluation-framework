@@ -543,9 +543,10 @@ From those we derive:
 
 We apply the same counts to derive **EGRA-style** KPIs:
 
-- **EGRA (Annotator-based)** from **CAN vs REF**  
-  - `C_can_ref (EGRA_COR) = number of correct tokens = N_ref − S_can_ref − D_can_ref` 
-  - `ACC_can_ref (EGRA_ACC) = EGRA_COR / N_ref`
+- **EGRA (Annotator-based)** from **ANN/REF as truth vs CAN as hypothesis**  
+  - `C_can_ref (EGRA_COR) = N_ann − S_can_ref − D_can_ref`
+  - `ACC_can_ref (EGRA_ACC) = EGRA_COR / N_ann`
+  - In segment mode, `REF`/`HYP` are concatenated per original audio item before CAN-side scoring.
 
 - **ASR-based EGRA** from **CAN vs HYP**  
   - `C_can_hyp (ASR_EGRA_COR) = N_can − S_can_hyp − D_can_hyp`
