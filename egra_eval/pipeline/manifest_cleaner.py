@@ -28,6 +28,10 @@ def clean_text(text: str) -> str:
     if not isinstance(text, str) or not text:
         return ""
 
+    # Preserve token boundaries from multiline TextGrid labels by converting
+    # line breaks to spaces before aggressive normalization.
+    text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+
     text = NON_ASCII_RE.sub("", text)
     text = LT_RE.sub(" <", text)
     text = GT_RE.sub("> ", text)
