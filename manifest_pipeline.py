@@ -145,6 +145,19 @@ def load_base_manifest_dataframe(path: str, logger: logging.Logger) -> pd.DataFr
             }
         )
     out = pd.DataFrame(rows)
+    if out.empty:
+        logger.info("Loaded base manifest rows: %d from %s", len(out), in_path)
+        return out
+
+    before = len(out)
+    out = out.drop_duplicates(subset=["audio_filepath"], keep="first")
+    removed = before - len(out)
+    if removed:
+        logger.warning(
+            "Dropped %d duplicate row(s) by audio_filepath from base manifest: %s",
+            removed,
+            in_path,
+        )
     logger.info("Loaded base manifest rows: %d from %s", len(out), in_path)
     return out
 

@@ -219,6 +219,7 @@ def process_manifest(
     skipped_missing_tg = 0
     skipped_empty_tg = 0
     skipped_no_audio_segment = 0
+    dropped_duplicate_audio = 0
 
     with open(in_path, "r", encoding="utf-8") as f:
         for line_no, line in enumerate(f, 1):
@@ -275,19 +276,32 @@ def process_manifest(
 
                 new_items.append(seg_item)
 
+    deduped_items: List[dict] = []
+    seen_audio_paths: set[str] = set()
+    for it in new_items:
+        audio_path = str(it.get("audio_filepath", "")).strip()
+        if not audio_path:
+            continue
+        if audio_path in seen_audio_paths:
+            dropped_duplicate_audio += 1
+            continue
+        seen_audio_paths.add(audio_path)
+        deduped_items.append(it)
+
     if not dry_run:
         with open(out_path, "w", encoding="utf-8") as out_f:
-            for it in new_items:
+            for it in deduped_items:
                 out_f.write(json.dumps(it, ensure_ascii=False) + "\n")
 
     total_skipped = skipped_missing_wav + skipped_missing_tg + skipped_empty_tg + skipped_no_audio_segment
     print(
         "SEGMENT SUMMARY:",
-        f"written={len(new_items)}",
+        f"written={len(deduped_items)}",
         f"skipped_missing_wav={skipped_missing_wav}",
         f"skipped_missing_tg={skipped_missing_tg}",
         f"skipped_empty_tg={skipped_empty_tg}",
         f"skipped_no_audio_segment={skipped_no_audio_segment}",
+        f"dropped_duplicate_audio={dropped_duplicate_audio}",
         f"total_skipped={total_skipped}",
     )
 

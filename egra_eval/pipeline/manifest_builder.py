@@ -94,6 +94,35 @@ def build_reference_manifest_dataframe(
         records.append(record)
 
     out = pd.DataFrame(records)
+    if out.empty:
+        logger.info(
+            "Built reference manifest DataFrame: rows=%d (missing_audio=%d).",
+            len(out),
+            missing_audio,
+        )
+        return out
+
+    # Defensive deduplication: the input canonical CSV can contain repeated rows
+    # (same audio file repeated twice). Keep one row per audio file to prevent
+    # duplicate downstream segments/results.
+    before_exact = len(out)
+    out = out.drop_duplicates(keep="first")
+    removed_exact = before_exact - len(out)
+    if removed_exact:
+        logger.warning(
+            "Removed %d exact duplicate manifest row(s) before audio_filepath deduplication.",
+            removed_exact,
+        )
+
+    before_audio = len(out)
+    out = out.drop_duplicates(subset=["audio_filepath"], keep="first")
+    removed_audio = before_audio - len(out)
+    if removed_audio:
+        logger.warning(
+            "Removed %d duplicate row(s) by audio_filepath while building reference manifest.",
+            removed_audio,
+        )
+
     logger.info(
         "Built reference manifest DataFrame: rows=%d (missing_audio=%d).",
         len(out),
