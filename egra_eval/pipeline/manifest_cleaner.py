@@ -10,7 +10,9 @@ NON_ASCII_RE = re.compile(r"[^\x20-\x7E]")
 LT_RE = re.compile(r"\s*<\s*")
 GT_RE = re.compile(r"\s*>\s*")
 TAG_RE = re.compile(r"<[^>]*>")
-PUNCT_AND_DIGITS_RE = re.compile(r"[,\.\'’\d\?\!\`\"\-]")
+# Keep apostrophes (both ASCII ' and Unicode ’) because they are phonologically
+# meaningful in this dataset (e.g., n'go, ng'u).
+PUNCT_AND_DIGITS_RE = re.compile(r"[,\.\d\?\!\`\"\-]")
 SPACES_RE = re.compile(r"\s+")
 
 
