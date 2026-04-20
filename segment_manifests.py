@@ -29,6 +29,31 @@ def _strip_quotes(s: str) -> str:
     return s
 
 
+def _parse_text_value(first_value: str, line_iter) -> str:
+    """
+    Parse TextGrid `text = ...` value, including multiline quoted strings.
+    """
+    val = first_value.strip()
+    if not val:
+        return ""
+
+    if val[0] not in ("'", '"'):
+        return _strip_quotes(val)
+
+    quote = val[0]
+    if len(val) >= 2 and val.endswith(quote):
+        return val[1:-1]
+
+    parts = [val[1:]]
+    for cont_raw in line_iter:
+        cont = cont_raw.rstrip("\n").strip()
+        if cont.endswith(quote):
+            parts.append(cont[:-1])
+            break
+        parts.append(cont)
+    return "\n".join(parts)
+
+
 def parse_textgrid_intervals(textgrid_path: str) -> List[TGInterval]:
     """
     Parses a Praat TextGrid (text format) with a single IntervalTier.
@@ -44,7 +69,8 @@ def parse_textgrid_intervals(textgrid_path: str) -> List[TGInterval]:
     in_interval_block = False
 
     with open(textgrid_path, "r", encoding="utf-8", errors="replace") as f:
-        for raw in f:
+        line_iter = iter(f)
+        for raw in line_iter:
             line = raw.strip()
 
             if line.startswith("intervals [") and line.endswith("]:"):
@@ -65,7 +91,7 @@ def parse_textgrid_intervals(textgrid_path: str) -> List[TGInterval]:
                 cur_xmax = float(line.split("=", 1)[1].strip())
             elif line.startswith("text ="):
                 val = line.split("=", 1)[1].strip()
-                cur_text = _strip_quotes(val)
+                cur_text = _parse_text_value(val, line_iter)
 
     if in_interval_block and cur_xmin is not None and cur_xmax is not None and cur_text is not None:
         intervals.append(TGInterval(cur_xmin, cur_xmax, cur_text))
