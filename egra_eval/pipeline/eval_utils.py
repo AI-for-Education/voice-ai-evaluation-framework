@@ -74,15 +74,49 @@ def get_csid_sequence(canonical_text: str, other_text: str) -> List[str]:
 
 
 def compute_fine_grained_metrics(row) -> pd.Series:
-    can = row.get("canonical_text", row.get("CAN", ""))
-    ref = row.get("reference_text", row.get("REF", ""))
-    hyp = row.get("hypothesis_text", row.get("HYP", ""))
+    can = row.get("CAN_FG", row.get("canonical_text", row.get("CAN", "")))
+    ref = row.get("REF_FG", row.get("reference_text", row.get("REF", "")))
+    hyp = row.get("HYP_FG", row.get("hypothesis_text", row.get("HYP", "")))
+
+    def _to_text(v) -> str:
+        if v is None:
+            return ""
+        try:
+            if pd.isna(v):
+                return ""
+        except Exception:
+            pass
+        return str(v)
+
+    can = _to_text(can)
+    ref = _to_text(ref)
+    hyp = _to_text(hyp)
+
+    empty_metrics = {
+        "S_Precision": np.nan,
+        "S_Recall": np.nan,
+        "S_F1": np.nan,
+        "I_Precision": np.nan,
+        "I_Recall": np.nan,
+        "I_F1": np.nan,
+        "D_Precision": np.nan,
+        "D_Recall": np.nan,
+        "D_F1": np.nan,
+        "Mistakes_Precision": np.nan,
+        "Mistakes_Recall": np.nan,
+        "Mistakes_F1": np.nan,
+        "MER": np.nan,
+    }
+
+    # MER/fine-grained alignment is undefined without a canonical sequence.
+    if not can.strip():
+        return pd.Series(empty_metrics)
 
     seq_a = get_csid_sequence(can, ref)
     seq_b = get_csid_sequence(can, hyp)
 
     mer_errors, mer_alignment = dp_align.dp_align(seq_a, seq_b, output_align=True)
-    mer_val = mer_errors.get_wer()
+    mer_val = mer_errors.get_wer() if mer_errors.n_total > 0 else np.nan
 
     y_pred = [x[0] for x in mer_alignment]
     y_true = [x[1] for x in mer_alignment]

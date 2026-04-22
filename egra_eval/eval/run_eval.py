@@ -33,6 +33,16 @@ def _safe_join_text(series: pd.Series) -> str:
     return " ".join(parts)
 
 
+def _first_non_empty_text(series: pd.Series) -> str:
+    for val in series:
+        if not isinstance(val, str):
+            continue
+        s = val.strip()
+        if s:
+            return s
+    return ""
+
+
 def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
     """
     Compute row-level scores:
@@ -57,7 +67,9 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
     for _, g in work.groupby("_group_key", dropna=False):
         g_sorted = g.sort_values(by="_seg_order", kind="stable")
         rep_idx = int(g_sorted.index[0])
-        can = _safe_join_text(g_sorted["canonical_text"]) if "canonical_text" in g_sorted.columns else ""
+        # Canonical belongs to the original item, not each segment. Concatenating
+        # it across segments duplicates CAN and inflates CAN-side WER.
+        can = _first_non_empty_text(g_sorted["canonical_text"]) if "canonical_text" in g_sorted.columns else ""
         if not can and "canonical_text" in g_sorted.columns:
             # Keep legacy behavior: if canonical is empty after join, use first row raw value.
             first_can = g_sorted["canonical_text"].iloc[0]
@@ -95,6 +107,10 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             "ASR_EGRA_COR": asr_egra_cor,
             "ASR_EGRA_ACC": acc_can_hyp,
             "MAE_EGRA_COR": abs(egra_cor - asr_egra_cor),
+            # Text triplet used by advanced/fine-grained metrics.
+            "CAN_FG": can,
+            "REF_FG": ref_concat,
+            "HYP_FG": hyp_concat,
         }
 
     for idx, r in work.iterrows():
@@ -129,6 +145,9 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
             "ASR_EGRA_COR": math.nan,
             "ASR_EGRA_ACC": math.nan,
             "MAE_EGRA_COR": math.nan,
+            "CAN_FG": None,
+            "REF_FG": None,
+            "HYP_FG": None,
         }
         if int(idx) in group_scores:
             can_block.update(group_scores[int(idx)])
@@ -140,6 +159,9 @@ def evaluate(df_egra: pd.DataFrame, df_meta: pd.DataFrame) -> pd.DataFrame:
 
             # Texte brute
             "CAN": can, "REF": ref, "HYP": hyp,
+            "CAN_FG": can_block["CAN_FG"],
+            "REF_FG": can_block["REF_FG"],
+            "HYP_FG": can_block["HYP_FG"],
 
             # --- CAN vs REF
             "WER_can_ref": can_block["WER_can_ref"],   # already in percentage units
