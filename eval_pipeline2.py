@@ -425,7 +425,6 @@ def main() -> None:
     fn = base / "egra_eval_summary.txt"
     logger.info(f"Writing: {fn}")
     with open(fn, "w") as f:
-        f.write("\n")
         for key in [
             "global",
             "passage_passage",
