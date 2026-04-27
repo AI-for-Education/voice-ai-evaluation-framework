@@ -20,10 +20,10 @@ services:
     container_name: nemo-asr
     # GPU access is disabled by default to avoid nvidia-container errors on hosts
     # without a properly configured NVIDIA driver / toolkit. To enable GPU, uncomment:
-    gpus: "all"
+    # gpus: "all"
 
   egra-eval:
     <<: *egra_base
     container_name: egra-eval
-    gpus: "all"   # not needed for CPU-only eval
+    # gpus: "all"   # not needed for CPU-only eval
 
