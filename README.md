@@ -202,7 +202,7 @@ These metrics must be computed inside each test category and optionally aggregat
 
    Generic:
    ```bash
-   ./run_eval.sh \
+   ./run_eval2.sh \
      --dataset_root input_output_data/input/<dataset_name> \
      --manifest_in input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.segment.clean.jsonl \
      --output_root input_output_data/output/experiments/<dataset_name>
@@ -210,7 +210,7 @@ These metrics must be computed inside each test category and optionally aggregat
 
    Example:
    ```bash
-   ./run_eval.sh \
+   ./run_eval2.sh \
      --dataset_root input_output_data/input/2_Batch3_4_Data_validation \
      --manifest_in input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.segment.clean.jsonl \
      --output_root input_output_data/output/experiments/2_Batch3_4_Data_validation
