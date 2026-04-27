@@ -101,9 +101,9 @@ These metrics must be computed inside each test category and optionally aggregat
    docker compose build
    ```
 
-   Example:
+   Example with GPU enabled:
    ```bash
-   docker compose build
+   docker compose build --build-arg TORCH_CUDA=cu121
    ```
 
 2. **Prepare dataset + model**
@@ -168,6 +168,7 @@ These metrics must be computed inside each test category and optionally aggregat
      --output_dir input_output_data/output/2_Batch3_4_Data_validation/nemo_asr_output_segments \
      --model nemo_inference/models/Swahili_exp1_100epochs.nemo
    ```
+   For GPU: Enable `gpus: "all"` in `docker-compose.yml`.
 
 6. **Build final segment-level manifest (attach `pred_text` from ASR) + clean**
 
