@@ -68,7 +68,7 @@ ENV_VARS=(
 
 docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" \
   egra-eval \
-  python3 /work/eval_pipeline.py \
+  python3 /work/eval_pipeline2.py \
     --dataset_root "$DATASET_ROOT" \
     --output_root "$OUTPUT_ROOT" \
     "${EXTRA_ARGS[@]}"

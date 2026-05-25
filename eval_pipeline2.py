@@ -1,32 +1,18 @@
 #!/usr/bin/env python3
 """Run EGRA evaluation from a prebuilt cleaned manifest."""
 
-from __future__ import annotations
-
-import argparse
-import json
-import logging
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-import numpy as np
+import argparse
+import json
+import logging
 import pandas as pd
+import re
 
-from egra_eval.data.dataset_layout import DatasetLayoutError, resolve_dataset_paths
-from egra_eval.eval.run_eval import evaluate
-from egra_eval.metrics.phonological import compute_phonological_metrics_row
-from egra_eval.pipeline.eval_utils import (
-    adjust_letter_canonical_text,
-    calculate_advanced_metrics,
-)
-from egra_eval.report.writers import (
-    write_detailed_csv,
-    write_summary_csvs,
-    write_t1_example_walkthrough,
-    write_text_summary,
-)
+from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
+from egra_eval2.eval_utils import adjust_letter_canonical_text
+from egra_eval2.evaluate import aggregate_row_scores, evaluate_rows
 
 
 def setup_logger() -> logging.Logger:
@@ -45,7 +31,9 @@ def setup_logger() -> logging.Logger:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Run EGRA evaluation from cleaned manifest.")
+    p = argparse.ArgumentParser(
+        description="Run EGRA evaluation from cleaned manifest."
+    )
     p.add_argument("--dataset_root", required=True)
     p.add_argument("--manifest_in", required=True, help="Cleaned manifest JSONL.")
     p.add_argument("--output_root", default=None)
@@ -59,10 +47,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--manifest_ref_key", default="ref_text")
     p.add_argument("--manifest_can_key", default="can_text")
     p.add_argument("--manifest_hyp_key", default="pred_text")
+    p.add_argument("--detailed", action="store_true", default=False)
     return p.parse_args()
 
 
-def resolve_outputs(args: argparse.Namespace, logger: logging.Logger) -> dict[str, Path]:
+def resolve_outputs(
+    args: argparse.Namespace, logger: logging.Logger
+) -> dict[str, Path]:
     if not args.output_root:
         args.output_root = str(
             Path("input_output_data")
@@ -79,6 +70,7 @@ def resolve_outputs(args: argparse.Namespace, logger: logging.Logger) -> dict[st
     args.summary_ref_hyp_dir = args.summary_ref_hyp_dir or str(base / "ref_hyp")
 
     summary_dirs = {
+        "base": Path(base),
         "can_ref": Path(args.summary_can_ref_dir),
         "can_hyp": Path(args.summary_can_hyp_dir),
         "ref_hyp": Path(args.summary_ref_hyp_dir),
@@ -210,7 +202,9 @@ def _extract_learner_id(audio_stem: str) -> str:
 
 
 def _infer_audio_type(audio_stem: str) -> str:
-    source = audio_stem.split("-audio_", 1)[1] if "-audio_" in audio_stem else audio_stem
+    source = (
+        audio_stem.split("-audio_", 1)[1] if "-audio_" in audio_stem else audio_stem
+    )
     source = re.sub(r"_segment\d+$", "", source)
     s = source.lower()
 
@@ -218,7 +212,11 @@ def _infer_audio_type(audio_stem: str) -> str:
         return "full_letter_grid"
     if "non_words_grid_non_words_grid" in s or "non_words_grid" in s or "nonword" in s:
         return "full_nonword_grid"
-    if "grid_syllables_1_syllables_grid_1" in s or "syllables_grid_1" in s or "syllables_grid" in s:
+    if (
+        "grid_syllables_1_syllables_grid_1" in s
+        or "syllables_grid_1" in s
+        or "syllables_grid" in s
+    ):
         return "full_syllable1_grid"
 
     m = re.search(r"iso_letter_(\d+)", s)
@@ -252,7 +250,9 @@ def _infer_audio_type(audio_stem: str) -> str:
     return "unknown"
 
 
-def build_eval_rows_from_manifest(manifest_df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
+def build_eval_rows_from_manifest(
+    manifest_df: pd.DataFrame, logger: logging.Logger
+) -> pd.DataFrame:
     if manifest_df is None or manifest_df.empty:
         raise SystemExit(
             "Manifest loaded with 0 valid rows. Ensure --manifest_in is JSONL, JSON array, or concatenated JSON objects "
@@ -262,7 +262,11 @@ def build_eval_rows_from_manifest(manifest_df: pd.DataFrame, logger: logging.Log
     out = manifest_df.copy()
     out["audio_file"] = out["audio_name"].astype(str)
 
-    seg_mask = out["audio_name"].astype(str).str.contains(r"_segment\d+\.wav$", regex=True, na=False)
+    seg_mask = (
+        out["audio_name"]
+        .astype(str)
+        .str.contains(r"_segment\d+\.wav$", regex=True, na=False)
+    )
     seg_count = int(seg_mask.sum())
     nonseg_count = int((~seg_mask).sum())
     if seg_count and nonseg_count:
@@ -307,6 +311,53 @@ def build_eval_rows_from_manifest(manifest_df: pd.DataFrame, logger: logging.Log
     return out
 
 
+def merge_segmented_rows(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    def parse_segment(audio_file: str):
+        s = str(audio_file)
+        m = re.search(r"_segment(\d+)(\.[^.]+)$", s)
+        if m:
+            seg_num = int(m.group(1))
+            base_audio_file = re.sub(r"_segment\d+(\.[^.]+)$", r"\1", s)
+            return base_audio_file, seg_num, True
+        return s, None, False
+
+    parsed = df["audio_file"].astype(str).apply(parse_segment)
+    df["_base_audio_file"] = parsed.apply(lambda x: x[0])
+    df["_segment_num"] = parsed.apply(lambda x: x[1])
+    df["_is_segment"] = parsed.apply(lambda x: x[2])
+
+    rows = []
+
+    for _, g in df.groupby("_base_audio_file", sort=False):
+        has_segments = g["_is_segment"].any()
+
+        if has_segments:
+            g_seg = g.sort_values("_segment_num", kind="stable")
+
+            row = g_seg.iloc[0].copy()
+            row["audio_file"] = g_seg["_base_audio_file"].iloc[0]
+            row["canonical_text"] = g_seg["canonical_text"].iloc[0]
+            row["ref_text"] = " ".join(
+                g_seg["ref_text"].fillna("").astype(str).str.strip()
+            ).strip()
+            row["hyp_text"] = " ".join(
+                g_seg["hyp_text"].fillna("").astype(str).str.strip()
+            ).strip()
+
+            rows.append(row)
+        else:
+            rows.extend(g.iloc[i].copy() for i in range(len(g)))
+
+    out = pd.DataFrame(rows).drop(
+        columns=["_base_audio_file", "_segment_num", "_is_segment"],
+        errors="ignore",
+    )
+
+    return out.reset_index(drop=True)
+
+
 def main() -> None:
     logger = setup_logger()
     args = parse_args()
@@ -332,56 +383,86 @@ def main() -> None:
     df_eval = build_eval_rows_from_manifest(manifest_df, logger)
     df_eval = adjust_letter_canonical_text(df_eval, logger)
 
-    df_results = evaluate(df_eval, df_meta)
-
-    if "WER_ref_hyp" not in df_results.columns:
-        def calc_wer_ref_hyp(row: pd.Series) -> float:
-            try:
-                s = float(row.get("S_ref_hyp", 0))
-                d = float(row.get("D_ref_hyp", 0))
-                i = float(row.get("I_ref_hyp", 0))
-                n = float(row.get("N_ref_hyp", 0))
-                return (s + d + i) / n if n > 0 else float("nan")
-            except Exception:
-                return float("nan")
-
-        df_results["WER_ref_hyp"] = df_results.apply(calc_wer_ref_hyp, axis=1)
-
-    df_results = calculate_advanced_metrics(df_results, logger)
-    logger.info("Computing phonological metrics (TP/FP/FN for substitutions, deletions, insertions)...")
-    phonological_metrics = df_results.apply(compute_phonological_metrics_row, axis=1)
-    phonological_df = pd.DataFrame(list(phonological_metrics))
-    df_results = pd.concat([df_results, phonological_df], axis=1)
-
+    # Simplify to only required columns
     required_cols = [
-        "learner_id", "audio_type", "audio_file", "CAN", "REF", "HYP",
-        "WER_can_ref", "ACC_can_ref", "S_can_ref", "D_can_ref", "I_can_ref", "C_can_ref", "N_can_ref",
-        "WER_can_hyp", "ACC_can_hyp", "S_can_hyp", "D_can_hyp", "I_can_hyp", "C_can_hyp", "N_can_hyp",
-        "WER_ref_hyp", "ACC_ref_hyp", "S_ref_hyp", "D_ref_hyp", "I_ref_hyp", "C_ref_hyp", "N_ref_hyp",
-        "EGRA-COR", "EGRA-ACC", "ASR-EGRA-COR", "ASR-EGRA-ACC", "MAE_EGRA_COR", "ASR_WER", "has_hyp",
-        "gender", "child_grade", "child_age", "region", "council", "ward",
-        "Kiswahili_lang1", "Kigogo_lang2", "Kirangi_lang3", "Kihaya_lang4", "Runyambo_lang5",
-        "Kihangaza_lang6", "English_lang7",
-        "ACC_can_ref_norm_for_mae", "ACC_can_hyp_norm_for_mae", "MAE_EGRA_ACC", "Bias_Baseline_MAE",
-        "S_Precision", "S_Recall", "S_F1", "I_Precision", "I_Recall", "I_F1", "D_Precision", "D_Recall",
-        "D_F1", "Mistakes_Precision", "Mistakes_Recall", "Mistakes_F1", "Mistake_Error_Rate (MER)",
-        "S_TP", "S_FP", "S_FN", "D_TP", "D_FP", "D_FN", "I_TP", "I_FP", "I_FN",
+        "learner_id",
+        "audio_file",
+        "audio_type",
+        "canonical_text",
+        "ref_text",
+        "hyp_text",
     ]
-    for col in required_cols:
-        if col not in df_results.columns:
-            df_results[col] = np.nan
+    df_eval = df_eval[[c for c in required_cols if c in df_eval.columns]].copy()
 
-    write_detailed_csv(df_results, args.out_csv, logger)
-    summary_txt_path = write_text_summary(df_results, args.out_csv, logger)
-    t1_walkthrough_path = write_t1_example_walkthrough(df_results, args.out_csv, logger)
-    summary_paths = write_summary_csvs(df_results, summary_dirs, logger)
+    # Merge segments
+    df_eval = merge_segmented_rows(df_eval)
 
-    print("Detailed results:", args.out_csv)
-    print("Summary text:", summary_txt_path)
-    print("T1 walkthrough:", t1_walkthrough_path)
-    print("Summary directories/files:")
-    for path in summary_paths:
-        print("  ", path)
+    # Calculate per-row scores
+    df_scores_per_row = evaluate_rows(df_eval)
+    df_scores_per_row.to_csv("temp3.csv")
+
+    # To-do: Attach meta-data
+    meta_cols = ["learner_id", "gender", "child_grade", "child_age", "region"]
+    df_detailed = df_scores_per_row.merge(
+        df_meta[meta_cols], on="learner_id", how="left"
+    )
+
+    # Write out individual scores (the whole dataframe with meta data)
+    base = Path(args.output_root)
+    args.out_csv = args.out_csv or str(base / "egra_eval_detailed.csv")
+    logger.info(f"Writing: {args.out_csv}")
+    df_detailed.to_csv(args.out_csv)
+
+    # To-do: If we want finer-grained scores, e.g. per region, then we can just
+    # filter this row-wise data-frame
+
+    # Aggregate scores
+    scores_dict = aggregate_row_scores(
+        df_scores_per_row, summary_dirs["base"], args.detailed
+    )
+
+    # Write summary to file
+    fn = base / "egra_eval_summary.txt"
+    logger.info(f"Writing: {fn}")
+    with open(fn, "w") as f:
+        for key in [
+            "global",
+            "passage_passage",
+            "syllables_grid",
+            "syllables_isolated",
+            "nonwords_grid",
+            "nonwords_isolated",
+            "letters_grid",
+            "letters_isolated",
+        ]:
+            subdict = scores_dict[key]
+            f.write(f"{key.upper()}\n")
+            for metric, value in subdict.items():
+                if metric in ["corr"]:
+                    f.write(f"  {metric}: {value:.4f}\n")
+                else:
+                    f.write(f"  {metric}: {value:.2f}%\n")
+            f.write("\n")
+
+    print()
+    for key in [
+        "global",
+        "passage_passage",
+        "syllables_grid",
+        "syllables_isolated",
+        "nonwords_grid",
+        "nonwords_isolated",
+        "letters_grid",
+        "letters_isolated",
+    ]:
+        subdict = scores_dict[key]
+        print(f"{key.upper()}")
+        for metric, value in subdict.items():
+            if metric in ["corr"]:
+                print(f"  {metric}: {value:.4f}")
+            else:
+                print(f"  {metric}: {value:.2f}%")
+        print()
 
 
 if __name__ == "__main__":

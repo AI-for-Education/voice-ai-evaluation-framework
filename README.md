@@ -101,9 +101,9 @@ These metrics must be computed inside each test category and optionally aggregat
    docker compose build
    ```
 
-   Example:
+   Example with GPU enabled:
    ```bash
-   docker compose build
+   docker compose build --build-arg TORCH_CUDA=cu121
    ```
 
 2. **Prepare dataset + model**
@@ -168,6 +168,7 @@ These metrics must be computed inside each test category and optionally aggregat
      --output_dir input_output_data/output/2_Batch3_4_Data_validation/nemo_asr_output_segments \
      --model nemo_inference/models/Swahili_exp1_100epochs.nemo
    ```
+   For GPU: Enable `gpus: "all"` in `docker-compose.yml`.
 
 6. **Build final segment-level manifest (attach `pred_text` from ASR) + clean**
 
@@ -201,7 +202,7 @@ These metrics must be computed inside each test category and optionally aggregat
 
    Generic:
    ```bash
-   ./run_eval.sh \
+   ./run_eval2.sh \
      --dataset_root input_output_data/input/<dataset_name> \
      --manifest_in input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.segment.clean.jsonl \
      --output_root input_output_data/output/experiments/<dataset_name>
@@ -209,7 +210,7 @@ These metrics must be computed inside each test category and optionally aggregat
 
    Example:
    ```bash
-   ./run_eval.sh \
+   ./run_eval2.sh \
      --dataset_root input_output_data/input/2_Batch3_4_Data_validation \
      --manifest_in input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.segment.clean.jsonl \
      --output_root input_output_data/output/experiments/2_Batch3_4_Data_validation
@@ -222,8 +223,8 @@ These metrics must be computed inside each test category and optionally aggregat
 9. **Explore results interactively**  
    - Dependencies: `pip install streamlit pandas numpy` (preferably inside a virtualenv).  
      - Specific example: `python3 -m venv .venv_streamlit && . .venv_streamlit/bin/activate && pip install --upgrade pip setuptools wheel && pip install streamlit pandas numpy`
-   - Run: `streamlit run egra_dashboard.py -- --csv <path/to/egra_eval_detailed.csv>`  
-     - Specific example: ` . .venv_streamlit/bin/activate && streamlit run egra_dashboard.py -- --csv input_output_data/output/experiments/exp1/egra_eval_detailed.csv`
+   - Run: `streamlit run egra_dashboard2.py -- --csv <path/to/egra_eval_detailed.csv>`  
+     - Specific example: ` . .venv_streamlit/bin/activate && streamlit run egra_dashboard2.py -- --csv input_output_data/output/experiments/exp1/egra_eval_detailed.csv`
    - Open the browser tab (Streamlit serves on `http://localhost:8501` by default) to sort, group and aggregate metrics.
 
 Everything runs in Docker setup (CPU-only or GPU-enabled).
