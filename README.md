@@ -1,6 +1,6 @@
-The purpose of this project is to evaluate NeMo ASR models on the task of early grade reading assessments (EGRA) for kiswahili child speech.
+The purpose of this project is to evaluate NeMo ASR models on the task of early grade reading assessments (EGRA) for Kiswahili child speech.
 
-**Input (you need to provide!):**
+**Input (you need to provide):**
 - NeMo ASR model ([a first model provided](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-))
 - dataset of kiswahili child speech comprising:
   - audio files, 
