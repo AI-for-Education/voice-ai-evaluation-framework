@@ -81,6 +81,8 @@ class DPError(object):
         Calculates the accuracy given the stored errors using the formula:
         Accuracy = (Matches - Insertions) / Total
         """
+        if self.n_total == 0:
+            return 0.0        
         return float(self.n_match - self.n_ins) / self.n_total
 
     def get_wer(self):
@@ -88,6 +90,8 @@ class DPError(object):
         Calculates the word error rate (WER) using:
         WER = (Substitutions + Deletions + Insertions) / Total
         """
+        if self.n_total == 0:
+            return 1.0 
         return float(self.n_sub + self.n_del + self.n_ins) / self.n_total
 
 
