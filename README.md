@@ -237,7 +237,7 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 - `run_segment.sh`: creates segment audio + segment manifest.
 - `run_inference.sh`: transcribes segment audio.
 - `run_manifest.sh`: builds/cleans final segment-level manifest from `--manifest_base_in`.
-- `run_eval.sh`: scores only from an existing cleaned segment manifest (`--manifest_in`).
+- `run_eval2.sh`: scores only from an existing cleaned segment manifest (`--manifest_in`).
 
 ---
 
@@ -277,10 +277,10 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 │   └── Dockerfile                # Base image with PyTorch, NeMo, audio libs, pandas, jiwer, praatio, librosa, etc.
 ├── docker-compose.yml            # Compose with two services: nemo-asr (inference), egra-eval (evaluation)
 ├── manifest_pipeline.py          # Build+clean manifest entrypoint (used by run_manifest.sh)
-├── eval_pipeline.py              # Evaluation entrypoint from existing manifest (used by run_eval.sh)
+├── eval_pipeline.py              # Evaluation entrypoint from existing manifest (used by run_eval2.sh)
 ├── evaluation.py                 # Shared evaluation utilities and legacy combined entrypoint
 ├── infer.py                      # Main entrypoint for NeMo-based transcription
-├── run_eval.sh                   # Wrapper script for evaluation (supports --manifest_in for existing cleaned manifests)
+├── run_eval2.sh                   # Wrapper script for evaluation (supports --manifest_in for existing cleaned manifests)
 ├── run_manifest.sh               # Wrapper script to build+clean manifest only (no scoring)
 ├── run_inference.sh              # Wrapper script for inference (dataset_root + output_root + model mandatory)
 ├── run_segment.sh                # Wrapper script for standalone manifest/audio segmentation
@@ -448,7 +448,7 @@ Usage:
 
 ### 6) Run evaluation
 
-We provide `run_eval.sh`. It will:
+We provide `run_eval2.sh`. It will:
 - Load segment rows from the cleaned manifest passed via `--manifest_in` and score at segment level.
 - Attach learner metadata from dataset CSVs via `learner_id`.
 - Produce the detailed CSV, the text summary, and per-pair summary folders in the chosen output directory.
@@ -456,7 +456,7 @@ Like the inference wrapper, it executes the container with your user ID so the r
 
 Usage:
 ```bash
-./run_eval.sh \
+./run_eval2.sh \
   --dataset_root /io/input/<dataset> \
   --output_root /io/output/<experiment> \
   --manifest_in /io/output/<experiment>/manifests/ref_manifest.segment.clean.jsonl
@@ -680,7 +680,7 @@ Run `python3 eval_pipeline.py --help` to see available options. Highlights:
   - `egra-eval`: run manifest build/evaluation (`manifest_pipeline.py`, `eval_pipeline.py`).
   Mounts repo as `/work`, data as `/io`, models as `/models`, temp segments as `/tmp_segments`.
 
-- **`run_inference.sh` / `run_segment.sh` / `run_manifest.sh` / `run_eval.sh`**  
+- **`run_inference.sh` / `run_segment.sh` / `run_manifest.sh` / `run_eval2.sh`**  
   Thin wrappers to run the right compose service with the right command.
 - **`run_nemo_offline_eval.sh`**  
   Generates normalized REF/CAN manifests and runs NVIDIA NeMo’s own `speech_to_text_eval.py` script for REF↔HYP and CAN↔HYP scoring. Handy for cross-checking the internal metrics against the official NeMo implementation.
