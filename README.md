@@ -1,98 +1,23 @@
+## Overview
+
 The purpose of this project is to evaluate NeMo ASR models on the task of early grade reading assessments (EGRA) for Kiswahili child speech.
 
-**Input (you need to provide):**
+**Input (you need to provide)**
+
 - NeMo ASR model ([a first model provided](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-))
-- dataset of kiswahili child speech comprising:
+
+- Dataset of Kiswahili child speech comprising:
   - audio files, 
   - cannonical texts, i.e. what the child should have uttered and 
   - reference text, i.e. what the child actually uttered
 
-**Output:**
-- KPIs to evaluate child:
-  - EGRA-COR - the EGRA-style correctness; based on the canonical text and the reference text
-  - EGRA-ACC - the EGRA accuracy; based on the canonical text and the reference text
-- KPIs to evaluate the ASR (used instead of an ennumerator):
-  - ASR-EGRA-COR - the EGRA-style correctness; uses ASR transcripts instead of reference texts
-  - ASR-EGRA-ACC - the EGRA accuracy; uses ASR transcripts are instead of reference texts
-  - MAE_EGRA_COR - the mean absolute error of the EGRA correctness when using ASR transcripts instead of reference texts
-  - ASR_WER - the word error rate for the ASR model
+**Output**
 
-The project transcribes the audio files in the input dataset using the input ASR model and computes the KPIs listed above.
-
-There are 43 recordings per child that can be categorised into 7 tasks being tested. The [Task Mapping TSV](tools/task_mapping.tsv) organises the recordings into the respective task categories to be used for calculating the egra_eval_summary.txt.
+Given the above, evaluation will be performed, producing a final `egra_eval_summary.txt` report.
 
 
-Metrics needed in summary.txt
-Passage and grid reading (T1, T2, T4, T6 each need all of these metrics: wer_ref_hyp, r, scatter plot, MAE_correct_counts, MER, subs_prec, subs_r, subs_f1, insert_p, insert_r, insert_f1, del_prec, del_r, del_f1, mistakes_prec, mistakes_r, mistakes_f1). More info about these are given below:
-ASR WER: wer_ref_hyp
-EGRA:
-Correlation coefficient r (see next slide) between predicted (hyp-ref) and actual number of correct (can-ref) words per utterance (segment)
-Scatter plot in code
-MAE between correct counts. This is MAE between EGRA_ACC and ASR_EGRA_ACC (not normalised)
-EGRA_ACC = can_ref
-ASR_EGRA_ACC = hyp_ref
-Finer grained:
-Mistake error rate (MER)
-Substitution P, R, F1
-Insertion P, R, F1
-Deletion P, R, F1
-All mistakes P, R, F1
-Isolated letters, syllables and non-words (T3, T5, T7 and each has the metrics: wer_ref_hyp, egra_acc, corr_mistake_pred_prec,  corr_mistake_pred_r,  corr_mistake_pred_f1, baseline_prec, baseline_r, baseline_f1):
-ASR WER: wer_ref_hyp
-EGRA accuracy = {TP + TN}/{N}
-P, R, F1 for correct mistake prediction (label 1 = {mistake})
-P, R, F1 for majority baseline
-
-Context
-
-This repository evaluates an ASR (Automatic Speech Recognition) system for Swahili children completing EGRA-style speech tests.
-
-Each child performs 42 tests, grouped into 7 categories (T1–T7).
-The mapping from test → category is defined in the project README.
-
-For each test item, we have three string forms:
-
-Canonical — the target / intended word shown to the child.
-
-Reference (REF) — what the child actually said, human-annotated.
-
-Hypothesis (HYP) — what the ASR system predicted the child said.
-
-The current evaluation pipeline already produces an egra_eval_summary.txt file with several metrics.
-
-Additional metrics (described in the README under Task for New Metrics) and ensure they appear in the generated egra_eval_summary.txt, aggregated per test category (T1–T7) and overall.
-
-New Metrics to Add
-
-The README defines multiple phonological metrics that must now be computed using the canonical, reference, and hypothesis forms.
-
-A typical example:
-
-Substitution Precision Example
-
-True substitutions = differences between reference and canonical
-Predicted substitutions = differences between hypothesis and canonical
-Metric = How well HYP predicts the same substitutions that REF made.
-
-Each metric follows this pattern:
-Compare REF vs CANONICAL → child’s true phonological process
-Compare HYP vs CANONICAL → system’s predicted phonological process
-
-Compute true positives, false positives, false negatives
-
-Derive:
-Precision
-Recall
-F1-score
-
-Counts as needed (TP, FP, FN)
-
-These metrics must be computed inside each test category and optionally aggregated across all tests.
-
----
 
 ## Straight forward steps
-
 
 1. **Build the Docker image** (optional):
 
@@ -228,6 +153,48 @@ These metrics must be computed inside each test category and optionally aggregat
    - Open the browser tab (Streamlit serves on `http://localhost:8501` by default) to sort, group and aggregate metrics.
 
 Everything runs in Docker setup (CPU-only or GPU-enabled).
+
+
+## Full example for held-out data
+
+The example assumes that data and models have been placed in:
+
+- Data: `input_output_data/input/heldout_combined_fixed_20260525`
+- Model: `nemo_inference/models/model_exp41_avg.nemo`
+
+All the steps above can then be performed in sequence:
+
+    ./run_make_ref_manifest.sh \
+        --dataset_root input_output_data/input/heldout_combined_fixed_20260525 \
+        --passages_csv input_output_data/input/oral_passages.csv \
+        --output_jsonl input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw.jsonl
+
+    ./run_segment.sh \
+        --textgrid_root input_output_data/input/heldout_combined_fixed_20260525/2_TextGrid \
+        --manifest_in input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw.jsonl \
+        --manifest_out input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl \
+        --segments_out_root input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/audio_segments
+
+    ./run_inference.sh \
+        --dataset_root input_output_data/input/heldout_combined_fixed_20260525 \
+        --root_audio_dir input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/audio_segments \
+        --output_dir input_output_data/output/heldout_combined_fixed_20260525_exp41/nemo_asr_output_segments \
+        --model nemo_inference/models/model_exp41_avg.nemo
+
+    ./run_manifest.sh \
+        --dataset_root input_output_data/input/heldout_combined_fixed_20260525 \
+        --output_root input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41 \
+        --manifest_base_in input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl \
+        --nemo_manifest input_output_data/output/heldout_combined_fixed_20260525_exp41/nemo_asr_output_segments/transcriptions.jsonl \
+        --manifest_raw_out input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.segment.raw.jsonl \
+        --manifest_clean_out input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.segment.clean.jsonl
+
+    ./run_eval2.sh \
+        --dataset_root input_output_data/input/heldout_combined_fixed_20260525 \
+        --manifest_in input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.segment.clean.jsonl \
+        --output_root input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41
+
+    . .venv_streamlit/bin/activate && streamlit run egra_dashboard2.py -- --csv input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/egra_eval_detailed.csv
 
 ---
 

@@ -7,7 +7,10 @@ import os
 import urllib.request
 from pathlib import Path
 
+import io
+
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -202,7 +205,9 @@ if grade_filter:
 if age_filter != "All":
     filtered = filtered[filtered["child_age"] == int(age_filter)]
 
-st.metric("Rows after filters", f"{len(filtered):,}")
+_m1, _m2 = st.columns(2)
+_m1.metric("Rows after filters", f"{len(filtered):,}")
+_m2.metric("Unique children", f"{filtered['learner_id'].nunique():,}")
 
 if filtered.empty:
     st.warning("No rows match the current filters.")
@@ -220,7 +225,8 @@ for left_key, right_key in pairs:
     for col, key in ((col_left, left_key), (col_right, right_key)):
         with col:
             subdict = scores_dict.get(key, {})
-            st.markdown(f"**{key.upper()}**")
+            n_items = len(filtered) if key == "global" else int((filtered["audio_type"] == key).sum())
+            st.markdown(f"**{key.upper()}** (No. items: {n_items:,})")
             if subdict:
                 rows = []
                 for m, v in subdict.items():
@@ -238,18 +244,8 @@ for left_key, right_key in pairs:
 # --- Scatter plots ---
 if show_scatter:
     st.subheader("Scatter plots: C_can_hyp vs C_can_ref")
-    scatter_cols = st.columns(2)
-    col_idx = 0
-    for audio_type in GRID_PASSAGE_TYPES:
-        subset = (
-            filtered[filtered["audio_type"] == audio_type][["C_can_ref", "C_can_hyp"]]
-            .dropna()
-        )
-        if subset.empty:
-            continue
-        corr = scores_dict.get(audio_type, {}).get("corr", float("nan"))
-        x = subset["C_can_ref"].values
-        y = subset["C_can_hyp"].values
+
+    def _build_scatter_fig(audio_type, corr, x, y):
         fig, ax = plt.subplots()
         ax.scatter(x, y, alpha=0.6)
         if len(x) > 1:
@@ -259,7 +255,36 @@ if show_scatter:
         ax.set_ylabel("C_can_hyp")
         corr_str = f"{corr:.3f}" if not np.isnan(corr) else "n/a"
         ax.set_title(f"{audio_type}  (r = {corr_str})")
+        return fig
+
+    scatter_data = []
+    for audio_type in GRID_PASSAGE_TYPES:
+        subset = (
+            filtered[filtered["audio_type"] == audio_type][["C_can_ref", "C_can_hyp"]]
+            .dropna()
+        )
+        if subset.empty:
+            continue
+        corr = scores_dict.get(audio_type, {}).get("corr", float("nan"))
+        scatter_data.append((audio_type, corr, subset["C_can_ref"].values, subset["C_can_hyp"].values))
+
+    scatter_cols = st.columns(2)
+    for col_idx, (audio_type, corr, x, y) in enumerate(scatter_data):
+        fig = _build_scatter_fig(audio_type, corr, x, y)
         with scatter_cols[col_idx % 2]:
             st.pyplot(fig)
         plt.close(fig)
-        col_idx += 1
+
+    if scatter_data:
+        pdf_buf = io.BytesIO()
+        with PdfPages(pdf_buf) as pdf:
+            for audio_type, corr, x, y in scatter_data:
+                fig = _build_scatter_fig(audio_type, corr, x, y)
+                pdf.savefig(fig, bbox_inches="tight")
+                plt.close(fig)
+        st.download_button(
+            label="Download scatter plots (PDF)",
+            data=pdf_buf.getvalue(),
+            file_name="scatter_plots.pdf",
+            mime="application/pdf",
+        )

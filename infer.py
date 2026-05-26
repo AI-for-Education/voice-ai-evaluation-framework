@@ -55,27 +55,29 @@ def write_wav(path: str, audio: np.ndarray, sr: int) -> None:
 # NeMo helpers
 # ---------------------------------------------------------------------------
 
-def configure_model_for_ctc(model) -> None:
-    """
-    Force CTC decoding where supported.
-    """
+def configure_decoding_strategy(model, decoder_type: str = "ctc") -> None:
     if isinstance(model, EncDecCTCModel):
+        if decoder_type == "rnnt":
+            raise SystemExit("Loaded model is EncDecCTCModel (CTC-only). It cannot decode with RNNT.")
         print("[INFO] Loaded model is EncDecCTCModel. CTC decoding is already active.")
         return
 
     if isinstance(model, EncDecHybridRNNTCTCModel):
         ctc_cfg = CTCDecodingConfig()
-        model.change_decoding_strategy(ctc_cfg, decoder_type="ctc")
+        model.change_decoding_strategy(ctc_cfg, decoder_type=decoder_type)
         cur_decoder = getattr(model, "cur_decoder", None)
-        print(f"[INFO] Loaded hybrid RNNT/CTC model. Forced decoder_type='ctc'. Current decoder: {cur_decoder}")
+        print(f"[INFO] Loaded hybrid RNNT/CTC model. Set decoder_type='{decoder_type}'. Current decoder: {cur_decoder}")
         return
 
     if isinstance(model, EncDecRNNTModel):
-        raise SystemExit(
-            "Loaded model is EncDecRNNTModel (RNNT-only). It cannot be forced to decode with CTC."
-        )
+        if decoder_type == "ctc":
+            raise SystemExit(
+                "Loaded model is EncDecRNNTModel (RNNT-only). It cannot be forced to decode with CTC."
+            )
+        print("[INFO] Loaded model is EncDecRNNTModel. RNNT decoding is already active.")
+        return
 
-    print(f"[WARN] Unknown ASR model class: {type(model)}. CTC forcing was not applied.")
+    print(f"[WARN] Unknown ASR model class: {type(model)}. Decoding strategy was not changed.")
 
 
 def build_override_cfg(model, batch_size: int, num_workers: int | None):
@@ -205,6 +207,12 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="num_workers for transcribe override_cfg when GPU is unavailable (NeMo script default is 0).",
     )
+    parser.add_argument(
+        "--decoder_type",
+        default="ctc",
+        choices=["ctc", "rnnt"],
+        help="Decoding strategy to use (default: ctc).",
+    )
     parser.add_argument("--debug", action="store_true")
     return parser.parse_args()
 
@@ -262,7 +270,7 @@ def main() -> None:
     model = ASRModel.restore_from(args.model, map_location=device)
     model.to(device).eval()
 
-    configure_model_for_ctc(model)
+    configure_decoding_strategy(model, decoder_type=args.decoder_type)
 
     override_cfg = build_override_cfg(
         model=model,
