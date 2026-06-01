@@ -21,8 +21,8 @@ from nemo.collections.asr.models import (
 from nemo.collections.asr.parts.submodules.ctc_decoding import CTCDecodingConfig
 from tqdm import tqdm
 
-from egra_eval.data.dataset_layout import DatasetLayoutError, resolve_dataset_paths
-from egra_eval.pipeline.segmenter import segment_wav_from_textgrid
+from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
+from egra_eval2.segmenter import segment_wav_from_textgrid
 
 TARGET_SR = 8000
 DEFAULT_TMP = "nemo_inference/tmp"

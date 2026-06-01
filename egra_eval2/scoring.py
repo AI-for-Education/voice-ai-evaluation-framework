@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from jiwer import compute_measures
-from egra_eval.normalize.textnorm import normalize
+from egra_eval2.textnorm import normalize
 
 
 @dataclass

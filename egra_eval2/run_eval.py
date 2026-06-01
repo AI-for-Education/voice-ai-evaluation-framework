@@ -4,7 +4,7 @@ import logging
 import math
 import re
 import pandas as pd
-from egra_eval.metrics.scoring import score
+from egra_eval2.scoring import score
 
 
 _SEGMENT_RE = re.compile(r"_segment(\d+)\.wav$", re.IGNORECASE)
