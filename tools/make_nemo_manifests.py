@@ -4,12 +4,12 @@ import argparse, json, sys, os
 from pathlib import Path
 import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from egra_eval.data.linking import add_audio_keys
-from egra_eval.data.textgrid_io import add_refs_from_textgrid
-from egra_eval.data.passage_merge import attach_passage_texts
-from egra_eval.data.nemo_manifest import load_many_manifests
-from egra_eval.normalize.textnorm import normalize
-from egra_eval.data.dataset_layout import resolve_dataset_paths, DatasetLayoutError
+from egra_eval2.linking import add_audio_keys
+from egra_eval2.textgrid_io import add_refs_from_textgrid
+from egra_eval2.passage_merge import attach_passage_texts
+from egra_eval2.nemo_manifest import load_many_manifests
+from egra_eval2.textnorm import normalize
+from egra_eval2.dataset_layout import resolve_dataset_paths, DatasetLayoutError
 
 
 def _abs_audio_path(audio_root: Path, learner_id: str, audio_file: str) -> str:

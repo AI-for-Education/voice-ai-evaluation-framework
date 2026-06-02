@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pandas as pd
 
-from egra_eval.data.dataset_layout import DatasetLayoutError, resolve_dataset_paths
-from egra_eval.data.linking import add_audio_keys
-from egra_eval.data.passage_merge import attach_passage_texts
-from egra_eval.data.textgrid_io import add_refs_from_textgrid
-from egra_eval.pipeline.manifest_builder import (
+from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
+from egra_eval2.linking import add_audio_keys
+from egra_eval2.passage_merge import attach_passage_texts
+from egra_eval2.textgrid_io import add_refs_from_textgrid
+from egra_eval2.manifest_builder import (
     build_reference_manifest_dataframe,
     write_manifest_jsonl,
 )
-from evaluation import adjust_letter_canonical_text
+from egra_eval2.eval_utils import adjust_letter_canonical_text
 
 
 LOGGER = logging.getLogger("make_ref_manifest")

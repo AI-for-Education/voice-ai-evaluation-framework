@@ -68,7 +68,7 @@ RUN pip3 install \
     ipython==8.24.0
 
 # NeMo ASR
-RUN pip3 install "nemo_toolkit[asr]==2.4.1"
+RUN pip3 install "nemo_toolkit[asr]==2.3"
 
 # App
 WORKDIR /app

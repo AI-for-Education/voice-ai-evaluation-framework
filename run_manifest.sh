@@ -4,21 +4,21 @@ set -euo pipefail
 usage() {
   cat <<'EOF' >&2
 Usage:
-  ./run_manifest.sh --dataset_root PATH --passages_csv PATH [extra options]
+  ./run_manifest.sh --dataset_root PATH --manifest_base_in PATH [extra options]
 
 Example:
   ./run_manifest.sh \
     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
     --output_root input_output_data/output/experiments/1_Batch2_Data_16spk_subset \
-    --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output/transcriptions.jsonl \
-    --passages_csv input_output_data/input/oral_passages.csv
+    --manifest_base_in input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.raw_segments.jsonl \
+    --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output_segments/transcriptions.jsonl
 EOF
   exit 1
 }
 
 DATASET_ROOT=""
 OUTPUT_ROOT=""
-PASSAGES_CSV=""
+MANIFEST_BASE_IN=""
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -31,8 +31,8 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_ROOT="$2"
       shift 2
       ;;
-    --passages_csv)
-      PASSAGES_CSV="$2"
+    --manifest_base_in)
+      MANIFEST_BASE_IN="$2"
       EXTRA_ARGS+=("$1" "$2")
       shift 2
       ;;
@@ -52,7 +52,7 @@ if [[ -z "$OUTPUT_ROOT" ]]; then
   OUTPUT_ROOT="$DEFAULT_DIR"
 fi
 
-if [[ -z "$DATASET_ROOT" || -z "$PASSAGES_CSV" ]]; then
+if [[ -z "$DATASET_ROOT" || -z "$MANIFEST_BASE_IN" ]]; then
   usage
 fi
 
@@ -68,9 +68,7 @@ ENV_VARS=(
 
 docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" \
   egra-eval \
-  python3 /work/evaluation.py \
+  python3 /work/manifest_pipeline.py \
     --dataset_root "$DATASET_ROOT" \
     --output_root "$OUTPUT_ROOT" \
-    --build_manifest_first \
-    --manifest_only \
     "${EXTRA_ARGS[@]}"

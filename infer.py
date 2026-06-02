@@ -3,23 +3,28 @@
 from __future__ import annotations
 
 import argparse
-import inspect
 import json
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import librosa
 import numpy as np
 import soundfile as sf
 import torch
-from nemo.collections.asr.models import ASRModel
-from praatio import textgrid
+from nemo.collections.asr.models import (
+    ASRModel,
+    EncDecCTCModel,
+    EncDecHybridRNNTCTCModel,
+    EncDecRNNTModel,
+)
+from nemo.collections.asr.parts.submodules.ctc_decoding import CTCDecodingConfig
 from tqdm import tqdm
 
-from egra_eval.data.dataset_layout import DatasetLayoutError, resolve_dataset_paths
+from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
+from egra_eval2.segmenter import segment_wav_from_textgrid
 
-TARGET_SR = 16000
+TARGET_SR = 8000
 DEFAULT_TMP = "nemo_inference/tmp"
 
 
@@ -46,143 +51,71 @@ def write_wav(path: str, audio: np.ndarray, sr: int) -> None:
     sf.write(path, audio, sr)
 
 
-def seconds_to_samples(s: float, sr: int) -> int:
-    return int(round(s * sr))
-
-
 # ---------------------------------------------------------------------------
-# TextGrid helpers
+# NeMo helpers
 # ---------------------------------------------------------------------------
 
-def find_textgrid_for_audio(
-    wav_path: str,
-    textgrid_dir: Optional[str],
-    audio_root: Optional[str] = None,
-    debug: bool = False,
-) -> Optional[Path]:
-    wav = Path(wav_path)
-    search_dirs: List[Path] = []
-    seen: set[Path] = set()
+def configure_decoding_strategy(model, decoder_type: str = "ctc") -> None:
+    if isinstance(model, EncDecCTCModel):
+        if decoder_type == "rnnt":
+            raise SystemExit("Loaded model is EncDecCTCModel (CTC-only). It cannot decode with RNNT.")
+        print("[INFO] Loaded model is EncDecCTCModel. CTC decoding is already active.")
+        return
 
-    def add_dir(path: Optional[Path]) -> None:
-        if path and path.exists() and path not in seen:
-            search_dirs.append(path)
-            seen.add(path)
+    if isinstance(model, EncDecHybridRNNTCTCModel):
+        ctc_cfg = CTCDecodingConfig()
+        model.change_decoding_strategy(ctc_cfg, decoder_type=decoder_type)
+        cur_decoder = getattr(model, "cur_decoder", None)
+        print(f"[INFO] Loaded hybrid RNNT/CTC model. Set decoder_type='{decoder_type}'. Current decoder: {cur_decoder}")
+        return
 
-    add_dir(wav.parent)
+    if isinstance(model, EncDecRNNTModel):
+        if decoder_type == "ctc":
+            raise SystemExit(
+                "Loaded model is EncDecRNNTModel (RNNT-only). It cannot be forced to decode with CTC."
+            )
+        print("[INFO] Loaded model is EncDecRNNTModel. RNNT decoding is already active.")
+        return
 
-    if textgrid_dir:
-        base = Path(textgrid_dir)
-        if audio_root:
-            try:
-                rel_parent = wav.relative_to(Path(audio_root)).parent
-                add_dir(base / rel_parent)
-            except ValueError:
-                pass
-        add_dir(base)
-
-    for directory in search_dirs:
-        for ext in (".TextGrid", ".textgrid"):
-            candidate = directory / f"{wav.stem}{ext}"
-            if candidate.exists():
-                if debug:
-                    print(f"[DEBUG] Using TextGrid: {candidate}")
-                return candidate
-
-    if textgrid_dir:
-        base = Path(textgrid_dir)
-        matches: List[Path] = []
-        for suffix in (".TextGrid", ".textgrid"):
-            matches.extend(base.rglob(f"{wav.stem}{suffix}"))
-        if matches:
-            chosen = sorted(matches, key=lambda p: str(p).lower())[0]
-            if debug:
-                print(f"[DEBUG] Using TextGrid (recursive search): {chosen}")
-            return chosen
+    print(f"[WARN] Unknown ASR model class: {type(model)}. Decoding strategy was not changed.")
 
 
-def _get_tier_case_insensitive(tg: textgrid.Textgrid, tier_name: str):
-    for nm in tg.tierNames:
-        if nm.lower() == tier_name.lower():
-            return tg.getTier(nm)
-    return None
+def build_override_cfg(model, batch_size: int, num_workers: int | None):
+    """
+    Build NeMo transcribe override config.
+    """
+    override_cfg = model.get_transcribe_config()
+    override_cfg.batch_size = batch_size
+    override_cfg.num_workers = 0 if num_workers is None else num_workers
+    override_cfg.return_hypotheses = False
+    override_cfg.channel_selector = None
+    override_cfg.augmentor = None
+    override_cfg.text_field = "text"
+    override_cfg.lang_field = "lang"
+    override_cfg.timestamps = None
+    return override_cfg
 
 
-def _entries_from_tier(tier) -> List[Tuple[float, float, str]]:
-    entries = getattr(tier, "entries", None)
-    if entries is None:
-        entries = getattr(tier, "entryList", [])
-
-    out = []
-    for e in entries:
-        if isinstance(e, (tuple, list)) and len(e) >= 3:
-            start, end, lab = e[0], e[1], e[2]
-        else:
-            start = getattr(e, "start", None)
-            end = getattr(e, "end", None)
-            lab = getattr(e, "label", "")
-        if start is None or end is None:
-            continue
-        out.append((float(start), float(end), (lab or "").strip()))
-    return out
-
-
-def read_textgrid_intervals(
-    tg_path: Path,
-    tier_name: str,
-    debug: bool = False,
-) -> List[Tuple[float, float, str]]:
-    tg = textgrid.openTextgrid(str(tg_path), includeEmptyIntervals=False, reportingMode="silence")
-    tier = _get_tier_case_insensitive(tg, tier_name)
-    if tier is None:
-        if debug:
-            print(f"[DEBUG] Tier '{tier_name}' not found in {tg_path}. Available: {tg.tierNames}")
-        return []
-    raw = _entries_from_tier(tier)
-    labeled = []
-    for start, end, label in raw:
-        if not label:
-            continue
-        normalized = label.strip().lower()
-        if normalized == "<enumerator>":
-            if debug:
-                print(f"[DEBUG] Skipping enumerator interval [{start:.3f}, {end:.3f}] in {tg_path.name}")
-            continue
-        labeled.append((start, end, label))
-
-    if debug:
-        print(f"[DEBUG] {tg_path.name}: {len(raw)} intervals on tier, {len(labeled)} labeled.")
-    return labeled
-
-
-def slice_by_intervals(audio: np.ndarray, sr: int, intervals: List[Tuple[float, float, str]]) -> List[np.ndarray]:
-    chunks = []
-    for start, end, _ in intervals:
-        s = max(0, seconds_to_samples(start, sr))
-        e = min(len(audio), seconds_to_samples(end, sr))
-        if e > s:
-            chunks.append(audio[s:e].copy())
-    return chunks
-
-
-# ---------------------------------------------------------------------------
-# NeMo transcriber
-# ---------------------------------------------------------------------------
-def transcribe_batches(model, files: list[str], batch_size: int = 16, num_workers: int | None = None) -> list[str]:
-   
-    hyps = []
+def transcribe_batches(model, files: list[str], override_cfg) -> list[str]:
+    hyps: list[str] = []
     model.eval()
+
+    batch_size = int(override_cfg.batch_size)
     with torch.no_grad():
         for i in range(0, len(files), batch_size):
             batch = files[i : i + batch_size]
-            preds = model.transcribe(batch, batch_size=batch_size, num_workers=num_workers)
+            preds = model.transcribe(
+                audio=batch,
+                override_config=override_cfg,
+            )
 
-            # Handle possible object outputs with `.text` attributes
             if preds and hasattr(preds[0], "text"):
                 preds = [p.text for p in preds]
 
             hyps.extend(preds)
+
     return hyps
+
 
 # ---------------------------------------------------------------------------
 # Discovery helpers
@@ -191,6 +124,56 @@ def transcribe_batches(model, files: list[str], batch_size: int = 16, num_worker
 def discover_wavs(root_dir: str) -> List[str]:
     root = Path(root_dir)
     return [str(p) for p in sorted(root.rglob("*.wav"))]
+
+
+def discover_wavs_from_manifest(manifest_path: str) -> List[str]:
+    """
+    Load audio file paths from a manifest file.
+    Supports:
+      - JSONL (one object per line)
+      - concatenated JSON objects
+      - JSON array of objects
+    """
+    path = Path(manifest_path)
+    if not path.is_file():
+        raise SystemExit(f"--manifest_in file not found: {path}")
+
+    text = path.read_text(encoding="utf-8")
+    rows: list[dict] = []
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            rows = [parsed]
+        elif isinstance(parsed, list):
+            rows = [x for x in parsed if isinstance(x, dict)]
+    except json.JSONDecodeError:
+        dec = json.JSONDecoder()
+        i = 0
+        n = len(text)
+        while i < n:
+            while i < n and text[i].isspace():
+                i += 1
+            if i >= n:
+                break
+            try:
+                obj, j = dec.raw_decode(text, i)
+            except json.JSONDecodeError:
+                i += 1
+                continue
+            if isinstance(obj, dict):
+                rows.append(obj)
+            i = j
+
+    audio_paths: List[str] = []
+    seen = set()
+    for obj in rows:
+        ap = str(obj.get("audio_filepath", "") or "").strip()
+        if not ap or ap in seen:
+            continue
+        seen.add(ap)
+        audio_paths.append(ap)
+    return audio_paths
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +186,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset_root", required=True, help="Dataset root containing 0_Audio and 2_TextGrid directories.")
     parser.add_argument("--dataset_annotator", default=None, help="Annotator folder inside 2_TextGrid to use.")
     parser.add_argument("--root_audio_dir", default=None, help="Explicit audio root (overrides dataset discovery).")
+    parser.add_argument("--manifest_in", default=None, help="Optional manifest file to read input audio_filepath list from.")
     parser.add_argument("--textgrid_dir", default=None, help="Explicit TextGrid directory (overrides dataset discovery).")
     parser.add_argument("--tier_name", default="child")
     parser.add_argument(
@@ -210,16 +194,30 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Directory where transcriptions.jsonl will be written.",
     )
-    parser.add_argument("--batch_size", type=int, default=os.cpu_count() or 1, help="Batch size (defaults to number of CPU cores)")
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=32,
+        help="Batch size for NeMo transcribe() override_cfg (NeMo script default is 32).",
+    )
     parser.add_argument("--tmp_dir", default=DEFAULT_TMP)
-    parser.add_argument("--cpu_workers", type=int, default=None, help="CPU workers when GPU is unavailable (default: all cores).")
+    parser.add_argument(
+        "--cpu_workers",
+        type=int,
+        default=0,
+        help="num_workers for transcribe override_cfg when GPU is unavailable (NeMo script default is 0).",
+    )
+    parser.add_argument(
+        "--decoder_type",
+        default="ctc",
+        choices=["ctc", "rnnt"],
+        help="Decoding strategy to use (default: ctc).",
+    )
     parser.add_argument("--debug", action="store_true")
     return parser.parse_args()
 
 
 def resolve_io_paths(args: argparse.Namespace) -> None:
-    """Update CLI args in-place when dataset_root/output_root are supplied."""
-
     try:
         layout = resolve_dataset_paths(args.dataset_root, annotator=args.dataset_annotator)
     except DatasetLayoutError as exc:
@@ -240,31 +238,55 @@ def main() -> None:
     args = parse_args()
     resolve_io_paths(args)
 
-    audio_paths = discover_wavs(args.root_audio_dir)
+    if args.manifest_in:
+        audio_paths = discover_wavs_from_manifest(args.manifest_in)
+    else:
+        audio_paths = discover_wavs(args.root_audio_dir)
+
     if not audio_paths:
+        if args.manifest_in:
+            raise SystemExit(f"No valid audio_filepath rows found in manifest: {args.manifest_in}")
         raise SystemExit(f"No .wav files found under: {args.root_audio_dir}")
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     if device.startswith("cuda"):
         print("[INFO] GPU detected. Using CUDA for inference.")
-        num_workers = None
+        num_workers = 0
     else:
-        workers = args.cpu_workers or os.cpu_count() or 1
-        print(f"[INFO] GPU not available. Using CPU with {workers} worker(s).")
+        workers = args.cpu_workers
+        print(f"[INFO] GPU not available. Using CPU with torch threads={workers}.")
         try:
-            torch.set_num_threads(workers)
+            torch.set_num_threads(max(1, workers))
         except Exception:
             pass
         try:
-            torch.set_num_interop_threads(min(4, workers))
+            torch.set_num_interop_threads(min(4, max(1, workers)))
         except Exception:
             pass
-        os.environ.setdefault("OMP_NUM_THREADS", str(workers))
-        os.environ.setdefault("MKL_NUM_THREADS", str(workers))
+        os.environ.setdefault("OMP_NUM_THREADS", str(max(1, workers)))
+        os.environ.setdefault("MKL_NUM_THREADS", str(max(1, workers)))
         num_workers = workers
 
     model = ASRModel.restore_from(args.model, map_location=device)
     model.to(device).eval()
+
+    configure_decoding_strategy(model, decoder_type=args.decoder_type)
+
+    override_cfg = build_override_cfg(
+        model=model,
+        batch_size=args.batch_size,
+        num_workers=num_workers,
+    )
+
+    print("[INFO] Using override_cfg:")
+    print(f"       batch_size={override_cfg.batch_size}")
+    print(f"       num_workers={override_cfg.num_workers}")
+    print(f"       return_hypotheses={override_cfg.return_hypotheses}")
+    print(f"       channel_selector={override_cfg.channel_selector}")
+    print(f"       augmentor={override_cfg.augmentor}")
+    print(f"       text_field={override_cfg.text_field}")
+    print(f"       lang_field={override_cfg.lang_field}")
+    print(f"       timestamps={override_cfg.timestamps}")
 
     with open(args.output_manifest, "w", encoding="utf-8") as out:
         for wav_path in tqdm(audio_paths, desc="Files"):
@@ -282,26 +304,19 @@ def main() -> None:
 
             duration = float(len(audio) / sr)
 
-            tg_path = find_textgrid_for_audio(
-                wav_path,
-                args.textgrid_dir,
-                audio_root=args.root_audio_dir,
-                debug=args.debug,
-            )
-
             segment_files: List[str] = []
             cleanup_paths: List[Path] = []
 
-            if tg_path is not None:
-                intervals = read_textgrid_intervals(tg_path, args.tier_name, debug=args.debug)
-                for idx, chunk in enumerate(slice_by_intervals(audio, sr, intervals)):
-                    seg_path = Path(args.tmp_dir) / f"{Path(wav_path).stem}_seg{idx:03d}.wav"
-                    write_wav(str(seg_path), chunk, sr)
-                    if args.debug:
-                        start, end, label = intervals[idx]
-                        print(f"[DEBUG] Wrote segment {idx}: {seg_path} [{start:.3f}, {end:.3f}] '{label}'")
-                    segment_files.append(str(seg_path))
-                    cleanup_paths.append(seg_path)
+            seg_paths = segment_wav_from_textgrid(
+                wav_path=wav_path,
+                textgrid_root=args.textgrid_dir,
+                segments_out_root=args.tmp_dir,
+            )
+            if seg_paths:
+                segment_files = [str(p) for p in seg_paths]
+                cleanup_paths = list(seg_paths)
+                if args.debug:
+                    print(f"[DEBUG] Segmented {wav_path} into {len(segment_files)} file(s).")
 
             if not segment_files:
                 if was_resampled:
@@ -313,10 +328,9 @@ def main() -> None:
                     segment_files = [wav_path]
 
             predictions = transcribe_batches(
-                model,
-                segment_files,
-                batch_size=args.batch_size,
-                num_workers=num_workers,
+                model=model,
+                files=segment_files,
+                override_cfg=override_cfg,
             )
             combined = " ".join([p.strip() for p in predictions if p and p.strip()]).strip()
 
