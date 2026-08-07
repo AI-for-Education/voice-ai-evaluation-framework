@@ -399,7 +399,6 @@ def main() -> None:
 
     # Calculate per-row scores
     df_scores_per_row = evaluate_rows(df_eval)
-    df_scores_per_row.to_csv("temp3.csv")
 
     # To-do: Attach meta-data
     meta_cols = ["learner_id", "gender", "child_grade", "child_age", "region"]

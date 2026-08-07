@@ -24,7 +24,7 @@ from tqdm import tqdm
 from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
 from egra_eval2.segmenter import segment_wav_from_textgrid
 
-TARGET_SR = 8000
+TARGET_SR = 16000
 DEFAULT_TMP = "nemo_inference/tmp"
 
 
