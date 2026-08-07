@@ -18,23 +18,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
  && rm -rf /var/lib/apt/lists/*
 
+# Debian 12 ships an older pip that cannot normalize some dependency names
+# exposed by the PyTorch wheel index (for example typing-extensions).
+RUN python3 -m pip install --upgrade \
+    pip==25.1.1 \
+    setuptools==80.9.0 \
+    wheel==0.45.1
+
 # ----------------------------
-# Choose PyTorch build: cpu | cu121
+# Choose PyTorch build: cpu | cu128
 # You can override at build time:
 #   docker compose build --build-arg TORCH_CUDA=cpu
-#   docker compose build --build-arg TORCH_CUDA=cu121
+#   docker compose build --build-arg TORCH_CUDA=cu128
 # ----------------------------
 ARG TORCH_CUDA=cpu
 ENV TORCH_CUDA=${TORCH_CUDA}
 
 # Install PyTorch matching torchaudio/vision for the chosen backend
-# (These wheels include CUDA runtime when cu121 is selected.)
+# (The CUDA 12.8 wheels include kernels for NVIDIA Blackwell / sm_120 GPUs.)
 RUN if [ "$TORCH_CUDA" = "cpu" ]; then \
-      pip3 install torch==2.3.1+cpu torchvision==0.18.1+cpu torchaudio==2.3.1+cpu \
+      pip3 install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
         --index-url https://download.pytorch.org/whl/cpu ; \
     else \
-      pip3 install torch==2.3.1+cu121 torchvision==0.18.1+cu121 torchaudio==2.3.1+cu121 \
-        --index-url https://download.pytorch.org/whl/cu121 ; \
+      pip3 install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
+        --index-url https://download.pytorch.org/whl/cu128 ; \
     fi
 
 # Core Python dependencies
@@ -45,7 +52,6 @@ RUN pip3 install \
     librosa==0.10.1 \
     sentencepiece==0.2.0 \
     pandas==2.2.2 \
-    torchaudio==2.3.1 \
     praatio==6.2.0 \
     jiwer==3.1.0
 

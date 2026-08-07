@@ -28,7 +28,7 @@ Given the above, evaluation will be performed, producing a final `egra_eval_summ
 
    Example with GPU enabled:
    ```bash
-   docker compose build --build-arg TORCH_CUDA=cu121
+   docker compose build --build-arg TORCH_CUDA=cu128
    ```
 
 2. **Prepare dataset + model**
@@ -332,9 +332,9 @@ CPU-only (default):
 docker compose build
 ```
 
-GPU-enabled build (CUDA 12.1 wheels):
+GPU-enabled build (CUDA 12.8 wheels, including NVIDIA Blackwell / `sm_120`):
 ```bash
-docker compose build --build-arg TORCH_CUDA=cu121
+docker compose build --build-arg TORCH_CUDA=cu128
 ```
 > At runtime, enable GPU by uncommenting `gpus: "all"` in `docker-compose.yml` (service `nemo-asr`) **or** pass `--gpus all` to `docker compose run`.
 
@@ -582,7 +582,7 @@ Run `python3 eval_pipeline.py --help` to see available options. Highlights:
 
 ## Troubleshooting
 
-- **No GPU used**: Ensure the image was built with `--build-arg TORCH_CUDA=cu121` **and** you run with `--gpus all` or `gpus: "all"` in compose.
+- **No GPU used**: Ensure the image was built with `--build-arg TORCH_CUDA=cu128` **and** you run with `--gpus all` or `gpus: "all"` in compose.
 - **Empty or short `pred_text`**: Check that the model matches the language/domain. Also verify sample rate conversion (the script resamples to 16 kHz automatically).
 - **Missing REF text in segment base manifest**: Ensure `run_segment.sh` used the correct `--textgrid_root` and that audio/TextGrid stems align.
 - **Segment ASR not attached**: Check that `--nemo_manifest` in `run_manifest.sh` points to segmented ASR output and that `--match_on` is appropriate.
