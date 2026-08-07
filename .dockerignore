@@ -1,0 +1,8 @@
+.git
+.venv*
+__pycache__/
+input_output_data/
+nemo_inference/models/
+nemo_inference/tmp/
+transformers_inference/models/
+transformers_inference/tmp/

@@ -51,7 +51,17 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional existing base manifest (JSONL/concatenated JSON) to preserve row granularity (e.g., segment-level).",
     )
-    p.add_argument("--nemo_manifest", action="append", default=None)
+    p.add_argument(
+        "--asr_manifest",
+        "--nemo_manifest",
+        dest="asr_manifest",
+        action="append",
+        default=None,
+        help=(
+            "ASR transcriptions.jsonl to attach; repeat for multiple manifests. "
+            "--nemo_manifest remains a backward-compatible alias."
+        ),
+    )
     p.add_argument("--manifest_audio_key", default="audio_filepath")
     p.add_argument("--manifest_hyp_key", default="pred_text")
     p.add_argument("--manifest_can_key", default=None)
@@ -198,10 +208,10 @@ def main() -> None:
         logger.info("Stage A: loading base manifest (preserve granularity) -> %s", args.manifest_base_in)
         raw_df = load_base_manifest_dataframe(args.manifest_base_in, logger)
 
-        if args.nemo_manifest:
-            logger.info("Loading %d ASR manifest(s) to attach pred_text...", len(args.nemo_manifest))
+        if args.asr_manifest:
+            logger.info("Loading %d ASR manifest(s) to attach pred_text...", len(args.asr_manifest))
             asr_df = load_many_manifests(
-                args.nemo_manifest,
+                args.asr_manifest,
                 audio_key=args.manifest_audio_key,
                 hyp_key=args.manifest_hyp_key,
                 can_key=args.manifest_can_key,
@@ -213,7 +223,7 @@ def main() -> None:
             merged = attach_hypotheses(base_df, asr_df, match_on=args.match_on, logger=logger)
             raw_df["pred_text"] = merged.get("hyp_text", "").apply(_safe_text)
         else:
-            logger.info("No --nemo_manifest supplied; keeping pred_text from base manifest.")
+            logger.info("No --asr_manifest supplied; keeping pred_text from base manifest.")
     else:
         if not args.passages_csv:
             raise SystemExit("--passages_csv is required when --manifest_base_in is not provided.")
@@ -226,10 +236,10 @@ def main() -> None:
         df_egra = adjust_letter_canonical_text(df_egra, logger)
         df_egra = add_audio_keys(df_egra, audio_col="audio_file")
 
-        if args.nemo_manifest:
-            logger.info("Loading %d ASR manifest(s)...", len(args.nemo_manifest))
+        if args.asr_manifest:
+            logger.info("Loading %d ASR manifest(s)...", len(args.asr_manifest))
             asr_df = load_many_manifests(
-                args.nemo_manifest,
+                args.asr_manifest,
                 audio_key=args.manifest_audio_key,
                 hyp_key=args.manifest_hyp_key,
                 can_key=args.manifest_can_key,
@@ -237,7 +247,7 @@ def main() -> None:
             )
             df_egra = attach_hypotheses(df_egra, asr_df, match_on=args.match_on, logger=logger)
         else:
-            logger.info("No --nemo_manifest supplied; pred_text will be empty in output manifest.")
+            logger.info("No --asr_manifest supplied; pred_text will be empty in output manifest.")
             df_egra["hyp_text"] = ""
 
         df_egra = add_refs_from_textgrid(
