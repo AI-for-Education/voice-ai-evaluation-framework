@@ -1,9 +1,17 @@
 # Ignore large model files and common large artifacts
 # Model artifacts produced by NeMo or checkpoints
 nemo_inference/models/**/*.nemo
+nemo_inference/models/**/*.md
+nemo_inference/models/**/.gitattributes
 nemo_inference/models/**/*.ckpt
 nemo_inference/models/*.nemo
 nemo_inference/models/*.ckpt
+
+# ignore heldout data - STRICTLY CONFIDENTIAL
+input_output_data/input/heldout_combined_fixed_20260525/
+input_output_data/input/oral_passages.csv
+input_output_data/output/
+
 
 # Generic binary model files
 *.nemo
@@ -11,6 +19,11 @@ nemo_inference/models/*.ckpt
 
 # Temporary / generated files
 nemo_inference/tmp/
+transformers_inference/models/**
+!transformers_inference/models/.gitkeep
+transformers_inference/tmp/**
+!transformers_inference/tmp/.gitkeep
+docker-compose.override.yml
 *.egg-info/
 __pycache__/
 .venv*/

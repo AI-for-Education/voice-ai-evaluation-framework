@@ -11,7 +11,7 @@ Example:
     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
     --output_root input_output_data/output/experiments/1_Batch2_Data_16spk_subset \
     --manifest_base_in input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.raw_segments.jsonl \
-    --nemo_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output_segments/transcriptions.jsonl
+    --asr_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output_segments/transcriptions.jsonl
 EOF
   exit 1
 }

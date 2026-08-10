@@ -15,6 +15,31 @@ The purpose of this project is to evaluate NeMo ASR models on the task of early 
 
 Given the above, evaluation will be performed, producing a final `egra_eval_summary.txt` report.
 
+## Inference backends
+
+Inference is separated by model framework while sharing the same manifest and evaluation pipeline:
+
+- `nemo_inference/infer.py` contains NVIDIA NeMo inference.
+- `transformers_inference/infer.py` contains offline Hugging Face CTC inference for BookBot models.
+- `inference_common.py` provides shared audio discovery, manifest loading, mono conversion, duration, and resampling helpers.
+
+Segment audio once with `run_segment.sh`, then pass the same segment manifest to either backend. Both write `transcriptions.jsonl` rows with `audio_filepath`, `duration`, and `pred_text`. Root `infer.py` and `run_inference.sh` remain compatibility entrypoints for NeMo. See the README in each backend directory for model and launcher details.
+
+| Stage | Preferred argument | File role | Compatibility name |
+|---|---|---|---|
+| NeMo inference input | `--audio_manifest` | Exact audio segments to transcribe | `--manifest_in` (legacy NeMo calls only) |
+| BookBot inference input | `--audio_manifest` | Exact audio segments to transcribe | — |
+| Manifest merge input | `--asr_manifest` | Backend predictions in `transcriptions.jsonl` | `--nemo_manifest` (legacy NeMo-oriented merge calls only) |
+| Evaluation input | `--manifest_in` | Cleaned manifest containing references and predictions | — |
+
+Use the preferred names for every new command. The compatibility names exist
+only so previously working NeMo commands do not break; BookBot commands should
+not use them.
+
+Run the same merge and evaluation steps once per model output. Report each
+model's metrics separately; phoneme-model WER/MER is not directly comparable
+with orthographic-model WER/MER because the scored units are different.
+
 
 
 ## Straight forward steps
@@ -28,7 +53,7 @@ Given the above, evaluation will be performed, producing a final `egra_eval_summ
 
    Example with GPU enabled:
    ```bash
-   docker compose build --build-arg TORCH_CUDA=cu121
+   docker compose build --build-arg TORCH_CUDA=cu128
    ```
 
 2. **Prepare dataset + model**
@@ -76,24 +101,28 @@ Given the above, evaluation will be performed, producing a final `egra_eval_summ
 
 5. **Run ASR inference on segmented audio**
 
-   Generic:
+   Run either or both backends from the same segmented manifest. Keep their
+   output directories separate.
+
+   NeMo:
    ```bash
-   ./run_inference.sh \
-     --dataset_root input_output_data/input/<dataset_name> \
-     --root_audio_dir input_output_data/output/experiments/<dataset_name>/audio_segments \
-     --output_dir input_output_data/output/<dataset_name>/nemo_asr_output_segments \
-     --model nemo_inference/models/<model>.nemo
+   ./run_nemo_inference.sh \
+     --model nemo_inference/models/<model>.nemo \
+     --audio_manifest input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl \
+     --output_root input_output_data/output/<dataset_name>/nemo_asr_output_segments
    ```
 
-   Example:
+   BookBot Transformers:
    ```bash
-   ./run_inference.sh \
-     --dataset_root input_output_data/input/2_Batch3_4_Data_validation \
-     --root_audio_dir input_output_data/output/experiments/2_Batch3_4_Data_validation/audio_segments \
-     --output_dir input_output_data/output/2_Batch3_4_Data_validation/nemo_asr_output_segments \
-     --model nemo_inference/models/Swahili_exp1_100epochs.nemo
+   ./run_transformers_inference.sh \
+     --model transformers_inference/models/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm \
+     --audio_manifest input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl \
+     --output_root input_output_data/output/<dataset_name>/bookbot_asr_output_segments \
+     --batch_size 8
    ```
-   For GPU: Enable `gpus: "all"` in `docker-compose.yml`.
+
+   Both commands write the same `transcriptions.jsonl` schema. Root
+   `run_inference.sh` remains a compatibility alias for NeMo.
 
 6. **Build final segment-level manifest (attach `pred_text` from ASR) + clean**
 
@@ -101,27 +130,30 @@ Given the above, evaluation will be performed, producing a final `egra_eval_summ
    ```bash
    ./run_manifest.sh \
      --dataset_root input_output_data/input/<dataset_name> \
-     --output_root input_output_data/output/experiments/<dataset_name> \
+     --output_root input_output_data/output/experiments/<dataset_name>/<backend> \
      --manifest_base_in input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl \
-     --nemo_manifest input_output_data/output/<dataset_name>/nemo_asr_output_segments/transcriptions.jsonl \
-     --manifest_raw_out input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.segment.raw.jsonl \
-     --manifest_clean_out input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.segment.clean.jsonl
+     --asr_manifest input_output_data/output/<dataset_name>/<backend>_asr_output_segments/transcriptions.jsonl \
+     --manifest_raw_out input_output_data/output/experiments/<dataset_name>/<backend>/manifests/ref_manifest.segment.raw.jsonl \
+     --manifest_clean_out input_output_data/output/experiments/<dataset_name>/<backend>/manifests/ref_manifest.segment.clean.jsonl
    ```
 
    Example:
    ```bash
    ./run_manifest.sh \
      --dataset_root input_output_data/input/2_Batch3_4_Data_validation \
-     --output_root input_output_data/output/experiments/2_Batch3_4_Data_validation \
+     --output_root input_output_data/output/experiments/2_Batch3_4_Data_validation/nemo \
      --manifest_base_in input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.raw_segments.jsonl \
-     --nemo_manifest input_output_data/output/2_Batch3_4_Data_validation/nemo_asr_output_segments/transcriptions.jsonl \
-     --manifest_raw_out input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.segment.raw.jsonl \
-     --manifest_clean_out input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.segment.clean.jsonl
+     --asr_manifest input_output_data/output/2_Batch3_4_Data_validation/nemo_asr_output_segments/transcriptions.jsonl \
+     --manifest_raw_out input_output_data/output/experiments/2_Batch3_4_Data_validation/nemo/manifests/ref_manifest.segment.raw.jsonl \
+     --manifest_clean_out input_output_data/output/experiments/2_Batch3_4_Data_validation/nemo/manifests/ref_manifest.segment.clean.jsonl
    ```
 
    This generates:
    - `<output_root>/manifests/ref_manifest.segment.raw.jsonl`
    - `<output_root>/manifests/ref_manifest.segment.clean.jsonl`
+
+   Run this step once for `nemo` and once for `bookbot`, using separate backend
+   output roots.
 
 7. **Run evaluation from cleaned segment manifest**
 
@@ -129,16 +161,16 @@ Given the above, evaluation will be performed, producing a final `egra_eval_summ
    ```bash
    ./run_eval2.sh \
      --dataset_root input_output_data/input/<dataset_name> \
-     --manifest_in input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.segment.clean.jsonl \
-     --output_root input_output_data/output/experiments/<dataset_name>
+     --manifest_in input_output_data/output/experiments/<dataset_name>/<backend>/manifests/ref_manifest.segment.clean.jsonl \
+     --output_root input_output_data/output/experiments/<dataset_name>/<backend>
    ```
 
    Example:
    ```bash
    ./run_eval2.sh \
      --dataset_root input_output_data/input/2_Batch3_4_Data_validation \
-     --manifest_in input_output_data/output/experiments/2_Batch3_4_Data_validation/manifests/ref_manifest.segment.clean.jsonl \
-     --output_root input_output_data/output/experiments/2_Batch3_4_Data_validation
+     --manifest_in input_output_data/output/experiments/2_Batch3_4_Data_validation/nemo/manifests/ref_manifest.segment.clean.jsonl \
+     --output_root input_output_data/output/experiments/2_Batch3_4_Data_validation/nemo
    ```
 
 8. **Inspect the outputs** under `input_output_data/output/experiments/<experiment>/`:  
@@ -185,7 +217,7 @@ All the steps above can then be performed in sequence:
         --dataset_root input_output_data/input/heldout_combined_fixed_20260525 \
         --output_root input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41 \
         --manifest_base_in input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl \
-        --nemo_manifest input_output_data/output/heldout_combined_fixed_20260525_exp41/nemo_asr_output_segments/transcriptions.jsonl \
+        --asr_manifest input_output_data/output/heldout_combined_fixed_20260525_exp41/nemo_asr_output_segments/transcriptions.jsonl \
         --manifest_raw_out input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.segment.raw.jsonl \
         --manifest_clean_out input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.segment.clean.jsonl
 
@@ -293,7 +325,7 @@ All the steps above can then be performed in sequence:
 
 **Manifest build (`manifest_pipeline.py`)**
 - In segment-only flow, loads a base segment manifest from `--manifest_base_in`.
-- Attaches ASR hypotheses from `--nemo_manifest` (optional).
+- Attaches ASR hypotheses from `--asr_manifest` (optional; `--nemo_manifest` is a legacy alias).
 - Writes cleaned segment manifests (for example `ref_manifest.segment.raw.jsonl` and `ref_manifest.segment.clean.jsonl`).
 
 **Evaluation (`eval_pipeline.py`)**
@@ -332,9 +364,9 @@ CPU-only (default):
 docker compose build
 ```
 
-GPU-enabled build (CUDA 12.1 wheels):
+GPU-enabled build (CUDA 12.8 wheels, including NVIDIA Blackwell / `sm_120`):
 ```bash
-docker compose build --build-arg TORCH_CUDA=cu121
+docker compose build --build-arg TORCH_CUDA=cu128
 ```
 > At runtime, enable GPU by uncommenting `gpus: "all"` in `docker-compose.yml` (service `nemo-asr`) **or** pass `--gpus all` to `docker compose run`.
 
@@ -399,7 +431,7 @@ Use `run_inference.sh` with `--root_audio_dir` pointed to segmented audio:
 
 We provide `run_manifest.sh`. It will:
 - Load base segment manifest from `--manifest_base_in` (preserve segment granularity).
-- Attach ASR hypotheses from `--nemo_manifest`.
+- Attach ASR hypotheses from `--asr_manifest`.
 - Write cleaned segment manifest under `<output_root>/manifests`.
 
 Usage:
@@ -408,7 +440,7 @@ Usage:
   --dataset_root /io/input/<dataset> \
   --output_root /io/output/<experiment> \
   --manifest_base_in /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
-  --nemo_manifest /io/output/<dataset>/nemo_asr_output_segments/transcriptions.jsonl \
+  --asr_manifest /io/output/<dataset>/nemo_asr_output_segments/transcriptions.jsonl \
   --manifest_raw_out /io/output/<experiment>/manifests/ref_manifest.segment.raw.jsonl \
   --manifest_clean_out /io/output/<experiment>/manifests/ref_manifest.segment.clean.jsonl
 ```
@@ -561,7 +593,7 @@ If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC) a
 - **CPU workers**: `--cpu_workers N` sets the number of CPU threads used when no GPU is available.
 - **Temp segments**: `--tmp_dir /work/nemo_inference/tmp` lets you keep the 16 kHz segments around for debugging.
 
-> `run_inference.sh` requires the named options `--dataset_root`, `--output_dir`, and `--model`; add any extra flags after those.
+> `run_inference.sh` is the legacy NeMo launcher. New workflows should use `run_nemo_inference.sh` or `run_transformers_inference.sh` with `--audio_manifest`, `--output_root`, and `--model`.
 
 ### Manifest build (`manifest_pipeline.py`)
 No implicit defaults are applied to dataset/output paths—provide them explicitly.
@@ -570,7 +602,7 @@ Run `python3 manifest_pipeline.py --help` to see available options. Highlights:
 - `--dataset_root /io/input/<dataset>` — required; automatically discovers the `Student_*` CSVs plus `0_Audio/` and `2_TextGrid/`.
 - `--manifest_base_in /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl` — required in segment-only flow; preserves segment rows.
 - `--output_root /io/output/<experiment>` — optional; defaults to a timestamped experiment directory.
-- `--nemo_manifest /path/to/transcriptions.jsonl` — optional; if provided, `pred_text` is attached from ASR manifest.
+- `--asr_manifest /path/to/transcriptions.jsonl` — optional; if provided, `pred_text` is attached from either backend. `--nemo_manifest` remains an alias.
 
 ### Evaluation (`eval_pipeline.py`)
 Run `python3 eval_pipeline.py --help` to see available options. Highlights:
@@ -582,10 +614,10 @@ Run `python3 eval_pipeline.py --help` to see available options. Highlights:
 
 ## Troubleshooting
 
-- **No GPU used**: Ensure the image was built with `--build-arg TORCH_CUDA=cu121` **and** you run with `--gpus all` or `gpus: "all"` in compose.
+- **No GPU used**: Ensure the image was built with `--build-arg TORCH_CUDA=cu128` **and** you run with `--gpus all` or `gpus: "all"` in compose.
 - **Empty or short `pred_text`**: Check that the model matches the language/domain. Also verify sample rate conversion (the script resamples to 16 kHz automatically).
 - **Missing REF text in segment base manifest**: Ensure `run_segment.sh` used the correct `--textgrid_root` and that audio/TextGrid stems align.
-- **Segment ASR not attached**: Check that `--nemo_manifest` in `run_manifest.sh` points to segmented ASR output and that `--match_on` is appropriate.
+- **Segment ASR not attached**: Check that `--asr_manifest` in `run_manifest.sh` points to segmented ASR output and that `--match_on` is appropriate.
 - **Segmentation not applied in inference**: Ensure matching `.TextGrid` files exist under `2_TextGrid/` and names align with audio stems; segmentation follows all parsed intervals from TextGrid.
 - **Unexpected full rows in segment manifest**: re-run `run_segment.sh`; strict mode drops non-segmentable rows and writes only `*_segmentN.wav` entries.
 - **Permissions**: The repo root and `input_output_data` are mounted read-write. Models are mounted read-only from `nemo_inference/models`.
@@ -599,7 +631,7 @@ Run `python3 eval_pipeline.py --help` to see available options. Highlights:
   delegates segmentation to `egra_eval/pipeline/segmenter.py`, and writes `transcriptions.jsonl`.
 
 - **`manifest_pipeline.py`**  
-  Builds and cleans final manifests; in segment-only flow it loads `--manifest_base_in` and attaches ASR `pred_text` from `--nemo_manifest`.
+  Builds and cleans final manifests; in segment-only flow it loads `--manifest_base_in` and attaches ASR `pred_text` from `--asr_manifest`.
 
 - **`eval_pipeline.py`**  
   Runs scoring and report generation using only a cleaned manifest (`--manifest_in`) plus dataset metadata CSVs.

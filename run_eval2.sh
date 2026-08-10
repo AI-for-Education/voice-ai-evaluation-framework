@@ -4,10 +4,10 @@ set -euo pipefail
 usage() {
   cat <<'EOF' >&2
 Usage:
-  ./run_eval.sh --dataset_root PATH --manifest_in PATH [--output_root PATH] [extra options]
+  ./run_eval2.sh --dataset_root PATH --manifest_in PATH [--output_root PATH] [extra options]
 
 Example:
-  ./run_eval.sh \
+  ./run_eval2.sh \
     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
     --output_root input_output_data/output/experiments/1_Batch2_Data_16spk_subset \
     --manifest_in input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.segment.clean.jsonl
