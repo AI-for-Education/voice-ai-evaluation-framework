@@ -1,0 +1,63 @@
+# STRUCTURE ONLY ON THE CURRENT HOST:
+# The tracked BF16 text-only runtime requires at least 40 GiB of GPU memory.
+# The present RTX 5080 Laptop GPU has 16 GiB, so the adapter stops at preflight
+# before loading weights. This profile becomes runnable on suitable hardware.
+id: qwen2.5-omni-7b-sw-text
+framework: multimodal
+adapter: qwen_omni_audio
+artifact: Qwen2.5-Omni-7B
+language: sw
+task: transcribe
+output_units: orthographic
+prompt: >-
+  Transcribe the following speech in Swahili. Output only the transcription,
+  with no explanation or formatting.
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: bfloat16
+  attention_implementation: sdpa
+decoding:
+  strategy: generate
+  generation_kwargs:
+    max_new_tokens: 256
+audio:
+  maximum_seconds: 30
+  long_audio_strategy: sequential_chunks
+  chunk_seconds: 30
+  overlap_seconds: 0
+hardware:
+  memory_strategy: large_gpu_only
+  minimum_gpu_memory_gib: 40
+  output_mode: text_only
+
+parameter_evidence:
+  - applies_to:
+      - hardware.output_mode
+      - decoding.strategy
+    level: exact
+    source: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
+    rationale: The model owner documents disable_talker with return_audio false for text-only generation.
+  - applies_to:
+      - loader.torch_dtype
+      - loader.attention_implementation
+    level: project
+    source: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
+    rationale: BF16 and SDPA are the frozen future-host compatibility choices; the model card otherwise demonstrates automatic dtype selection.
+  - applies_to:
+      - decoding.generation_kwargs.max_new_tokens
+      - prompt
+      - audio.maximum_seconds
+      - audio.chunk_seconds
+      - audio.long_audio_strategy
+      - audio.overlap_seconds
+    level: unvalidated
+    source: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
+    rationale: No model-owner recommendation was found for the local 256-token cap or 30-second non-overlapping audio chunks.
+  - applies_to:
+      - hardware.memory_strategy
+      - hardware.minimum_gpu_memory_gib
+    level: project
+    source: repo:docs/model-profile-evidence-implementation.md
+    rationale: The 40 GiB preflight is a conservative local gate; this profile is not runnable on the current 16 GiB GPU.

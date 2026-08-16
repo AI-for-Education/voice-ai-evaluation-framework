@@ -1,0 +1,24 @@
+# Source: https://huggingface.co/facebook/mms-1b-all
+id: mms-1b-all-swh
+framework: transformers
+adapter: ctc
+artifact: mms-1b-all
+language: swh
+task: transcribe
+output_units: orthographic
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: greedy
+  generation_kwargs: {}
+
+parameter_evidence:
+  - applies_to:
+      - language
+      - decoding.strategy
+    level: exact
+    source: https://huggingface.co/facebook/mms-1b-all
+    rationale: The model owner documents the Swahili adapter code and greedy CTC transcription workflow.

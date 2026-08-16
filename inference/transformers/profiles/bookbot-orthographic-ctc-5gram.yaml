@@ -1,0 +1,48 @@
+# Source: https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm
+# Decoder artifact basis: the source repository packages language_model/ and
+# language_model/attrs.json. alpha=0.5, beta=1.5, unk_score_offset=-10.0, and
+# score_boundary=true below mirror that packaged metadata exactly.
+# Runtime API: https://huggingface.co/docs/transformers/model_doc/wav2vec2
+# beam_width=100, n_best=1, and decoder_workers=1 are frozen project comparison
+# settings; they are not presented as BookBot model-owner recommendations.
+id: bookbot-orthographic-ctc-5gram
+framework: transformers
+adapter: ctc
+artifact: wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm
+language: sw
+task: transcribe
+output_units: orthographic
+loader:
+  processor_mode: wav2vec2_with_lm
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: beam_search
+  ctc_lm_kwargs:
+    beam_width: 100
+    alpha: 0.5
+    beta: 1.5
+    unk_score_offset: -10.0
+    lm_score_boundary: true
+    n_best: 1
+    decoder_workers: 1
+
+parameter_evidence:
+  - applies_to:
+      - loader.processor_mode
+      - decoding.strategy
+      - decoding.ctc_lm_kwargs.alpha
+      - decoding.ctc_lm_kwargs.beta
+      - decoding.ctc_lm_kwargs.unk_score_offset
+      - decoding.ctc_lm_kwargs.lm_score_boundary
+    level: exact
+    source: artifact:wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm/language_model/attrs.json
+    rationale: These values reproduce the KenLM decoder metadata packaged with the BookBot checkpoint.
+  - applies_to:
+      - decoding.ctc_lm_kwargs.beam_width
+      - decoding.ctc_lm_kwargs.n_best
+      - decoding.ctc_lm_kwargs.decoder_workers
+    level: unvalidated
+    source: https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm
+    rationale: Beam width 100, one-best output, and one decoder worker are frozen project comparison values, not model-owner recommendations.

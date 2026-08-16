@@ -1,0 +1,24 @@
+# English-only. Source: https://huggingface.co/facebook/hubert-large-ls960-ft
+id: hubert-large-ls960-ft-en
+framework: transformers
+adapter: ctc
+artifact: hubert-large-ls960-ft
+language: en
+task: transcribe
+output_units: orthographic
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: greedy
+  generation_kwargs: {}
+
+parameter_evidence:
+  - applies_to:
+      - language
+      - decoding.strategy
+    level: exact
+    source: https://huggingface.co/facebook/hubert-large-ls960-ft
+    rationale: The model card identifies an English CTC ASR checkpoint and demonstrates greedy argmax decoding.

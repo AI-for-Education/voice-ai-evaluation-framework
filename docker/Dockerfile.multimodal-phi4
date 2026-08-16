@@ -1,0 +1,21 @@
+# Paza Phi-4 runtime. Model weights remain bind-mounted from the host.
+# Keep this separate from the Transformers 5.x Gemma/current-ASR image.
+FROM voice-ai-evaluation-framework-asr:latest
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    TOKENIZERS_PARALLELISM=false
+
+# Preserve the CUDA 12.8 / PyTorch 2.7.1 base needed by the RTX 5080.
+# Phi-4's bundled code is pinned to Transformers 4.48.2. This image intentionally
+# omits Flash Attention so the tracked model profile selects SDPA without an
+# architecture-specific extension.
+RUN pip3 install --upgrade \
+    transformers==4.48.2 \
+    accelerate==1.3.0 \
+    huggingface-hub==0.28.1 \
+    backoff==2.2.1 \
+    peft==0.13.2 \
+    pillow==11.1.0 \
+    scipy==1.15.2 \
+ && python3 -c "import accelerate, backoff, torch, transformers; print(torch.__version__, transformers.__version__, accelerate.__version__)"

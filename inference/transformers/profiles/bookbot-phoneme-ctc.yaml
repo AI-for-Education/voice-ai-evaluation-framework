@@ -1,0 +1,28 @@
+# Source: https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot
+id: bookbot-phoneme-ctc
+framework: transformers
+adapter: ctc
+artifact: wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot
+language: sw
+task: transcribe
+output_units: phoneme
+output_notation: ipa
+output_inventory: bookbot_gruut_sw_v1
+loader:
+  processor_mode: wav2vec2_plain
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: greedy
+  generation_kwargs: {}
+
+parameter_evidence:
+  - applies_to:
+      - output_units
+      - output_notation
+      - output_inventory
+      - decoding.strategy
+    level: exact
+    source: https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot
+    rationale: The BookBot checkpoint and tokenizer define phoneme output, while CTC argmax provides its standard greedy baseline.

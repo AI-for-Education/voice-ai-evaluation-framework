@@ -1,0 +1,16 @@
+# Qwen2.5-Omni text-only runtime for a future >=40 GiB GPU host.
+# It can be built on the current machine, but the adapter intentionally blocks
+# its 16 GiB GPU before loading weights.
+FROM voice-ai-evaluation-framework-asr:latest
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    TOKENIZERS_PARALLELISM=false
+
+# Qwen's current official Transformers path. qwen-omni-utils is retained for
+# model-family compatibility even though this ASR adapter loads WAV data itself.
+RUN pip3 install --upgrade \
+    transformers==4.52.3 \
+    accelerate==1.7.0 \
+    qwen-omni-utils==0.0.9 \
+ && python3 -c "import accelerate, qwen_omni_utils, torch, transformers; from transformers import Qwen2_5OmniForConditionalGeneration; print(torch.__version__, transformers.__version__, accelerate.__version__)"

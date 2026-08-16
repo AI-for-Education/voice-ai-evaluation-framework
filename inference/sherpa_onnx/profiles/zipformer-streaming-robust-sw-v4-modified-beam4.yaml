@@ -1,0 +1,36 @@
+# Source: https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4
+# Decoder basis: https://k2-fsa.github.io/sherpa/onnx/c-api/html/structsherpa__onnx_1_1cxx_1_1OnlineRecognizerConfig.html
+# Sherpa documents modified_beam_search and max_active_paths=4 for streaming ASR.
+id: zipformer-streaming-robust-sw-v4-modified-beam4
+framework: sherpa_onnx
+adapter: online_transducer
+artifact: sherpa-onnx-zipformer-streaming-robust-sw-v4
+language: sw
+task: transcribe
+output_units: phoneme
+output_notation: ipa
+output_inventory: bookbot_gruut_sw_v1
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: modified_beam_search
+  transducer_search_kwargs:
+    max_active_paths: 4
+
+parameter_evidence:
+  - applies_to:
+      - output_units
+      - output_notation
+      - output_inventory
+    level: exact
+    source: https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4
+    rationale: The packaged tokens and model card define BookBot Swahili phoneme output.
+  - applies_to:
+      - decoding.strategy
+      - decoding.transducer_search_kwargs.max_active_paths
+    level: exact
+    source: https://k2-fsa.github.io/sherpa/onnx/c-api/html/structsherpa__onnx_1_1cxx_1_1OnlineRecognizerConfig.html
+    rationale: Sherpa-ONNX documents modified beam search and a default of four active paths.

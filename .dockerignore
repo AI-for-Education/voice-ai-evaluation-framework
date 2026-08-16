@@ -2,7 +2,11 @@
 .venv*
 __pycache__/
 input_output_data/
-nemo_inference/models/
-nemo_inference/tmp/
-transformers_inference/models/
-transformers_inference/tmp/
+inference/nemo/models/
+inference/nemo/tmp/
+inference/transformers/models/
+inference/transformers/tmp/
+inference/sherpa_onnx/models/
+inference/onnxruntime/models/
+inference/multimodal/models/
+inference/multimodal/tmp/

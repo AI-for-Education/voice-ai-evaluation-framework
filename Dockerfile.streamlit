@@ -1,29 +1,30 @@
-# Dockerfile.streamlit
 FROM python:3.11-slim
 
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive \
+    HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache \
+    PYTHONPATH=/app \
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     PORT=8501
 
-WORKDIR /app
+WORKDIR /work
 
-# system deps needed by some python libs (keep to a minimum)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    ffmpeg \
- && rm -rf /var/lib/apt/lists/*
+# Keep dashboard dependencies isolated from every ASR/model image.
+RUN python3 -m pip install --upgrade \
+      pip==25.1.1 \
+      setuptools==80.9.0 \
+      wheel==0.45.1 \
+ && python3 -m pip install \
+      streamlit==1.51.0 \
+      pandas==2.3.3 \
+      numpy==2.3.4
 
-# copy only what we need (leverage build cache)
-COPY requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip setuptools wheel \
- && pip install --no-cache-dir -r /app/requirements.txt
+# Evaluation outputs are intentionally not copied into the image. Compose
+# mounts only input_output_data/output read-only at runtime.
+COPY egra_leaderboard.py /app/egra_leaderboard.py
+COPY egra_eval2/leaderboard.py /app/egra_eval2/leaderboard.py
 
-# copy app code and CSV (make sure CSV is in git or in build context)
-COPY egra_dashboard.py /app/egra_dashboard.py
-COPY input_output_data/output/experiments/exp1/egra_eval_detailed.csv /app/egra_eval_detailed.csv
+EXPOSE 8501
 
-EXPOSE ${PORT}
-
-# Use the PORT env provided by Koyeb
-CMD ["sh", "-c", "streamlit run egra_dashboard.py --server.port ${PORT:-8501} --server.address 0.0.0.0 -- --csv egra_eval_detailed.csv"]
+CMD ["streamlit", "run", "/app/egra_leaderboard.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true", "--", "--evaluations-root", "input_output_data/output/evaluations"]

@@ -1,0 +1,29 @@
+id: swahili-exp41-ctc
+framework: nemo
+adapter: nemo
+artifact: model_exp41_avg.nemo
+language: sw
+task: transcribe
+output_units: orthographic
+
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+
+decoding:
+  strategy: ctc
+  generation_kwargs: {}
+
+parameter_evidence:
+  - applies_to:
+      - decoding.strategy
+    level: exact
+    source: artifact:model_exp41_avg.nemo/model_config.yaml
+    rationale: The packaged NeMo configuration identifies the trained decoder as CTC.
+  - applies_to:
+      - loader.torch_dtype
+    level: supported
+    source: https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/asr/results.html
+    rationale: Automatic checkpoint loading preserves the native NeMo model precision; runtime batch controls remain launcher arguments.

@@ -1,0 +1,25 @@
+id: swahili-exp41-ctc-android-int8
+framework: onnxruntime
+adapter: android_ctc
+artifact: swahili-exp41-ctc-android/model.int8.onnx
+language: sw
+task: transcribe
+output_units: orthographic
+
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+
+decoding:
+  strategy: greedy
+  generation_kwargs: {}
+
+parameter_evidence:
+  - applies_to:
+      - decoding.strategy
+      - loader.torch_dtype
+    level: exact
+    source: https://github.com/AI-for-Education/nemoasr-android/blob/6cd031267aed45e47347bc05a0eb63eee285f0d8/android/NemoAsrDemo/app/src/main/java/com/example/nemoasrdemo/OnnxAsrEngine.kt
+    rationale: The Android reference executes the packaged INT8 graph with greedy CTC decoding; batch and thread parity are enforced by its launcher.
