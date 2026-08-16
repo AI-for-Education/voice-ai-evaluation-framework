@@ -23,6 +23,8 @@ from egra_eval2.manifest_builder import (
 )
 from egra_eval2.manifest_cleaner import clean_manifest_jsonl
 from egra_eval2.eval_utils import adjust_letter_canonical_text
+from egra_eval2.manifest_integrity import ReferenceIntegrityError, validate_reference_rows
+from egra_eval2.reference.views import ReferenceViewError, prepare_ipa_reference_view
 
 
 def setup_logger() -> logging.Logger:
@@ -38,6 +40,23 @@ def setup_logger() -> logging.Logger:
         )
         logger.addHandler(handler)
     return logger
+
+
+def _default_evaluation_root(asr_manifests: list[str] | None) -> Path:
+    """Reuse the model/timestamp directory created by standard inference output."""
+    for manifest in asr_manifests or []:
+        path = Path(manifest)
+        run_dir = path.parent
+        if path.name == "transcriptions.jsonl" and run_dir.parent.name == "transcripts":
+            return run_dir.parent.parent / "evaluations" / run_dir.name
+
+    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    return (
+        Path("input_output_data")
+        / "output"
+        / "evaluations"
+        / f"evaluation_{timestamp}"
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -122,6 +141,46 @@ def _safe_text(value: object) -> str:
     return "" if s.lower() == "nan" else s
 
 
+def _safe_hyp_text(value: object) -> str:
+    """Normalize missing values without rewriting literal model output such as 'nan'."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return str(value)
+
+
+def _attach_authoritative_hypotheses(
+    raw_df: pd.DataFrame,
+    asr_df: pd.DataFrame,
+    *,
+    match_on: str,
+    logger: logging.Logger,
+) -> pd.DataFrame:
+    """Attach a supplied ASR run without retaining hypotheses from the base."""
+    base_df = raw_df.rename(columns={"audio_filepath": "audio_file"}).copy()
+    base_df = add_audio_keys(base_df, audio_col="audio_file")
+    # attach_hypotheses fills blank values by design. Blank the base explicitly so
+    # the newly supplied ASR manifest is authoritative, including missing rows.
+    base_df["hyp_text"] = ""
+    merged = attach_hypotheses(base_df, asr_df, match_on=match_on, logger=logger)
+    updated = raw_df.copy()
+    updated["pred_text"] = merged.get("hyp_text", "").apply(_safe_hyp_text)
+    return updated
+
+
+def _validate_reference_dataframe(df: pd.DataFrame, *, source: str) -> None:
+    validate_reference_rows(
+        df.to_dict(orient="records"),
+        text_fields=("ref_text", "can_text"),
+        audio_field="audio_filepath",
+        source=source,
+    )
+
+
 def _compute_duration_if_missing(audio_path: str, duration_value: object) -> float:
     try:
         if duration_value is not None and not pd.isna(duration_value):
@@ -181,13 +240,18 @@ def main() -> None:
     except DatasetLayoutError as exc:
         raise SystemExit(str(exc)) from exc
 
-    if not args.output_root:
-        args.output_root = str(
-            Path("input_output_data")
-            / "output"
-            / "experiments"
-            / f"exp_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}"
+    try:
+        prepare_ipa_reference_view(
+            dataset_root=layout.root,
+            manifest_base_in=args.manifest_base_in,
+            asr_manifests=args.asr_manifest,
+            logger=logger,
         )
+    except ReferenceViewError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if not args.output_root:
+        args.output_root = str(_default_evaluation_root(args.asr_manifest))
         logger.info("No --output_root supplied; using default: %s", args.output_root)
 
     args.egra_csv = args.egra_csv or str(layout.canonical_csv)
@@ -217,11 +281,12 @@ def main() -> None:
                 can_key=args.manifest_can_key,
                 logger=logger,
             )
-            base_df = raw_df.rename(columns={"audio_filepath": "audio_file"}).copy()
-            base_df = add_audio_keys(base_df, audio_col="audio_file")
-            base_df["hyp_text"] = base_df.get("pred_text", "")
-            merged = attach_hypotheses(base_df, asr_df, match_on=args.match_on, logger=logger)
-            raw_df["pred_text"] = merged.get("hyp_text", "").apply(_safe_text)
+            raw_df = _attach_authoritative_hypotheses(
+                raw_df,
+                asr_df,
+                match_on=args.match_on,
+                logger=logger,
+            )
         else:
             logger.info("No --asr_manifest supplied; keeping pred_text from base manifest.")
     else:
@@ -267,6 +332,10 @@ def main() -> None:
             path_prefix=args.manifest_path_prefix,
             logger=logger,
         )
+    try:
+        _validate_reference_dataframe(raw_df, source=str(raw_manifest_path))
+    except ReferenceIntegrityError as exc:
+        raise SystemExit(str(exc)) from exc
     write_manifest_jsonl(raw_df, raw_manifest_path)
 
     logger.info(

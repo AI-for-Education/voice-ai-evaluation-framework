@@ -13,6 +13,8 @@ import re
 from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
 from egra_eval2.eval_utils import adjust_letter_canonical_text
 from egra_eval2.evaluate import aggregate_row_scores, evaluate_rows
+from egra_eval2.manifest_integrity import ReferenceIntegrityError, validate_reference_rows
+from egra_eval2.scoring_text import ScoringRepresentationError, prepare_scoring_texts
 
 
 def setup_logger() -> logging.Logger:
@@ -28,6 +30,23 @@ def setup_logger() -> logging.Logger:
         )
         logger.addHandler(handler)
     return logger
+
+
+def _default_evaluation_root(manifest_in: str) -> Path:
+    """Keep scoring in the evaluation run directory that owns the manifest."""
+    manifest_path = Path(manifest_in)
+    if manifest_path.parent.name == "manifests":
+        run_dir = manifest_path.parent.parent
+        if run_dir.parent.name == "evaluations":
+            return run_dir
+
+    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    return (
+        Path("input_output_data")
+        / "output"
+        / "evaluations"
+        / f"evaluation_{timestamp}"
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,38 +66,157 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--manifest_ref_key", default="ref_text")
     p.add_argument("--manifest_can_key", default="can_text")
     p.add_argument("--manifest_hyp_key", default="pred_text")
+    p.add_argument(
+        "--scoring_representation",
+        choices=["auto", "orthographic", "ipa", "legacy_orthographic"],
+        default="auto",
+        help=(
+            "auto selects the model-native valid view; orthographic and ipa select "
+            "an explicit valid view; legacy_orthographic reproduces the historical "
+            "phoneme-vs-orthography diagnostic in an isolated folder"
+        ),
+    )
     p.add_argument("--detailed", action="store_true", default=False)
     return p.parse_args()
 
 
-def resolve_outputs(
-    args: argparse.Namespace, logger: logging.Logger
-) -> dict[str, Path]:
-    if not args.output_root:
-        args.output_root = str(
-            Path("input_output_data")
-            / "output"
-            / "experiments"
-            / f"exp_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}"
-        )
-        logger.info("No --output_root supplied; using default: %s", args.output_root)
+def _output_namespace(
+    scoring_representation: str,
+    scoring_units: str | None,
+) -> str:
+    if scoring_representation == "legacy_orthographic":
+        return "orthographic_legacy"
+    if scoring_units == "phoneme" or scoring_representation == "ipa":
+        return "ipa"
+    if scoring_units == "orthographic" or scoring_representation == "orthographic":
+        return "orthographic"
+    raise ValueError(
+        "scoring_units is required to resolve an automatic evaluation output"
+    )
 
-    base = Path(args.output_root)
-    args.out_csv = args.out_csv or str(base / "egra_eval_detailed.csv")
-    args.summary_can_ref_dir = args.summary_can_ref_dir or str(base / "can_ref")
-    args.summary_can_hyp_dir = args.summary_can_hyp_dir or str(base / "can_hyp")
-    args.summary_ref_hyp_dir = args.summary_ref_hyp_dir or str(base / "ref_hyp")
+
+def _representation_scoped_path(
+    configured: str | None,
+    default: Path,
+    *,
+    base: Path,
+    label: str,
+) -> Path:
+    path = Path(configured) if configured else default
+    try:
+        path.resolve().relative_to(base.resolve())
+    except ValueError as exc:
+        raise SystemExit(
+            f"{label} must stay inside the representation output directory "
+            f"{base}: {path}"
+        ) from exc
+    return path
+
+
+def resolve_outputs(
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    *,
+    scoring_units: str | None = None,
+) -> dict[str, Path]:
+    namespace = _output_namespace(args.scoring_representation, scoring_units)
+    if args.output_root:
+        run_root = Path(args.output_root)
+    else:
+        run_root = _default_evaluation_root(args.manifest_in)
+        logger.info("No --output_root supplied; using run root: %s", run_root)
+
+    known_namespaces = {"orthographic", "ipa", "orthographic_legacy"}
+    if run_root.name in known_namespaces:
+        if run_root.name != namespace:
+            raise SystemExit(
+                "Output path representation does not match scoring mode: "
+                f"{run_root} vs {namespace}"
+            )
+        base = run_root
+    else:
+        base = run_root / namespace
+    args.output_root = str(base)
+    logger.info("Writing %s evaluation under: %s", namespace, base)
+
+    out_csv = _representation_scoped_path(
+        args.out_csv,
+        base / "egra_eval_detailed.csv",
+        base=base,
+        label="--out_csv",
+    )
+    can_ref = _representation_scoped_path(
+        args.summary_can_ref_dir,
+        base / "can_ref",
+        base=base,
+        label="--summary_can_ref_dir",
+    )
+    can_hyp = _representation_scoped_path(
+        args.summary_can_hyp_dir,
+        base / "can_hyp",
+        base=base,
+        label="--summary_can_hyp_dir",
+    )
+    ref_hyp = _representation_scoped_path(
+        args.summary_ref_hyp_dir,
+        base / "ref_hyp",
+        base=base,
+        label="--summary_ref_hyp_dir",
+    )
+    args.out_csv = str(out_csv)
+    args.summary_can_ref_dir = str(can_ref)
+    args.summary_can_hyp_dir = str(can_hyp)
+    args.summary_ref_hyp_dir = str(ref_hyp)
 
     summary_dirs = {
         "base": Path(base),
-        "can_ref": Path(args.summary_can_ref_dir),
-        "can_hyp": Path(args.summary_can_hyp_dir),
-        "ref_hyp": Path(args.summary_ref_hyp_dir),
+        "can_ref": can_ref,
+        "can_hyp": can_hyp,
+        "ref_hyp": ref_hyp,
+        "namespace": Path(namespace),
     }
-    Path(args.out_csv).parent.mkdir(parents=True, exist_ok=True)
-    for d in summary_dirs.values():
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    for key, d in summary_dirs.items():
+        if key == "namespace":
+            continue
         d.mkdir(parents=True, exist_ok=True)
     return summary_dirs
+
+
+def write_evaluation_metadata(
+    *,
+    base: Path,
+    manifest_in: str,
+    requested_representation: str,
+    scoring_units: str,
+    namespace: str,
+) -> Path:
+    legacy_mismatch = requested_representation == "legacy_orthographic"
+    payload = {
+        "schema_version": 1,
+        "status": "complete",
+        "completed_at": datetime.now().astimezone().isoformat(),
+        "source_manifest": str(manifest_in),
+        "requested_scoring_representation": requested_representation,
+        "effective_scoring_units": scoring_units,
+        "output_namespace": namespace,
+        "representation_compatible": not legacy_mismatch,
+        "reference_integrity_enforced": not legacy_mismatch,
+    }
+    if legacy_mismatch:
+        payload["warning"] = (
+            "Historical phoneme-vs-orthography diagnostic. Reference integrity "
+            "enforcement is disabled so archived source defects are preserved. Do "
+            "not compare this WER with representation-compatible model evaluations."
+        )
+    path = base / "evaluation_metadata.json"
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    return path
 
 
 def load_eval_manifest(
@@ -89,6 +227,7 @@ def load_eval_manifest(
     can_key: str,
     hyp_key: str,
     logger: logging.Logger,
+    validate_references: bool = True,
 ) -> pd.DataFrame:
     rows = []
     total = 0
@@ -175,6 +314,20 @@ def load_eval_manifest(
                 "manifest_del_rate",
                 "manifest_sub_rate",
             ]
+        )
+    if validate_references:
+        try:
+            validate_reference_rows(
+                out.to_dict(orient="records"),
+                text_fields=("manifest_ref_text", "manifest_can_text"),
+                audio_field="audio_path",
+                source=str(in_path),
+            )
+        except ReferenceIntegrityError as exc:
+            raise SystemExit(str(exc)) from exc
+    else:
+        logger.warning(
+            "Reference integrity enforcement disabled for legacy recovery: %s", in_path
         )
     logger.info(
         "Loaded eval manifest %s | rows=%d | total_lines=%d | skipped=%d",
@@ -367,7 +520,6 @@ def main() -> None:
     except DatasetLayoutError as exc:
         raise SystemExit(str(exc)) from exc
 
-    summary_dirs = resolve_outputs(args, logger)
     args.meta_csv = args.meta_csv or str(layout.metadata_csv)
     df_meta = pd.read_csv(args.meta_csv)
     logger.info("Loaded META rows: %d", len(df_meta))
@@ -379,9 +531,24 @@ def main() -> None:
         can_key=args.manifest_can_key,
         hyp_key=args.manifest_hyp_key,
         logger=logger,
+        validate_references=(
+            args.scoring_representation != "legacy_orthographic"
+        ),
     )
+    try:
+        manifest_df, scoring_units = prepare_scoring_texts(
+            manifest_df,
+            dataset_root=layout.root,
+            manifest_in=args.manifest_in,
+            logger=logger,
+            scoring_representation=args.scoring_representation,
+        )
+    except ScoringRepresentationError as exc:
+        raise SystemExit(str(exc)) from exc
+    summary_dirs = resolve_outputs(args, logger, scoring_units=scoring_units)
     df_eval = build_eval_rows_from_manifest(manifest_df, logger)
-    df_eval = adjust_letter_canonical_text(df_eval, logger)
+    if scoring_units == "orthographic":
+        df_eval = adjust_letter_canonical_text(df_eval, logger)
 
     # Simplify to only required columns
     required_cols = [
@@ -417,13 +584,16 @@ def main() -> None:
 
     # Aggregate scores
     scores_dict = aggregate_row_scores(
-        df_scores_per_row, summary_dirs["base"], args.detailed
+        df_scores_per_row,
+        summary_dirs["base"],
+        args.detailed,
+        scoring_units=scoring_units,
     )
 
     # Write summary to file
     fn = base / "egra_eval_summary.txt"
     logger.info(f"Writing: {fn}")
-    with open(fn, "w") as f:
+    with open(fn, "w", encoding="utf-8") as f:
         for key in [
             "global",
             "passage_passage",
@@ -442,6 +612,15 @@ def main() -> None:
                 else:
                     f.write(f"  {metric}: {value:.2f}%\n")
             f.write("\n")
+
+    metadata_path = write_evaluation_metadata(
+        base=base,
+        manifest_in=args.manifest_in,
+        requested_representation=args.scoring_representation,
+        scoring_units=scoring_units,
+        namespace=summary_dirs["namespace"].name,
+    )
+    logger.info("Writing: %s", metadata_path)
 
     print()
     for key in [

@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Streamlit leaderboards for representation-compatible EGRA evaluations."""
+
+from __future__ import annotations
+
+import argparse
+import os
+
+import pandas as pd
+import streamlit as st
+
+from egra_eval2.leaderboard import LeaderboardError, build_leaderboards
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--evaluations-root",
+        "--evaluations_root",
+        default="input_output_data/output/evaluations",
+    )
+    args, _ = parser.parse_known_args()
+    return args
+
+
+@st.cache_data(show_spinner=False)
+def load_leaderboards(
+    evaluations_root: str,
+    latest_only: bool,
+) -> tuple[dict[str, pd.DataFrame], dict[str, list[str]]]:
+    return build_leaderboards(evaluations_root, latest_only=latest_only)
+
+
+def display_frame(frame: pd.DataFrame, metric: str) -> pd.DataFrame:
+    visible = frame.drop(columns=["summary_path"], errors="ignore").copy()
+    labels = {
+        "model_id": "model",
+        "run_name": "run",
+        "native_output_units": "native output",
+        "hypothesis_route": "scoring route",
+        "scored_hypothesis": "scored hypothesis",
+        "postprocessing_method": "post-processing",
+        "postprocessed_rows": "adjusted rows",
+        "postprocessed_rows_pct": "adjusted rows (%)",
+        "postprocessing_words_removed": "words removed",
+        "postprocessing_audit_source": "audit source",
+        "completed_at": "completed",
+        "global_mer": "global MER",
+    }
+    sections = (
+        "global",
+        "passage_passage",
+        "syllables_grid",
+        "syllables_isolated",
+        "nonwords_grid",
+        "nonwords_isolated",
+        "letters_grid",
+        "letters_isolated",
+    )
+    for section in sections:
+        task_label = section.replace("_", " ")
+        labels[f"{section}_{metric}"] = (
+            f"{task_label} {metric.upper()}"
+        )
+        labels[f"{section}_mer"] = f"{task_label} MER"
+        if section.endswith("_isolated"):
+            labels[f"{section}_accuracy"] = f"{task_label} accuracy"
+        else:
+            labels[f"{section}_corr"] = f"{task_label} correlation (r)"
+    return visible.rename(columns=labels)
+
+
+def render_leaderboard(
+    frame: pd.DataFrame,
+    skipped: list[str],
+    *,
+    namespace: str,
+    metric: str,
+    description: str,
+) -> None:
+    st.caption(description + " Lower error rates rank higher. Post-processing "
+               "columns identify any adjusted hypotheses used for scoring. "
+               "Passage/grid tasks report correct-count Pearson correlation; "
+               "isolated tasks report accuracy.")
+    if frame.empty:
+        st.info(f"No eligible {namespace} evaluations found.")
+    else:
+        st.dataframe(
+            display_frame(frame, metric),
+            hide_index=True,
+            width="stretch",
+        )
+        st.download_button(
+            f"Download {namespace} leaderboard (CSV)",
+            data=frame.to_csv(index=False, float_format="%.4f").encode("utf-8"),
+            file_name=f"leaderboard_{namespace}.csv",
+            mime="text/csv",
+            key=f"download_{namespace}_leaderboard",
+        )
+
+    if skipped:
+        with st.expander(f"Skipped {len(skipped)} ineligible run(s)"):
+            for reason in skipped:
+                st.code(reason)
+
+
+st.set_page_config(page_title="EGRA Model Leaderboards", layout="wide")
+st.title("EGRA Model Leaderboards")
+st.write(
+    "Orthographic word scoring and IPA phoneme scoring are ranked separately. "
+    "Archived and representation-incompatible evaluations are never included."
+)
+
+args = parse_args()
+default_root = os.environ.get("EGRA_EVALUATIONS_ROOT", args.evaluations_root)
+evaluations_root = st.text_input("Evaluations root", default_root)
+latest_only = st.toggle("Show only the newest completed run per model", value=True)
+
+try:
+    frames, skipped_runs = load_leaderboards(evaluations_root, latest_only)
+except LeaderboardError as exc:
+    st.error(str(exc))
+    st.stop()
+
+orthographic_tab, ipa_tab = st.tabs(["Orthographic (WER)", "IPA (PER)"])
+with orthographic_tab:
+    render_leaderboard(
+        frames["orthographic"],
+        skipped_runs["orthographic"],
+        namespace="orthographic",
+        metric="wer",
+        description=(
+            "Native written-text hypotheses scored by word error rate. This is "
+            "orthographic scoring, not a character/grapheme error rate."
+        ),
+    )
+
+with ipa_tab:
+    render_leaderboard(
+        frames["ipa"],
+        skipped_runs["ipa"],
+        namespace="ipa",
+        metric="per",
+        description=(
+            "Native IPA hypotheses and orthographic hypotheses converted through "
+            "the approved Africa G2P route, scored by phoneme error rate."
+        ),
+    )
