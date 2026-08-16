@@ -26,5 +26,5 @@ parameter_evidence:
   - applies_to:
       - artifact
     level: project
-    source: repo:docs/inference-runtime-parameter-provenance.md
+    source: repo:inference/onnxruntime/README.md
     rationale: This artifact is the matched desktop FP32 control for the quantized ONNX comparison.

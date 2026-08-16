@@ -26,6 +26,7 @@ def _profile(
     ctc_lm_kwargs: dict[str, Any] | None = None,
     hallucination_guard: dict[str, Any] | None = None,
     long_form: dict[str, Any] | None = None,
+    audio: dict[str, Any] | None = None,
 ) -> ModelProfile:
     return parse_profile(
         {
@@ -62,6 +63,7 @@ def _profile(
                     else {}
                 ),
             },
+            **({"audio": audio} if audio is not None else {}),
         }
     )
 
@@ -914,6 +916,67 @@ def test_speech_seq2seq_routes_mixed_batch_and_preserves_original_order(
         "threshold_seconds": 30.0,
     }
 
+
+
+def test_speech_seq2seq_chunks_profile_scoped_long_audio_in_memory(
+    fake_transformers_runtime: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = fake_transformers_runtime
+    seq2seq = importlib.import_module(
+        "inference.transformers.adapters.speech_seq2seq"
+    )
+    model_path = tmp_path / "paza-whisper"
+    model_path.mkdir()
+    profile = _profile(
+        adapter="speech_seq2seq",
+        profile_id="paza-whisper",
+        artifact="paza-whisper",
+        language="sw",
+        generation_kwargs={"do_sample": False, "return_timestamps": False},
+        audio={
+            "maximum_seconds": 30,
+            "long_audio_strategy": "sequential_chunks",
+            "chunk_seconds": 30,
+            "overlap_seconds": 0,
+        },
+    )
+    backend = seq2seq.TransformersSpeechSeq2SeqBackend(
+        profile, model_path, device=state.torch.device("cpu")
+    )
+    monkeypatch.setattr(
+        seq2seq,
+        "load_audio_and_resample",
+        lambda path, target_sr: (
+            np.zeros(65 * target_sr, dtype=np.float32),
+            target_sr,
+            65.0,
+            False,
+        ),
+    )
+    decode_calls: list[tuple[bool, list[int]]] = []
+
+    def fake_decode(audio_batch: list[np.ndarray], *, long_form: bool = False):
+        decode_calls.append((long_form, [len(audio) for audio in audio_batch]))
+        return ["moja", "mbili", "tatu"]
+
+    monkeypatch.setattr(backend, "_decode", fake_decode)
+
+    rows = backend.transcribe_batch(["long.wav"])
+
+    assert decode_calls == [(False, [30 * 16000, 30 * 16000, 5 * 16000])]
+    assert rows[0].pred_text == "moja mbili tatu"
+    assert backend.metadata()["chunking"] == {
+        "maximum_seconds": 30.0,
+        "long_audio_strategy": "sequential_chunks",
+        "chunk_seconds": 30.0,
+        "overlap_seconds": 0.0,
+    }
+    assert backend.metadata()["chunking_stats"] == {
+        "long_audio_files": 1,
+        "chunks_generated": 3,
+    }
 
 @pytest.mark.parametrize(
     ("adapter", "module_name", "class_name"),

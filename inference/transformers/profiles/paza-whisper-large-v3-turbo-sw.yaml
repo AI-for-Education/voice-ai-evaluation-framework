@@ -1,8 +1,7 @@
 # Source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo
-# Long-audio limitation: the model card requires caller-managed segmentation.
-# This profile intentionally keeps timestamp-based long-form decoding disabled
-# and does not segment automatically. Each input WAV must be 30 seconds or
-# shorter; a longer input may be truncated by the Whisper processor.
+# The owner requires segmentation above its 448-token input limit but gives no
+# duration. This project uses deterministic 30-second, zero-overlap chunks in
+# memory and keeps the owner's timestamp-disabled decoding configuration.
 id: paza-whisper-large-v3-turbo-sw
 framework: transformers
 adapter: speech_seq2seq
@@ -27,6 +26,11 @@ decoding:
     repeated_phrase_min_words: 5
     repeated_phrase_max_words: 8
     repeated_phrase_repetitions: 3
+audio:
+  maximum_seconds: 30
+  long_audio_strategy: sequential_chunks
+  chunk_seconds: 30
+  overlap_seconds: 0
 
 parameter_evidence:
   - applies_to:
@@ -50,3 +54,13 @@ parameter_evidence:
     level: unvalidated
     source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo
     rationale: The owner supports duration and repetition guards but requires per-language validation; the local 8 WPS and three-repeat thresholds are not calibrated.
+  - applies_to:
+      - audio.maximum_seconds
+      - audio.long_audio_strategy
+      - audio.chunk_seconds
+      - audio.overlap_seconds
+    level: project
+    source: repo:inference/transformers/README.md
+    rationale: >-
+      The owner requires segmentation above 448 input tokens but publishes no
+      duration; 30-second zero-overlap chunks are the local reproducible policy.

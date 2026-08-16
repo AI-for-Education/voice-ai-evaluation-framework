@@ -136,8 +136,25 @@ class TransformersSpeechSeq2SeqBackend:
         self._generation_kwargs = dict(profile.decoding.generation_kwargs)
         self._generation_kwargs.setdefault("return_timestamps", False)
         self._generation_kwargs.setdefault("task", profile.task)
+        self._chunked_files = 0
+        self._chunks_generated = 0
         if profile.language:
             self._generation_kwargs.setdefault("language", profile.language)
+
+    def _split_audio(self, audio: np.ndarray) -> list[np.ndarray]:
+        audio_config = self.profile.audio
+        if audio_config is None:
+            return [audio]
+        maximum_samples = max(
+            1, int(audio_config.maximum_seconds * self.sampling_rate)
+        )
+        if len(audio) <= maximum_samples:
+            return [audio]
+        chunk_samples = max(1, int(audio_config.chunk_seconds * self.sampling_rate))
+        return [
+            audio[start : start + chunk_samples]
+            for start in range(0, len(audio), chunk_samples)
+        ]
 
     def _decode(
         self,
@@ -216,12 +233,20 @@ class TransformersSpeechSeq2SeqBackend:
                 False: [],
                 True: [],
             }
+            chunked_audio: list[tuple[int, list[np.ndarray]]] = []
+            decoded_predictions: dict[int, str] = {}
             for index, audio in zip(valid_indices, valid_audio):
+                chunks = self._split_audio(audio)
+                if len(chunks) > 1:
+                    self._chunked_files += 1
+                    self._chunks_generated += len(chunks)
+                    chunked_audio.append((index, chunks))
+                    continue
                 is_long_form = bool(
                     long_form_config is not None
                     and durations[index] > long_form_config.threshold_seconds
                 )
-                decode_groups[is_long_form].append((index, audio))
+                decode_groups[is_long_form].append((index, chunks[0]))
 
             guard = self.profile.decoding.hallucination_guard
             for long_form, group in decode_groups.items():
@@ -247,21 +272,49 @@ class TransformersSpeechSeq2SeqBackend:
                         )
                     continue
 
-                for index, prediction in zip(group_indices, predictions):
-                    raw_prediction = prediction
-                    adjusted = False
-                    if guard is not None:
-                        prediction, adjusted = apply_hallucination_guard(
-                            prediction,
-                            duration=durations[index],
-                            config=guard,
+                decoded_predictions.update(
+                    zip(group_indices, predictions)
+                )
+
+            for index, chunks in chunked_audio:
+                try:
+                    predictions = self._decode(chunks, long_form=False)
+                    if len(predictions) != len(chunks):
+                        raise RuntimeError(
+                            "Transformers speech-seq2seq chunk inference returned an "
+                            f"unexpected number of predictions: expected {len(chunks)}, "
+                            f"got {len(predictions)}"
                         )
+                except Exception as exc:
                     rows[index] = TranscriptionResult(
                         audio_filepath=str(audio_paths[index]),
                         duration=durations[index],
-                        pred_text=prediction,
-                        raw_pred_text=raw_prediction if adjusted else None,
+                        pred_text="",
+                        error=f"inference_failed: {exc}",
                     )
+                    continue
+                decoded_predictions[index] = (
+                    " ".join(text for text in predictions if text).strip()
+                )
+
+            for index in valid_indices:
+                if rows[index] is not None:
+                    continue
+                prediction = decoded_predictions[index]
+                raw_prediction = prediction
+                adjusted = False
+                if guard is not None:
+                    prediction, adjusted = apply_hallucination_guard(
+                        prediction,
+                        duration=durations[index],
+                        config=guard,
+                    )
+                rows[index] = TranscriptionResult(
+                    audio_filepath=str(audio_paths[index]),
+                    duration=durations[index],
+                    pred_text=prediction,
+                    raw_pred_text=raw_prediction if adjusted else None,
+                )
 
         if any(row is None for row in rows):
             raise RuntimeError(
@@ -286,6 +339,15 @@ class TransformersSpeechSeq2SeqBackend:
                 if self.profile.decoding.long_form is not None
                 else None
             ),
+            "chunking": (
+                vars(self.profile.audio)
+                if self.profile.audio is not None
+                else None
+            ),
+            "chunking_stats": {
+                "long_audio_files": self._chunked_files,
+                "chunks_generated": self._chunks_generated,
+            },
             "hallucination_guard": (
                 vars(self.profile.decoding.hallucination_guard)
                 if self.profile.decoding.hallucination_guard is not None

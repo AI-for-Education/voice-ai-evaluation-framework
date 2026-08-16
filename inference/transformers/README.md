@@ -63,10 +63,13 @@ the Hub client to download weights.
   --batch_size 8
 ```
 
-For Paza, every manifest entry must point to a WAV file no longer than 30
-seconds. Its profile deliberately has no automatic segmentation or
-timestamp-based long-form fallback; longer files may be truncated by the
-Whisper processor. Segment long recordings before invoking the launcher.
+The Paza owner requires caller-managed segmentation above the checkpoint's
+448-token input limit but does not publish an equivalent duration. Both Paza
+profiles therefore freeze a project policy of deterministic 30-second chunks
+with zero overlap. Segmentation happens only in memory, chunk transcripts are
+joined in source order, and the original file still emits one result row. This
+benchmark has 44 of 7,617 clips above 30 seconds; the duration is a reproducible
+local choice, not an owner recommendation.
 
 BookBot's greedy and packaged-LM runs are separate profile instances. Both use
 the same runner and timestamped output structure, so neither can overwrite the
@@ -90,9 +93,9 @@ other:
 
 Each tracked YAML profile contains structured `parameter_evidence` records that
 link result-affecting settings to model-owner documentation, pinned artifact
-metadata, or an explicit project decision. Evidence is copied into run metadata,
-while legacy profiles without the optional block remain valid. See
-[the implementation guide](../../docs/model-profile-evidence-implementation.md).
+metadata, or an explicit project decision in this tracked README. Evidence is
+copied into run metadata while legacy profiles without it remain valid. The
+parser and `tests/test_profile.py` validate field coverage and source paths.
 
 ### Paired greedy and non-greedy profiles
 
@@ -168,8 +171,8 @@ profiles select the differences that affect model input or decoding:
   `run_metadata.json` summarizes how many rows were adjusted and how many words
   were removed, and states explicitly that evaluation uses `pred_text`.
 
-- The fixed-Swahili Paza profile also suppresses its five added non-Swahili
-  language-control tokens (`kik`, `luo`, `som`, `mas`, and `kln`).
+- Both Paza profiles retain the packaged empty suppression-token list instead
+  of introducing locally selected language-token suppression.
 - OpenAI Whisper Large and Whisper Large v2 keep the existing short-form path
   for clips up to and including 30 seconds. Longer clips follow Hugging Face's
   native timestamp-based long-form path: feature extraction is untruncated,
@@ -180,9 +183,10 @@ profiles select the differences that affect model input or decoding:
   original audio path; source audio is never segmented or modified on disk.
 - Paza does not enable this timestamp path because its model card directs
   callers to segment long inputs and does not document long-form timestamps.
-  Its current profile also does not segment automatically: every input WAV
-  must be at most 30 seconds, and longer inputs may be truncated by the
-  processor.
+  The two Paza profiles instead segment overlength inputs into deterministic
+  30-second, zero-overlap chunks in memory, decode each chunk with timestamps
+  disabled, join text in source order, and apply the existing hallucination
+  guard once to the reconstructed transcript.
 
 Every active value is stored in the YAML profile and copied to
 `run_metadata.json`. The optional post-processing summary is provenance only:
@@ -198,8 +202,8 @@ legacy run is valid.
 | `bookbot-phoneme-ctc.yaml` | `bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot` | Phoneme output; do not score directly as orthographic WER. |
 | `mms-1b-all-swh.yaml` | `facebook/mms-1b-all` | Selects and loads the `swh` language adapter. |
 | `w2v-bert-2.0-swahili-asr.yaml` | `badrex/w2v-bert-2.0-swahili-asr` | Automatic Wav2Vec2-BERT processor. |
-| `paza-whisper-large-v3-turbo-sw.yaml` | `microsoft/paza-whisper-large-v3-turbo` | Greedy (`num_beams: 1`); caller must provide WAV files no longer than 30 seconds. |
-| `paza-whisper-large-v3-turbo-sw-beam5.yaml` | `microsoft/paza-whisper-large-v3-turbo` | Beam-5 comparison structure; same input/output and safeguards; not yet run. |
+| `paza-whisper-large-v3-turbo-sw.yaml` | `microsoft/paza-whisper-large-v3-turbo` | Greedy (`num_beams: 1`); project-scoped 30-second sequential chunking above the owner-documented token limit. |
+| `paza-whisper-large-v3-turbo-sw-beam5.yaml` | `microsoft/paza-whisper-large-v3-turbo` | Beam-5 decoder with the same project-scoped sequential chunking policy. |
 | `whisper-large-sw.yaml` | `openai/whisper-large` | Greedy (`num_beams: 1`); deterministic short form through 30 seconds and native timestamp-based long form above 30 seconds. |
 | `whisper-large-sw-beam5.yaml` | `openai/whisper-large` | Beam-5 comparison structure; same input/output and safeguards; not yet run. |
 | `whisper-large-v2-sw.yaml` | `openai/whisper-large-v2` | Greedy (`num_beams: 1`); deterministic short form through 30 seconds and native timestamp-based long form above 30 seconds. |

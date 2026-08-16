@@ -50,5 +50,5 @@ parameter_evidence:
       - audio.long_audio_strategy
       - audio.overlap_seconds
     level: project
-    source: repo:docs/model-profile-evidence-implementation.md
+    source: repo:inference/multimodal/README.md
     rationale: Sequential non-overlapping chunking is the repository policy for preserving original input files; it is not a model-owner recommendation.

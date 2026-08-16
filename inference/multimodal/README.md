@@ -61,8 +61,8 @@ They use separate images because their required Transformers versions differ.
 
 Images provide compatible dependency versions; YAML profiles remain authoritative
 for each model's prompt, dtype, attention implementation, generation arguments,
-audio policy, and hardware gate. The evidence schema and compliance audit are in
-[model profile evidence implementation](../../docs/model-profile-evidence-implementation.md).
+audio policy, and hardware gate. Each profile carries structured evidence and
+labels owner-published, supported, project, and unvalidated choices separately.
 
 | Model | Launcher | Image | Current-host status |
 | --- | --- | --- | --- |
@@ -106,11 +106,17 @@ loaded five shards in about 127 seconds, decoded a 4.096-second file in about
 
 ## Qwen2.5-Omni text-only structure
 
-Qwen-specific files are intentionally marked as unsuitable for the current
-hardware. The adapter checks physical GPU memory before loading the model and
-reports a clear error when less than 40 GiB is available. It also calls
-`disable_talker()` and fixes `return_audio=False`; generated speech is never
-requested or written.
+The pinned owner card reports a 31.11 GiB theoretical BF16 minimum for the 7B
+model with no input and warns that practical usage is normally at least 1.2
+times higher. The profile therefore rounds the supported lower bound up to a
+40 GiB preflight gate. It calls `disable_talker()` and fixes
+`return_audio=False`; the owner says disabling the talker saves only about 2 GiB,
+which is not enough to make the current 16 GiB host runnable.
+
+The owner does not publish a Swahili ASR prompt, output-token cap, or input
+duration. The profile freezes a project prompt, `max_new_tokens: 256`, and
+deterministic 30-second zero-overlap chunks to bound per-call activation memory.
+BF16 comes from the pinned config; SDPA is the built-image compatibility choice.
 
 The image can be prepared now:
 

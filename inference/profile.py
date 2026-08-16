@@ -882,10 +882,18 @@ def parse_profile(data: Any) -> ModelProfile:
                 "phi4_audio requires loader.trust_remote_code: true for its bundled code"
             )
     else:
-        if prompt_value is not None or audio_value is not None:
-            raise ProfileError("prompt and audio are only valid for multimodal profiles")
+        if prompt_value is not None:
+            raise ProfileError("prompt is only valid for multimodal profiles")
         prompt = None
-        audio = None
+        if audio_value is not None:
+            if (framework, adapter) != ("transformers", "speech_seq2seq"):
+                raise ProfileError(
+                    "audio is only valid for multimodal profiles or "
+                    "transformers/speech_seq2seq"
+                )
+            audio = _build_audio(_require_mapping(audio_value, "audio"))
+        else:
+            audio = None
     hardware_value = data.get("hardware")
     hardware = (
         _build_hardware(_require_mapping(hardware_value, "hardware"))
@@ -916,6 +924,10 @@ def parse_profile(data: Any) -> ModelProfile:
     decoding = _build_decoding(
         _require_mapping(data.get("decoding"), "decoding"), framework, adapter
     )
+    if audio is not None and decoding.long_form is not None:
+        raise ProfileError(
+            "audio chunking and decoding.long_form cannot be enabled together"
+        )
     if decoding.strategy == "beam_search" and loader.processor_mode != "wav2vec2_with_lm":
         raise ProfileError(
             "CTC beam_search decoding requires loader.processor_mode "

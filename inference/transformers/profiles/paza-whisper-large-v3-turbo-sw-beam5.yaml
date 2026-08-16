@@ -2,7 +2,8 @@
 # https://huggingface.co/microsoft/paza-whisper-large-v3-turbo
 # The Microsoft model card publishes num_beams=5, early_stopping=true, and
 # length_penalty=0.8 for its beam-decoding example.
-# Caller-managed segmentation is unchanged; every input WAV must be <=30 seconds.
+# The owner requires segmentation above 448 input tokens but gives no duration;
+# this project uses deterministic 30-second, zero-overlap chunks in memory.
 id: paza-whisper-large-v3-turbo-sw-beam5
 framework: transformers
 adapter: speech_seq2seq
@@ -29,6 +30,11 @@ decoding:
     repeated_phrase_min_words: 5
     repeated_phrase_max_words: 8
     repeated_phrase_repetitions: 3
+audio:
+  maximum_seconds: 30
+  long_audio_strategy: sequential_chunks
+  chunk_seconds: 30
+  overlap_seconds: 0
 
 parameter_evidence:
   - applies_to:
@@ -54,3 +60,13 @@ parameter_evidence:
     level: unvalidated
     source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo
     rationale: The owner supports duration and repetition guards but requires per-language validation; the local 8 WPS and three-repeat thresholds are not calibrated.
+  - applies_to:
+      - audio.maximum_seconds
+      - audio.long_audio_strategy
+      - audio.chunk_seconds
+      - audio.overlap_seconds
+    level: project
+    source: repo:inference/transformers/README.md
+    rationale: >-
+      The owner requires segmentation above 448 input tokens but publishes no
+      duration; 30-second zero-overlap chunks are the local reproducible policy.

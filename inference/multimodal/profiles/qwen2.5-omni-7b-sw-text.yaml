@@ -1,7 +1,7 @@
-# STRUCTURE ONLY ON THE CURRENT HOST:
-# The tracked BF16 text-only runtime requires at least 40 GiB of GPU memory.
-# The present RTX 5080 Laptop GPU has 16 GiB, so the adapter stops at preflight
-# before loading weights. This profile becomes runnable on suitable hardware.
+# HARDWARE-GATED ON THE CURRENT HOST:
+# The pinned owner card lists a 31.11 GiB theoretical BF16 minimum with no input
+# and says practical use is normally at least 1.2x higher. The tracked 40 GiB
+# gate is a conservative supported value; this 16 GiB GPU stops at preflight.
 id: qwen2.5-omni-7b-sw-text
 framework: multimodal
 adapter: qwen_omni_audio
@@ -41,23 +41,35 @@ parameter_evidence:
     rationale: The model owner documents disable_talker with return_audio false for text-only generation.
   - applies_to:
       - loader.torch_dtype
+    level: exact
+    source: artifact:Qwen2.5-Omni-7B/config.json
+    rationale: The pinned checkpoint declares bfloat16 as its model dtype.
+  - applies_to:
       - loader.attention_implementation
     level: project
-    source: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
-    rationale: BF16 and SDPA are the frozen future-host compatibility choices; the model card otherwise demonstrates automatic dtype selection.
+    source: repo:inference/multimodal/README.md
+    rationale: SDPA is the compatible deterministic backend in the built image; the owner recommends Flash Attention 2 when available.
   - applies_to:
       - decoding.generation_kwargs.max_new_tokens
       - prompt
+    level: project
+    source: repo:inference/multimodal/README.md
+    rationale: The Swahili-only prompt and 256-token cap are frozen benchmark choices rather than owner-published ASR values.
+  - applies_to:
       - audio.maximum_seconds
       - audio.chunk_seconds
       - audio.long_audio_strategy
       - audio.overlap_seconds
-    level: unvalidated
-    source: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
-    rationale: No model-owner recommendation was found for the local 256-token cap or 30-second non-overlapping audio chunks.
+    level: project
+    source: repo:inference/multimodal/README.md
+    rationale: >-
+      No owner duration is published; deterministic 30-second zero-overlap
+      chunks bound per-call activation memory and preserve source order.
   - applies_to:
       - hardware.memory_strategy
       - hardware.minimum_gpu_memory_gib
-    level: project
-    source: repo:docs/model-profile-evidence-implementation.md
-    rationale: The 40 GiB preflight is a conservative local gate; this profile is not runnable on the current 16 GiB GPU.
+    level: supported
+    source: artifact:Qwen2.5-Omni-7B/README.md
+    rationale: >-
+      The owner lists 31.11 GiB as the no-input BF16 minimum and says practical
+      use is normally at least 1.2x higher; 40 GiB is the conservative gate.

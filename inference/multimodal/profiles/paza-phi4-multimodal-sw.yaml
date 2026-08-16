@@ -56,5 +56,5 @@ parameter_evidence:
       - hardware.cpu_max_memory_gib
       - hardware.output_mode
     level: project
-    source: repo:docs/model-profile-evidence-implementation.md
+    source: repo:inference/multimodal/README.md
     rationale: Chunk stitching, offload limits, and text-only execution are local deployment controls measured for the 16 GiB host.

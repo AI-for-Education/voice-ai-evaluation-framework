@@ -727,12 +727,12 @@ If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC) a
 
 ### Inference profiles and launchers
 
-- **Model profile**: `--model_config <profile.yaml>` is required by all framework launchers. Profiles define `framework`, `adapter`, relative `artifact`, language/task, loader settings, decoding strategy, and structured parameter evidence. Images supply compatible dependencies but do not choose model-specific inference behavior; see [model profile evidence implementation](docs/model-profile-evidence-implementation.md).
+- **Model profile**: `--model_config <profile.yaml>` is required by all framework launchers. Profiles define `framework`, `adapter`, relative `artifact`, language/task, loader settings, decoding strategy, and structured parameter evidence. Images supply compatible dependencies but do not choose model-specific inference behavior; local choices are documented in each tracked backend README.
 - **Invocation controls**: batch size, thread/worker counts, input selection, and output roots remain launcher arguments and are recorded in run metadata rather than being hidden in an image or treated as model hyperparameters.
 - **Model storage**: place artifacts below the owning framework's `models/` directory. `ASR_MODEL_ROOT` overrides that default root; Compose sets it to the read-only `/models` mount.
 - **Input**: provide exactly one of `--audio_manifest <segments.jsonl>` or `--root_audio_dir <audio-directory>`. NeMo retains `--dataset_root` and `--dataset_annotator` for legacy dataset discovery and optional TextGrid segmentation.
 - **Output base**: inference defaults to `input_output_data/output`; `--output_root <directory>` changes that base. The runner creates `transcripts/<model>_<UTC timestamp>/` below it, or `smoke_tests/transcripts/...` with `--smoke_test`.
-- **Runtime controls**: NeMo retains its CPU worker, temporary-segment, decoder, and debug controls; Transformers retains `--batch_size`; Sherpa-ONNX adds `--num_threads`. The source, evidence strength, hardware assumptions, and known historical gaps for these values are recorded in [inference runtime parameter provenance](docs/inference-runtime-parameter-provenance.md).
+- **Runtime controls**: NeMo retains its CPU worker, temporary-segment, decoder, and debug controls; Transformers retains `--batch_size`; Sherpa-ONNX adds `--num_threads`. Sources, evidence strength, hardware assumptions, and historical gaps are recorded beside the relevant launcher and in each tracked backend README.
 - **Offline operation**: profiles require local artifacts and `local_files_only: true`; downloading a model is a separate preparation step.
 
 Root `infer.py` is the only legacy NeMo API and continues to accept `--model`

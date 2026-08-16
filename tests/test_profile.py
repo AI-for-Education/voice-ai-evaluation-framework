@@ -295,6 +295,65 @@ def test_whisper_long_form_profile_is_explicit_and_typed() -> None:
     }
 
 
+
+def test_speech_seq2seq_profile_accepts_explicit_audio_chunking() -> None:
+    data = dict(
+        BASE_PROFILE,
+        adapter="speech_seq2seq",
+        decoding={
+            "strategy": "generate",
+            "generation_kwargs": {"do_sample": False},
+        },
+        audio={
+            "maximum_seconds": 30,
+            "long_audio_strategy": "sequential_chunks",
+            "chunk_seconds": 30,
+            "overlap_seconds": 0,
+        },
+    )
+
+    profile = parse_profile(data)
+
+    assert profile.audio is not None
+    assert profile.audio.maximum_seconds == 30.0
+    assert profile.audio.chunk_seconds == 30.0
+
+
+def test_speech_seq2seq_rejects_two_long_audio_strategies() -> None:
+    data = dict(
+        BASE_PROFILE,
+        adapter="speech_seq2seq",
+        decoding={
+            "strategy": "generate",
+            "generation_kwargs": {"do_sample": False},
+            "long_form": {"strategy": "timestamp", "threshold_seconds": 30},
+        },
+        audio={
+            "maximum_seconds": 30,
+            "long_audio_strategy": "sequential_chunks",
+            "chunk_seconds": 30,
+            "overlap_seconds": 0,
+        },
+    )
+
+    with pytest.raises(ProfileError, match="cannot be enabled together"):
+        parse_profile(data)
+
+
+def test_ctc_profile_still_rejects_audio_chunking() -> None:
+    data = dict(
+        BASE_PROFILE,
+        audio={
+            "maximum_seconds": 30,
+            "long_audio_strategy": "sequential_chunks",
+            "chunk_seconds": 30,
+            "overlap_seconds": 0,
+        },
+    )
+
+    with pytest.raises(ProfileError, match="audio is only valid"):
+        parse_profile(data)
+
 @pytest.mark.parametrize(
     ("long_form", "message"),
     [
