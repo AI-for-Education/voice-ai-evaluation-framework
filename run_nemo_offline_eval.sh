@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Prevent Git Bash/MSYS from rewriting Linux container paths such as /work.
-export MSYS_NO_PATHCONV="${MSYS_NO_PATHCONV:-1}"
-
 # ------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------

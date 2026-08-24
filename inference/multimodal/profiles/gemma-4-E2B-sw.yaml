@@ -5,6 +5,16 @@ artifact: gemma-4-E2B-it
 language: sw
 task: transcribe
 output_units: orthographic
+pipeline_contract:
+  schema_version: 1
+  audio_preparation: shared_soundfile_librosa_16khz
+  inference:
+    artifact: canonical_checkpoint
+    frontend: canonical_transformers_auto_processor
+    runtime: multimodal_image
+    chunking: profile_sequential_zero_overlap
+  evaluation: direct_pred_text_by_output_units
+  runtime_resolution: observed_effective_values_v1
 prompt: >-
   Transcribe the following speech segment in Swahili. Follow these formatting
   instructions: output only the transcription with no newlines, and write

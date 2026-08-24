@@ -36,6 +36,8 @@ __pycache__/
 .pytest_cache/
 venv/
 env/
+tmp/
+input_output_data/archive
 *.pyc
 *.pyo
 *.so
@@ -45,4 +47,5 @@ env/
 Thumbs.db
 
 # Private working notes (kept locally, not versioned)
-/docs/
+/docs/*
+!/docs/core-inference-workflow.md

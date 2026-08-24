@@ -6,6 +6,16 @@ artifact: whisper-large
 language: sw
 task: transcribe
 output_units: orthographic
+pipeline_contract:
+  schema_version: 1
+  audio_preparation: shared_soundfile_librosa_16khz
+  inference:
+    artifact: canonical_checkpoint
+    frontend: canonical_transformers_auto_processor
+    runtime: shared_transformers_image
+    chunking: whisper_timestamp_long_form
+  evaluation: direct_pred_text_by_output_units
+  runtime_resolution: observed_effective_values_v1
 loader:
   processor_mode: auto
   local_files_only: true
@@ -20,11 +30,7 @@ decoding:
   long_form:
     strategy: timestamp
     threshold_seconds: 30.0
-  hallucination_guard:
-    max_words_per_second: 8.0
-    repeated_phrase_min_words: 5
-    repeated_phrase_max_words: 8
-    repeated_phrase_repetitions: 3
+  # pred_text is the direct model hypothesis; no text postprocessing is applied.
 
 parameter_evidence:
   - applies_to:
@@ -41,11 +47,4 @@ parameter_evidence:
     level: exact
     source: https://huggingface.co/docs/transformers/model_doc/whisper
     rationale: Transformers requires timestamp-based long-form generation for audio longer than 30 seconds; the adapter enables it only above this threshold.
-  - applies_to:
-      - decoding.hallucination_guard.max_words_per_second
-      - decoding.hallucination_guard.repeated_phrase_min_words
-      - decoding.hallucination_guard.repeated_phrase_max_words
-      - decoding.hallucination_guard.repeated_phrase_repetitions
-    level: unvalidated
-    source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo
-    rationale: This guard is extrapolated from Paza and its exact Swahili thresholds have not been calibrated for OpenAI Whisper.
+  # The evaluation uses the direct model hypothesis without a post-decoding guard.

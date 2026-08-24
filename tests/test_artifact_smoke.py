@@ -10,6 +10,13 @@ from inference.profile import load_profile, resolve_model_path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_ARTIFACT_SMOKE = os.environ.get("RUN_ASR_ARTIFACT_SMOKE") == "1"
+pytestmark = [
+    pytest.mark.artifact,
+    pytest.mark.skipif(
+        not RUN_ARTIFACT_SMOKE,
+        reason="set RUN_ASR_ARTIFACT_SMOKE=1 to load local model weights",
+    ),
+]
 
 
 def _artifact_or_skip(profile_path: Path) -> tuple[object, Path]:
@@ -20,11 +27,6 @@ def _artifact_or_skip(profile_path: Path) -> tuple[object, Path]:
     return profile, model_path
 
 
-@pytest.mark.artifact
-@pytest.mark.skipif(
-    not RUN_ARTIFACT_SMOKE,
-    reason="set RUN_ASR_ARTIFACT_SMOKE=1 to load local model weights",
-)
 def test_nemo_artifact_loads() -> None:
     profile, model_path = _artifact_or_skip(
         REPO_ROOT / "inference/nemo/profiles/swahili-exp41-ctc.yaml"
@@ -38,11 +40,6 @@ def test_nemo_artifact_loads() -> None:
         backend.close()
 
 
-@pytest.mark.artifact
-@pytest.mark.skipif(
-    not RUN_ARTIFACT_SMOKE,
-    reason="set RUN_ASR_ARTIFACT_SMOKE=1 to load local model weights",
-)
 def test_transformers_artifact_loads() -> None:
     profile, model_path = _artifact_or_skip(
         REPO_ROOT
@@ -57,11 +54,6 @@ def test_transformers_artifact_loads() -> None:
         backend.close()
 
 
-@pytest.mark.artifact
-@pytest.mark.skipif(
-    not RUN_ARTIFACT_SMOKE,
-    reason="set RUN_ASR_ARTIFACT_SMOKE=1 to load local model weights",
-)
 def test_bookbot_5gram_artifact_loads() -> None:
     profile, model_path = _artifact_or_skip(
         REPO_ROOT
@@ -82,11 +74,6 @@ def test_bookbot_5gram_artifact_loads() -> None:
         backend.close()
 
 
-@pytest.mark.artifact
-@pytest.mark.skipif(
-    not RUN_ARTIFACT_SMOKE,
-    reason="set RUN_ASR_ARTIFACT_SMOKE=1 to load local model weights",
-)
 def test_sherpa_onnx_artifact_loads() -> None:
     profile, model_path = _artifact_or_skip(
         REPO_ROOT
@@ -107,11 +94,6 @@ def test_sherpa_onnx_artifact_loads() -> None:
         backend.close()
 
 
-@pytest.mark.artifact
-@pytest.mark.skipif(
-    not RUN_ARTIFACT_SMOKE,
-    reason="set RUN_ASR_ARTIFACT_SMOKE=1 to load local model weights",
-)
 def test_gemma4_multimodal_artifact_loads() -> None:
     profile, model_path = _artifact_or_skip(
         REPO_ROOT / "inference/multimodal/profiles/gemma-4-E2B-sw.yaml"

@@ -13,6 +13,7 @@ import soundfile as sf
 from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
 from inference.profile import ModelProfile
+from inference.provenance import json_safe
 
 try:  # Keep CLI help and profile validation usable outside the NeMo image.
     import torch
@@ -66,9 +67,8 @@ def configure_decoding_strategy(model: Any, decoder_type: str = "ctc") -> None:
         print("[INFO] Loaded model is EncDecCTCModel. CTC decoding is already active.")
         return
 
-    if (
-        EncDecHybridRNNTCTCModel is not None
-        and isinstance(model, EncDecHybridRNNTCTCModel)
+    if EncDecHybridRNNTCTCModel is not None and isinstance(
+        model, EncDecHybridRNNTCTCModel
     ):
         if CTCDecodingConfig is None:  # Defensive; covered by require_nemo_runtime().
             raise RuntimeError("NeMo CTC decoding support is unavailable")
@@ -87,7 +87,9 @@ def configure_decoding_strategy(model: Any, decoder_type: str = "ctc") -> None:
                 "Loaded model is EncDecRNNTModel (RNNT-only). "
                 "It cannot be forced to decode with CTC."
             )
-        print("[INFO] Loaded model is EncDecRNNTModel. RNNT decoding is already active.")
+        print(
+            "[INFO] Loaded model is EncDecRNNTModel. RNNT decoding is already active."
+        )
         return
 
     print(
@@ -191,7 +193,9 @@ class NemoBackend:
         self.device, num_workers = configure_runtime(cpu_workers)
         self.num_workers = num_workers
 
-        self.model = ASRModel.restore_from(str(self.model_path), map_location=self.device)
+        self.model = ASRModel.restore_from(
+            str(self.model_path), map_location=self.device
+        )
         self.model.to(self.device).eval()
         configure_decoding_strategy(
             self.model,
@@ -203,6 +207,13 @@ class NemoBackend:
             num_workers=num_workers,
         )
         self._model_class = type(self.model).__name__
+        self._effective_decoder_type = str(
+            getattr(self.model, "cur_decoder", profile.decoding.strategy)
+        )
+        self._effective_decoding_config = json_safe(
+            getattr(getattr(self.model, "cfg", None), "decoding", None)
+        )
+        self._transcribe_override_config = json_safe(self.override_cfg)
 
         print("[INFO] Using override_cfg:")
         print(f"       batch_size={self.override_cfg.batch_size}")
@@ -320,6 +331,9 @@ class NemoBackend:
             "model_class": self._model_class,
             "device": self.device,
             "decoder_type": self.profile.decoding.strategy,
+            "effective_decoder_type": self._effective_decoder_type,
+            "effective_decoding_config": self._effective_decoding_config,
+            "transcribe_override_config": self._transcribe_override_config,
             "target_sample_rate": TARGET_SR,
             "num_workers": self.num_workers,
             "tmp_dir": str(self.tmp_dir),

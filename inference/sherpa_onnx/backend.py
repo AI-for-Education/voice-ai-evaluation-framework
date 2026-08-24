@@ -19,9 +19,7 @@ TAIL_PADDING_SECONDS = 0.66
 
 def _one_model_file(model_path: Path, prefix: str) -> Path:
     matches = sorted(
-        path
-        for path in model_path.glob(f"{prefix}*.onnx")
-        if ".int8." not in path.name
+        path for path in model_path.glob(f"{prefix}*.onnx") if ".int8." not in path.name
     )
     if len(matches) != 1:
         names = ", ".join(path.name for path in matches) or "none"
@@ -62,14 +60,18 @@ class SherpaOnnxOnlineTransducerBackend:
         self.profile = profile
         self.model_path = Path(model_path)
         if not self.model_path.is_dir():
-            raise ProfileError(f"Sherpa-ONNX model directory not found: {self.model_path}")
+            raise ProfileError(
+                f"Sherpa-ONNX model directory not found: {self.model_path}"
+            )
 
         self.encoder_path = _one_model_file(self.model_path, "encoder-")
         self.decoder_path = _one_model_file(self.model_path, "decoder-")
         self.joiner_path = _one_model_file(self.model_path, "joiner-")
         self.tokens_path = self.model_path / "tokens.txt"
         if not self.tokens_path.is_file():
-            raise RuntimeError(f"Sherpa-ONNX tokens file is missing: {self.tokens_path}")
+            raise RuntimeError(
+                f"Sherpa-ONNX tokens file is missing: {self.tokens_path}"
+            )
 
         try:
             import sherpa_onnx
@@ -99,6 +101,7 @@ class SherpaOnnxOnlineTransducerBackend:
         }
         if self.max_active_paths is not None:
             recognizer_kwargs["max_active_paths"] = self.max_active_paths
+        self._recognizer_kwargs = dict(recognizer_kwargs)
         try:
             self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
                 **recognizer_kwargs
@@ -204,6 +207,10 @@ class SherpaOnnxOnlineTransducerBackend:
             "sampling_rate": SAMPLE_RATE,
             "decoding_strategy": self.decoding_method,
             "num_threads": self.num_threads,
+            "recognizer_call": {
+                "api": "sherpa_onnx.OnlineRecognizer.from_transducer",
+                "arguments": dict(self._recognizer_kwargs),
+            },
             "sherpa_onnx_version": version,
             "encoder": self.encoder_path.name,
             "decoder": self.decoder_path.name,

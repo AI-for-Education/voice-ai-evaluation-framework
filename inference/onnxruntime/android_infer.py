@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -39,7 +40,9 @@ def main(argv: Sequence[str] | None = None) -> Path:
         profile = load_profile(args.model_config, expected_framework="onnxruntime")
         model_path = resolve_model_path(profile)
         print(f"[INFO] Loading pinned Android model: {model_path}")
-        backend = AndroidParityCtcBackend(profile, model_path, num_threads=1)
+        with warnings.catch_warnings(record=True) as startup_warnings:
+            warnings.simplefilter("always")
+            backend = AndroidParityCtcBackend(profile, model_path, num_threads=1)
     except (ProfileError, RuntimeError, OSError) as exc:
         raise SystemExit(
             f"Unable to initialize Android-parity ONNX inference: {exc}"
@@ -55,6 +58,7 @@ def main(argv: Sequence[str] | None = None) -> Path:
         output_root=args.output_root,
         batch_size=1,
         smoke_test=args.smoke_test,
+        startup_warnings=startup_warnings,
     )
 
 

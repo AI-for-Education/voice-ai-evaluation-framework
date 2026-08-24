@@ -1,0 +1,296 @@
+from __future__ import annotations
+
+import json
+import sys
+import types
+import wave
+from pathlib import Path
+
+import pytest
+
+from inference.backfill_pipeline_provenance import backfill
+from inference.pipeline_provenance import (
+    build_pipeline_provenance,
+    infer_contract_references,
+    resolve_contract_references,
+    runtime_launch_context_from_environment,
+    summarize_wav_headers,
+)
+from inference.profile import load_profile
+
+
+def test_all_tracked_profiles_resolve_their_declared_contract() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    paths = sorted((repository / "inference").glob("*/profiles/*.yaml"))
+    assert len(paths) == 23
+    for path in paths:
+        profile = load_profile(path)
+        payload = profile.to_dict()
+        references = infer_contract_references(payload)
+        assert references == payload["pipeline_contract"]
+        resolved = resolve_contract_references(references)
+        assert resolved["audio_preparation"]["authority"]
+        assert resolved["inference"]["frontend"]["classification"] in {
+            "canonical_model_frontend",
+            "compatible_third_party_frontend",
+            "deployment_parity_frontend",
+        }
+        assert resolved["evaluation"]["hypothesis_field"] == "pred_text"
+        assert resolved["runtime_resolution"]["unavailable_value_policy"] == {
+            "status": "not_available",
+            "require_reason": True,
+            "guessing_forbidden": True,
+        }
+
+
+def test_wav_header_summary_observes_format_without_decoding(tmp_path: Path) -> None:
+    wav_path = tmp_path / "sample.wav"
+    with wave.open(str(wav_path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(8000)
+        output.writeframes(b"\x00\x00" * 8)
+
+    summary = summarize_wav_headers([str(wav_path)])
+
+    assert summary["status"] == "observed"
+    assert summary["sample_rate_hz_counts"] == {"8000": 1}
+    assert summary["channel_counts"] == {"1": 1}
+    assert summary["sample_width_byte_counts"] == {"2": 1}
+
+
+def test_runtime_launch_context_records_container_identity_without_guessing() -> None:
+    context = runtime_launch_context_from_environment(
+        {
+            "PIPELINE_LAUNCH_ORCHESTRATOR": "docker_compose",
+            "PIPELINE_LAUNCHER": "run_onnxruntime_inference.sh",
+            "PIPELINE_COMPOSE_SERVICE": "onnxruntime-asr",
+            "PIPELINE_IMAGE_REFERENCE": "voice-ai-evaluation-framework-asr:latest",
+            "PIPELINE_IMAGE_ID": "sha256:abc123",
+            "PIPELINE_IMAGE_REPO_DIGESTS_JSON": '["example/asr@sha256:def456"]',
+        }
+    )
+
+    assert context == {
+        "status": "observed",
+        "orchestrator": "docker_compose",
+        "launcher": "run_onnxruntime_inference.sh",
+        "compose_service": "onnxruntime-asr",
+        "image": {
+            "reference": "voice-ai-evaluation-framework-asr:latest",
+            "id": "sha256:abc123",
+            "repo_digests": ["example/asr@sha256:def456"],
+        },
+    }
+    unavailable = runtime_launch_context_from_environment({})
+    assert unavailable["status"] == "not_available"
+
+
+def test_all_profile_launchers_use_the_central_runtime_identity_helper() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    expected = {
+        "run_nemo_inference.sh": ("nemo-asr", "voice-ai-evaluation-framework-asr:latest"),
+        "run_transformers_inference.sh": (
+            "transformers-asr",
+            "voice-ai-evaluation-framework-asr:latest",
+        ),
+        "run_sherpa_onnx_inference.sh": (
+            "sherpa-onnx-asr",
+            "voice-ai-evaluation-framework-asr:latest",
+        ),
+        "run_onnxruntime_inference.sh": (
+            "onnxruntime-asr",
+            "voice-ai-evaluation-framework-asr:latest",
+        ),
+        "run_onnxruntime_android_inference.sh": (
+            "onnxruntime-android-asr",
+            "voice-ai-evaluation-framework-onnxruntime-android:latest",
+        ),
+        "run_multimodal_inference.sh": (
+            "multimodal-asr",
+            "voice-ai-evaluation-framework-asr:latest",
+        ),
+        "run_phi4_multimodal_inference.sh": (
+            "phi4-multimodal-asr",
+            "voice-ai-evaluation-framework-phi4:latest",
+        ),
+        "run_qwen_omni_inference.sh": (
+            "qwen-omni-asr",
+            "voice-ai-evaluation-framework-qwen-omni:latest",
+        ),
+    }
+
+    for launcher, (service, image) in expected.items():
+        source = (repository / launcher).read_text(encoding="utf-8")
+        assert 'source "$SCRIPT_DIR/inference/runtime_identity.sh"' in source
+        assert "pipeline_runtime_docker_args" in source
+        assert f'"{service}"' in source
+        assert f'"{image}"' in source
+        assert '"${PIPELINE_RUNTIME_DOCKER_ARGS[@]}"' in source
+
+
+def test_unknown_historical_profile_is_explicitly_not_available(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcriptions.jsonl"
+    transcript.write_text("", encoding="utf-8")
+
+    pipeline = build_pipeline_provenance(
+        profile={"id": "unknown"},
+        backend={},
+        runtime={},
+        model_identity=None,
+        profile_link=None,
+        run_metadata_path=tmp_path / "run_metadata.json",
+        transcriptions_path=transcript,
+        input_audio_summary=None,
+        recording_mode="retrospective_recovery",
+    )
+
+    assert pipeline["contract"]["references"]["status"] == "not_available"
+    assert (
+        pipeline["stages"]["inference"]["artifact"]["identity"]["status"]
+        == "not_available"
+    )
+    assert pipeline["links"]["profile"]["status"] == "not_available"
+
+
+def test_backfill_is_dry_run_by_default_and_idempotent_when_applied(
+    tmp_path: Path,
+) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    output = tmp_path / "output"
+    run_name = "legacy_run"
+    run_dir = output / "transcripts" / run_name
+    run_dir.mkdir(parents=True)
+    transcript = run_dir / "transcriptions.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {"audio_filepath": "missing.wav", "duration": 1.0, "pred_text": "x"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    run_metadata = run_dir / "run_metadata.json"
+    run_metadata.write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "id": "swahili-exp41-ctc",
+                    "framework": "nemo",
+                    "adapter": "nemo",
+                    "artifact": "model_exp41_avg.nemo",
+                    "output_units": "orthographic",
+                    "decoding": {"strategy": "ctc", "generation_kwargs": {}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    evaluation_dir = output / "evaluations" / run_name / "orthographic"
+    manifests = evaluation_dir.parent / "manifests"
+    manifests.mkdir(parents=True)
+    clean_manifest = manifests / "ref_manifest.clean.jsonl"
+    clean_manifest.write_text("{}\n", encoding="utf-8")
+    evaluation_dir.mkdir()
+    evaluation_metadata = evaluation_dir / "evaluation_metadata.json"
+    evaluation_metadata.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "complete",
+                "source_manifest": str(clean_manifest),
+                "requested_scoring_representation": "orthographic",
+                "effective_scoring_units": "orthographic",
+                "output_namespace": "orthographic",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    dry_run = backfill(
+        output_root=output,
+        repository_root=repository,
+        apply=False,
+    )
+    assert dry_run["run_metadata"]["updated"] == 1
+    assert "pipeline_provenance" not in json.loads(run_metadata.read_text())
+
+    applied = backfill(
+        output_root=output,
+        repository_root=repository,
+        apply=True,
+    )
+    assert applied["run_metadata"]["updated"] == 1
+    assert applied["evaluation_metadata"]["updated"] == 1
+    assert json.loads(run_metadata.read_text())["pipeline_provenance"]["recording"][
+        "mode"
+    ] == "retrospective_recovery"
+    assert json.loads(evaluation_metadata.read_text())["schema_version"] == 2
+
+    repeated = backfill(
+        output_root=output,
+        repository_root=repository,
+        apply=True,
+    )
+    assert repeated["run_metadata"]["skipped"] == 1
+    assert repeated["evaluation_metadata"]["skipped"] == 1
+
+
+def test_evaluation_metadata_links_the_source_run_and_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluate_stub = types.ModuleType("egra_eval2.evaluate")
+    evaluate_stub.aggregate_row_scores = lambda *args, **kwargs: {}
+    evaluate_stub.evaluate_rows = lambda value: value
+    monkeypatch.setitem(sys.modules, "egra_eval2.evaluate", evaluate_stub)
+    sys.modules.pop("eval_pipeline2", None)
+    from eval_pipeline2 import write_evaluation_metadata
+
+    output = tmp_path / "output"
+    run_name = "model_run"
+    run_dir = output / "transcripts" / run_name
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_metadata.json").write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "id": "model",
+                    "framework": "transformers",
+                    "adapter": "ctc",
+                    "artifact": "model",
+                    "output_units": "orthographic",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    evaluation_root = output / "evaluations" / run_name
+    manifest_dir = evaluation_root / "manifests"
+    manifest_dir.mkdir(parents=True)
+    manifest = manifest_dir / "ref_manifest.clean.jsonl"
+    manifest.write_text("{}\n", encoding="utf-8")
+    base = evaluation_root / "orthographic"
+    base.mkdir()
+    (base / "egra_eval_detailed.csv").write_text("a\n", encoding="utf-8")
+    (base / "egra_eval_summary.txt").write_text("GLOBAL\n", encoding="utf-8")
+    reference_metadata = tmp_path / "reference_views.metadata.json"
+    reference_metadata.write_text("{}\n", encoding="utf-8")
+
+    path = write_evaluation_metadata(
+        base=base,
+        manifest_in=str(manifest),
+        requested_representation="orthographic",
+        scoring_units="orthographic",
+        namespace="orthographic",
+        reference_metadata_path=reference_metadata,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == 2
+    pipeline = payload["pipeline_provenance"]
+    assert pipeline["stage"] == "evaluation"
+    assert pipeline["recording"]["mode"] == "evaluation_time"
+    assert pipeline["links"]["source_run_metadata"]["exists"] is True
+    assert pipeline["links"]["source_manifest"]["exists"] is True
+    assert pipeline["links"]["reference_view_metadata"]["exists"] is True
+    assert pipeline["links"]["summary"]["exists"] is True

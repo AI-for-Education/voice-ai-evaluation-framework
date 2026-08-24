@@ -3,8 +3,9 @@
 # language_model/attrs.json. alpha=0.5, beta=1.5, unk_score_offset=-10.0, and
 # score_boundary=true below mirror that packaged metadata exactly.
 # Runtime API: https://huggingface.co/docs/transformers/model_doc/wav2vec2
-# beam_width=100, n_best=1, and decoder_workers=1 are frozen project comparison
-# settings; they are not presented as BookBot model-owner recommendations.
+# beam_width=100 and n_best=1 match the installed pyctcdecode/Transformers
+# decoder defaults. decoder_workers=1 is the deterministic project runtime
+# choice and does not change the decoded one-best hypothesis.
 id: bookbot-orthographic-ctc-5gram
 framework: transformers
 adapter: ctc
@@ -12,6 +13,16 @@ artifact: wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm
 language: sw
 task: transcribe
 output_units: orthographic
+pipeline_contract:
+  schema_version: 1
+  audio_preparation: shared_soundfile_librosa_16khz
+  inference:
+    artifact: canonical_checkpoint
+    frontend: canonical_transformers_auto_processor
+    runtime: shared_transformers_image
+    chunking: none
+  evaluation: direct_pred_text_by_output_units
+  runtime_resolution: observed_effective_values_v1
 loader:
   processor_mode: wav2vec2_with_lm
   local_files_only: true
@@ -42,7 +53,11 @@ parameter_evidence:
   - applies_to:
       - decoding.ctc_lm_kwargs.beam_width
       - decoding.ctc_lm_kwargs.n_best
+    level: supported
+    source: repo:inference/transformers/README.md
+    rationale: The explicit values match the installed pyctcdecode 0.5.0 decoder and Transformers processor defaults, preventing version-dependent default drift.
+  - applies_to:
       - decoding.ctc_lm_kwargs.decoder_workers
-    level: unvalidated
-    source: https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm
-    rationale: Beam width 100, one-best output, and one decoder worker are frozen project comparison values, not model-owner recommendations.
+    level: project
+    source: repo:inference/transformers/README.md
+    rationale: One persistent decoder worker is a deterministic bounded-runtime choice; worker count does not change the one-best decoder arguments.

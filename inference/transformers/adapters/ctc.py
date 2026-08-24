@@ -49,8 +49,12 @@ def _loader_dtype(
 ) -> tuple[torch.dtype | str, str | None]:
     """Return a safe from_pretrained dtype and an optional fallback reason."""
     if device.type != "cuda":
-        fallback = None if requested in {"auto", "float32"} else (
-            f"{requested} was promoted to float32 because inference is running on CPU"
+        fallback = (
+            None
+            if requested in {"auto", "float32"}
+            else (
+                f"{requested} was promoted to float32 because inference is running on CPU"
+            )
         )
         return torch.float32, fallback
 
@@ -116,9 +120,13 @@ class TransformersCTCBackend:
         device: torch.device | None = None,
     ) -> None:
         if profile.framework != "transformers" or profile.adapter != "ctc":
-            raise ProfileError("TransformersCTCBackend requires a transformers/ctc profile")
+            raise ProfileError(
+                "TransformersCTCBackend requires a transformers/ctc profile"
+            )
         if profile.decoding.strategy not in {"greedy", "beam_search"}:
-            raise ProfileError("The CTC adapter supports greedy or beam_search decoding")
+            raise ProfileError(
+                "The CTC adapter supports greedy or beam_search decoding"
+            )
 
         self.profile = profile
         self.model_path = Path(model_path)
@@ -131,7 +139,9 @@ class TransformersCTCBackend:
         self._language_model_path = None
         self._language_model_size_bytes = None
         if not self.model_path.is_dir():
-            raise ProfileError(f"Transformers model directory not found: {self.model_path}")
+            raise ProfileError(
+                f"Transformers model directory not found: {self.model_path}"
+            )
         if self._is_mms_profile() and not profile.language:
             raise ProfileError("MMS profiles require a language adapter code")
         if self._uses_lm():
@@ -173,6 +183,26 @@ class TransformersCTCBackend:
             )
         self._model_class = type(self.model).__name__
         self._processor_class = type(self.processor).__name__
+        if self._uses_lm():
+            config = self._lm_config()
+            self._decoder_call = {
+                "api": "Wav2Vec2ProcessorWithLM.batch_decode",
+                "arguments": {
+                    "beam_width": config.beam_width,
+                    "alpha": config.alpha,
+                    "beta": config.beta,
+                    "unk_score_offset": config.unk_score_offset,
+                    "lm_score_boundary": config.lm_score_boundary,
+                    "n_best": config.n_best,
+                    "pool": "persistent_process_pool" if self._decoder_pool else None,
+                    "num_processes": None if self._decoder_pool else 1,
+                },
+            }
+        else:
+            self._decoder_call = {
+                "api": "torch.argmax + processor.batch_decode",
+                "arguments": {"argmax_dim": -1},
+            }
         self._effective_dtype = str(_model_dtype(self.model)).removeprefix("torch.")
 
     def _load_processor(self) -> Any:
@@ -287,7 +317,9 @@ class TransformersCTCBackend:
             raise RuntimeError("The LM-aware processor tokenizer vocabulary is invalid")
         ordered = sorted(vocab.items(), key=lambda item: item[1])
         if [index for _, index in ordered] != list(range(len(ordered))):
-            raise RuntimeError("The acoustic tokenizer IDs are not contiguous from zero")
+            raise RuntimeError(
+                "The acoustic tokenizer IDs are not contiguous from zero"
+            )
 
         labels: list[str] = []
         word_delimiter = getattr(tokenizer, "word_delimiter_token", None)
@@ -409,7 +441,9 @@ class TransformersCTCBackend:
         for hypotheses in decoded_texts:
             if isinstance(hypotheses, (list, tuple)):
                 if not hypotheses:
-                    raise RuntimeError("LM-aware processor returned an empty hypothesis list")
+                    raise RuntimeError(
+                        "LM-aware processor returned an empty hypothesis list"
+                    )
                 hypotheses = hypotheses[0]
             top_hypotheses.append(str(hypotheses).strip())
         return top_hypotheses
@@ -464,7 +498,9 @@ class TransformersCTCBackend:
                     )
 
         if any(row is None for row in rows):
-            raise RuntimeError("Transformers CTC backend failed to produce every result row")
+            raise RuntimeError(
+                "Transformers CTC backend failed to produce every result row"
+            )
         return [row for row in rows if row is not None]
 
     def metadata(self) -> dict[str, Any]:
@@ -472,6 +508,7 @@ class TransformersCTCBackend:
             "framework": "transformers",
             "adapter": "ctc",
             "strategy": self.profile.decoding.strategy,
+            "decoder_call": self._decoder_call,
             "model_class": self._model_class,
             "processor_class": self._processor_class,
             "device": str(self.device),
@@ -480,7 +517,9 @@ class TransformersCTCBackend:
             "requested_torch_dtype": self.profile.loader.torch_dtype,
             "effective_torch_dtype": self._effective_dtype,
             "dtype_fallback": self._dtype_fallback,
-            "language_adapter": self.profile.language if self._is_mms_profile() else None,
+            "language_adapter": self.profile.language
+            if self._is_mms_profile()
+            else None,
         }
         if self._uses_lm():
             config = self._lm_config()

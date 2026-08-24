@@ -29,6 +29,7 @@ from inference.multimodal.adapters.common import (
     torch_dtype_from_profile,
 )
 from inference.profile import ModelProfile, ProfileError
+from inference.provenance import generation_provenance
 
 
 class QwenOmniAudioBackend:
@@ -41,10 +42,7 @@ class QwenOmniAudioBackend:
         *,
         device: torch.device | None = None,
     ) -> None:
-        if (
-            profile.framework != "multimodal"
-            or profile.adapter != "qwen_omni_audio"
-        ):
+        if profile.framework != "multimodal" or profile.adapter != "qwen_omni_audio":
             raise ProfileError(
                 "QwenOmniAudioBackend requires a multimodal/qwen_omni_audio profile"
             )
@@ -60,7 +58,9 @@ class QwenOmniAudioBackend:
         self.model = None
         self.processor = None
         if not self.model_path.is_dir():
-            raise ProfileError(f"Multimodal model directory not found: {self.model_path}")
+            raise ProfileError(
+                f"Multimodal model directory not found: {self.model_path}"
+            )
 
         self.device = device or torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -86,9 +86,7 @@ class QwenOmniAudioBackend:
             "trust_remote_code": profile.loader.trust_remote_code,
         }
         self._model_dtype = torch_dtype_from_profile(profile.loader.torch_dtype)
-        attention_implementation = (
-            profile.loader.attention_implementation or "sdpa"
-        )
+        attention_implementation = profile.loader.attention_implementation or "sdpa"
         try:
             self.processor = AutoProcessor.from_pretrained(
                 str(self.model_path),
@@ -143,6 +141,11 @@ class QwenOmniAudioBackend:
             tokenize=False,
         )
         self._generation_kwargs = dict(profile.decoding.generation_kwargs)
+        self._generation_provenance = generation_provenance(
+            getattr(self.model, "generation_config", None),
+            requested_kwargs=profile.decoding.generation_kwargs,
+            call_kwargs={"return_audio": False, **self._generation_kwargs},
+        )
         self._metadata: dict[str, Any] = {
             "framework": "multimodal",
             "adapter": "qwen_omni_audio",
@@ -166,6 +169,8 @@ class QwenOmniAudioBackend:
                 "return_audio": False,
             },
             "generation_kwargs": dict(self._generation_kwargs),
+            "generation": self._generation_provenance,
+            "rendered_prompt": self._rendered_prompt,
             "prompt": profile.prompt,
             "long_audio": {
                 "strategy": profile.audio.long_audio_strategy,

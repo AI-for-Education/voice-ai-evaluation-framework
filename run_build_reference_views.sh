@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export MSYS_NO_PATHCONV="${MSYS_NO_PATHCONV:-1}"
-
 if [[ $# -eq 0 ]]; then
   cat <<'EOF' >&2
 Usage:

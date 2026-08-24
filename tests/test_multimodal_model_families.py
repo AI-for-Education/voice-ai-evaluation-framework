@@ -180,7 +180,10 @@ def test_phi4_loader_uses_local_overlay_and_bounded_offload(
         rows = backend.transcribe_batch(["long.wav"])
         assert rows[0].pred_text == "habari habari habari"
         assert processor.audio_lengths == [4, 4, 2]
-        assert backend.metadata()["hardware"]["memory_strategy"] == "cpu_disk_offload"
+        metadata = backend.metadata()
+        assert metadata["hardware"]["memory_strategy"] == "cpu_disk_offload"
+        assert metadata["generation"]["actual_call_kwargs"]["max_new_tokens"] == 8
+        assert "<|audio_1|>" in metadata["rendered_prompt"]
     finally:
         runtime_dir = backend._runtime_dir
         backend.close()
@@ -270,7 +273,9 @@ def test_qwen_large_gpu_path_is_text_only(
         "from_pretrained",
         lambda *args, **kwargs: model,
     )
-    monkeypatch.setattr(qwen_omni_audio, "move_inputs", lambda encoded, **kwargs: encoded)
+    monkeypatch.setattr(
+        qwen_omni_audio, "move_inputs", lambda encoded, **kwargs: encoded
+    )
     monkeypatch.setattr(
         qwen_omni_audio,
         "load_audio_and_resample",
@@ -287,7 +292,10 @@ def test_qwen_large_gpu_path_is_text_only(
     assert rows[0].pred_text == "jambo"
     assert model.talker_disabled is True
     assert model.calls[0]["return_audio"] is False
-    assert backend.metadata()["attention_implementation"] == "sdpa"
+    metadata = backend.metadata()
+    assert metadata["attention_implementation"] == "sdpa"
+    assert metadata["generation"]["actual_call_kwargs"]["return_audio"] is False
+    assert metadata["generation"]["effective_generation_config"]["max_new_tokens"] == 8
     assert backend.metadata()["output"] == {
         "mode": "text_only",
         "talker_disabled": True,

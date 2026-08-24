@@ -24,7 +24,6 @@ def _profile(
     generation_kwargs: dict[str, Any] | None = None,
     decoding_strategy: str | None = None,
     ctc_lm_kwargs: dict[str, Any] | None = None,
-    hallucination_guard: dict[str, Any] | None = None,
     long_form: dict[str, Any] | None = None,
     audio: dict[str, Any] | None = None,
 ) -> ModelProfile:
@@ -52,20 +51,15 @@ def _profile(
                     if ctc_lm_kwargs is not None
                     else {}
                 ),
-                **(
-                    {"hallucination_guard": hallucination_guard}
-                    if hallucination_guard is not None
-                    else {}
-                ),
-                **(
-                    {"long_form": long_form}
-                    if long_form is not None
-                    else {}
-                ),
+                # Post-decoding text mutation is intentionally unavailable.
+                **({"long_form": long_form} if long_form is not None else {}),
             },
             **({"audio": audio} if audio is not None else {}),
         }
     )
+
+
+# Shared fake Torch and Transformers runtime
 
 
 class _FakeDevice:
@@ -353,6 +347,16 @@ def _bookbot_lm_profile(*, decoder_workers: int = 0) -> ModelProfile:
     )
 
 
+def _prepare_bookbot_lm(tmp_path: Path) -> tuple[types.ModuleType, Path]:
+    ctc = importlib.import_module("inference.transformers.adapters.ctc")
+    model_path = tmp_path / "bookbot-lm"
+    _create_lm_snapshot(model_path)
+    return ctc, model_path
+
+
+# Factory and CTC adapter loading
+
+
 @pytest.mark.parametrize(
     ("profile", "module_name", "class_name"),
     [
@@ -417,9 +421,7 @@ def test_bookbot_plain_mode_constructs_processor_without_auto_processor(
     assert state.feature_extractor_calls == [
         ((str(model_path),), {"local_files_only": True})
     ]
-    assert state.tokenizer_calls == [
-        ((str(model_path),), {"local_files_only": True})
-    ]
+    assert state.tokenizer_calls == [((str(model_path),), {"local_files_only": True})]
     assert state.plain_processor_inits == [
         (state.feature_extractor_return, state.tokenizer_return)
     ]
@@ -535,15 +537,16 @@ def test_auto_ctc_loading_and_greedy_argmax_batch_decoding(
     assert decoded == ["first transcript", "second transcript"]
 
 
+# Packaged CTC language-model decoding
+
+
 def test_bookbot_lm_receives_full_logits_and_records_provenance(
     fake_transformers_runtime: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     state = fake_transformers_runtime
-    ctc = importlib.import_module("inference.transformers.adapters.ctc")
-    model_path = tmp_path / "bookbot-lm"
-    _create_lm_snapshot(model_path)
+    ctc, model_path = _prepare_bookbot_lm(tmp_path)
     logits_values = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
     logits = _FakeLogits(logits_values)
     state.auto_ctc_model_return.logits = logits
@@ -620,6 +623,9 @@ def test_bookbot_lm_receives_full_logits_and_records_provenance(
     assert metadata["lm_score_boundary"] is True
     assert metadata["n_best"] == 1
     assert metadata["decoder_workers"] == 1
+    assert metadata["decoder_call"]["arguments"]["beam_width"] == 100
+    assert metadata["decoder_call"]["arguments"]["pool"] == "persistent_process_pool"
+    assert metadata["decoder_call"]["arguments"]["num_processes"] is None
     assert metadata["pyctcdecode_version"] == "0.5.0"
     assert metadata["kenlm_version"] == "0.3.0"
     assert metadata["device"] == "cpu"
@@ -636,9 +642,7 @@ def test_bookbot_lm_returns_one_ordered_result_per_input(
     tmp_path: Path,
 ) -> None:
     state = fake_transformers_runtime
-    ctc = importlib.import_module("inference.transformers.adapters.ctc")
-    model_path = tmp_path / "bookbot-lm"
-    _create_lm_snapshot(model_path)
+    ctc, model_path = _prepare_bookbot_lm(tmp_path)
     state.auto_ctc_model_return.logits = _FakeLogits(
         np.zeros((2, 3, 4), dtype=np.float32)
     )
@@ -688,9 +692,7 @@ def test_bookbot_lm_missing_package_fails_before_processor_or_audio(
     tmp_path: Path,
 ) -> None:
     state = fake_transformers_runtime
-    ctc = importlib.import_module("inference.transformers.adapters.ctc")
-    model_path = tmp_path / "bookbot-lm"
-    _create_lm_snapshot(model_path)
+    ctc, model_path = _prepare_bookbot_lm(tmp_path)
     real_import_module = ctc.importlib.import_module
 
     def import_without_kenlm(name: str) -> Any:
@@ -715,9 +717,7 @@ def test_bookbot_lm_rejects_non_lm_processor_and_alphabet_mismatch(
     tmp_path: Path,
 ) -> None:
     state = fake_transformers_runtime
-    ctc = importlib.import_module("inference.transformers.adapters.ctc")
-    model_path = tmp_path / "bookbot-lm"
-    _create_lm_snapshot(model_path)
+    ctc, model_path = _prepare_bookbot_lm(tmp_path)
     state.lm_processor_return = _FakeProcessor()
 
     with pytest.raises(RuntimeError, match="did not load an LM-aware"):
@@ -737,14 +737,15 @@ def test_bookbot_lm_rejects_non_lm_processor_and_alphabet_mismatch(
         )
 
 
+# Speech-seq2seq generation and long-audio routing
+
+
 def test_speech_seq2seq_generate_receives_language_task_and_no_timestamps(
     fake_transformers_runtime: Any,
     tmp_path: Path,
 ) -> None:
     state = fake_transformers_runtime
-    seq2seq = importlib.import_module(
-        "inference.transformers.adapters.speech_seq2seq"
-    )
+    seq2seq = importlib.import_module("inference.transformers.adapters.speech_seq2seq")
     model_path = tmp_path / "whisper-large-v2"
     model_path.mkdir()
     processor = _FakeProcessor()
@@ -797,9 +798,7 @@ def test_speech_seq2seq_long_form_uses_untruncated_timestamp_path(
     tmp_path: Path,
 ) -> None:
     state = fake_transformers_runtime
-    seq2seq = importlib.import_module(
-        "inference.transformers.adapters.speech_seq2seq"
-    )
+    seq2seq = importlib.import_module("inference.transformers.adapters.speech_seq2seq")
     model_path = tmp_path / "whisper-large"
     model_path.mkdir()
     processor = _FakeProcessor()
@@ -855,9 +854,7 @@ def test_speech_seq2seq_routes_mixed_batch_and_preserves_original_order(
     tmp_path: Path,
 ) -> None:
     state = fake_transformers_runtime
-    seq2seq = importlib.import_module(
-        "inference.transformers.adapters.speech_seq2seq"
-    )
+    seq2seq = importlib.import_module("inference.transformers.adapters.speech_seq2seq")
     model_path = tmp_path / "whisper-large-v2"
     model_path.mkdir()
     profile = _profile(
@@ -917,16 +914,13 @@ def test_speech_seq2seq_routes_mixed_batch_and_preserves_original_order(
     }
 
 
-
 def test_speech_seq2seq_chunks_profile_scoped_long_audio_in_memory(
     fake_transformers_runtime: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     state = fake_transformers_runtime
-    seq2seq = importlib.import_module(
-        "inference.transformers.adapters.speech_seq2seq"
-    )
+    seq2seq = importlib.import_module("inference.transformers.adapters.speech_seq2seq")
     model_path = tmp_path / "paza-whisper"
     model_path.mkdir()
     profile = _profile(
@@ -978,6 +972,10 @@ def test_speech_seq2seq_chunks_profile_scoped_long_audio_in_memory(
         "chunks_generated": 3,
     }
 
+
+# Error handling and direct-output guarantees
+
+
 @pytest.mark.parametrize(
     ("adapter", "module_name", "class_name"),
     [
@@ -1024,9 +1022,7 @@ def test_transformers_batch_failure_returns_one_error_row_per_input(
     monkeypatch.setattr(module, "load_audio_and_resample", fake_load)
     monkeypatch.setattr(backend, "_decode", fail_decode)
 
-    rows = backend.transcribe_batch(
-        ["first.wav", "unreadable.wav", "second.wav"]
-    )
+    rows = backend.transcribe_batch(["first.wav", "unreadable.wav", "second.wav"])
 
     assert [row.audio_filepath for row in rows] == [
         "first.wav",
@@ -1038,16 +1034,13 @@ def test_transformers_batch_failure_returns_one_error_row_per_input(
     assert rows[2].error == "inference_failed: model failed"
 
 
-
-def test_whisper_guard_caps_wps_and_preserves_raw_prediction(
+def test_whisper_returns_the_direct_decoded_prediction(
     fake_transformers_runtime: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     state = fake_transformers_runtime
-    seq2seq = importlib.import_module(
-        "inference.transformers.adapters.speech_seq2seq"
-    )
+    seq2seq = importlib.import_module("inference.transformers.adapters.speech_seq2seq")
     model_path = tmp_path / "whisper-large"
     model_path.mkdir()
     processor = _FakeProcessor()
@@ -1059,12 +1052,6 @@ def test_whisper_guard_caps_wps_and_preserves_raw_prediction(
         profile_id="whisper-large-sw",
         artifact="whisper-large",
         language="sw",
-        hallucination_guard={
-            "max_words_per_second": 8.0,
-            "repeated_phrase_min_words": 5,
-            "repeated_phrase_max_words": 8,
-            "repeated_phrase_repetitions": 3,
-        },
     )
     backend = seq2seq.TransformersSpeechSeq2SeqBackend(
         profile,
@@ -1079,35 +1066,20 @@ def test_whisper_guard_caps_wps_and_preserves_raw_prediction(
 
     row = backend.transcribe_batch(["sample.wav"])[0]
 
-    assert row.pred_text == " ".join(f"word{index}" for index in range(8))
-    assert row.raw_pred_text == processor.decoded[0]
-    assert row.to_row()["raw_pred_text"] == processor.decoded[0]
-    assert backend.metadata()["hallucination_guard"]["max_words_per_second"] == 8.0
+    assert row.pred_text == processor.decoded[0]
+    assert row.raw_pred_text is None
+    assert "raw_pred_text" not in row.to_row()
+    metadata = backend.metadata()
+    assert metadata["model_output_field"] == "pred_text"
+    assert metadata["generation"]["actual_call_kwargs"]["task"] == "transcribe"
+    assert (
+        metadata["generation"]["effective_generation_config"]["return_timestamps"]
+        is False
+    )
 
 
-def test_whisper_guard_stops_consecutive_repeated_phrase(
+def test_whisper_module_exposes_no_post_decoding_guard(
     fake_transformers_runtime: Any,
 ) -> None:
-    seq2seq = importlib.import_module(
-        "inference.transformers.adapters.speech_seq2seq"
-    )
-    profile = _profile(
-        adapter="speech_seq2seq",
-        hallucination_guard={
-            "max_words_per_second": 8.0,
-            "repeated_phrase_min_words": 5,
-            "repeated_phrase_max_words": 8,
-            "repeated_phrase_repetitions": 3,
-        },
-    )
-    phrase = "one two three four five"
-    text = f"intro {phrase} {phrase} {phrase} trailing words"
-
-    guarded, changed = seq2seq.apply_hallucination_guard(
-        text,
-        duration=10.0,
-        config=profile.decoding.hallucination_guard,
-    )
-
-    assert changed is True
-    assert guarded == f"intro {phrase}"
+    seq2seq = importlib.import_module("inference.transformers.adapters.speech_seq2seq")
+    assert not hasattr(seq2seq, "apply_hallucination_guard")

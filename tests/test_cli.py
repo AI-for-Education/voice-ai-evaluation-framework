@@ -15,6 +15,20 @@ from inference.sherpa_onnx import infer as sherpa_infer
 from inference.transformers import infer as transformers_infer
 
 
+def _load_eval_manifest(path: Path, **overrides: object) -> pd.DataFrame:
+    from eval_pipeline2 import load_eval_manifest
+
+    return load_eval_manifest(
+        str(path),
+        audio_key="audio_filepath",
+        ref_key="ref_text",
+        can_key="can_text",
+        hyp_key="pred_text",
+        logger=logging.getLogger("test"),
+        **overrides,
+    )
+
+
 @pytest.mark.parametrize(
     "parse_args",
     [
@@ -250,8 +264,6 @@ def test_supplied_asr_manifest_replaces_stale_base_hypotheses() -> None:
 
 
 def test_eval_manifest_rejects_corrupted_reference_text(tmp_path: Path) -> None:
-    from eval_pipeline2 import load_eval_manifest
-
     manifest = tmp_path / "corrupt.jsonl"
     manifest.write_text(
         '{"audio_filepath":"a.wav","ref_text":"safi","can_text":"ng\ufffdambo","pred_text":"hyp"}\n',
@@ -259,43 +271,24 @@ def test_eval_manifest_rejects_corrupted_reference_text(tmp_path: Path) -> None:
     )
 
     with pytest.raises(SystemExit, match="Reference integrity check failed"):
-        load_eval_manifest(
-            str(manifest),
-            audio_key="audio_filepath",
-            ref_key="ref_text",
-            can_key="can_text",
-            hyp_key="pred_text",
-            logger=logging.getLogger("test"),
-        )
+        _load_eval_manifest(manifest)
 
 
 def test_eval_manifest_legacy_recovery_preserves_corrupted_reference(
     tmp_path: Path,
 ) -> None:
-    from eval_pipeline2 import load_eval_manifest
-
     manifest = tmp_path / "legacy_corrupt.jsonl"
     manifest.write_text(
         '{"audio_filepath":"a.wav","ref_text":"safi","can_text":"ng\ufffdambo","pred_text":"hyp"}\n',
         encoding="utf-8",
     )
 
-    result = load_eval_manifest(
-        str(manifest),
-        audio_key="audio_filepath",
-        ref_key="ref_text",
-        can_key="can_text",
-        hyp_key="pred_text",
-        logger=logging.getLogger("test"),
-        validate_references=False,
-    )
+    result = _load_eval_manifest(manifest, validate_references=False)
 
     assert result.loc[0, "manifest_can_text"] == "ng\ufffdambo"
 
 
 def test_eval_manifest_allows_ipa_and_corrupted_model_output(tmp_path: Path) -> None:
-    from eval_pipeline2 import load_eval_manifest
-
     ipa_ref = "\u014b\u0261ombe"
     model_output = "model\ufffdoutput"
     manifest = tmp_path / "valid.jsonl"
@@ -308,14 +301,7 @@ def test_eval_manifest_allows_ipa_and_corrupted_model_output(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    result = load_eval_manifest(
-        str(manifest),
-        audio_key="audio_filepath",
-        ref_key="ref_text",
-        can_key="can_text",
-        hyp_key="pred_text",
-        logger=logging.getLogger("test"),
-    )
+    result = _load_eval_manifest(manifest)
 
     assert result.loc[0, "manifest_ref_text"] == ipa_ref
     assert result.loc[0, "manifest_hyp_text"] == model_output

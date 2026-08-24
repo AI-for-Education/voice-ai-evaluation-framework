@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
+from inference.onnxruntime.android_backend import AndroidParityCtcBackend
 from inference.onnxruntime.backend import OnnxRuntimeCtcBackend
 from inference.profile import ProfileError, load_profile, resolve_model_path
 from inference.runner import run_backend
@@ -38,12 +40,29 @@ def main(argv: Sequence[str] | None = None) -> Path:
         print(f"[INFO] Loading profile: {args.model_config}")
         profile = load_profile(args.model_config, expected_framework="onnxruntime")
         model_path = resolve_model_path(profile)
-        print(f"[INFO] Loading local model: {model_path}")
-        backend = OnnxRuntimeCtcBackend(
-            profile,
-            model_path,
-            num_threads=args.num_threads,
-        )
+        if profile.adapter == "android_ctc" and (
+            args.batch_size != 1 or args.num_threads != 1
+        ):
+            raise ProfileError(
+                "Controlled Android preprocessing requires --batch_size 1 "
+                "and --num_threads 1"
+            )
+        print(f"[INFO] Loading controlled model: {model_path}")
+        with warnings.catch_warnings(record=True) as startup_warnings:
+            warnings.simplefilter("always")
+            if profile.adapter == "android_ctc":
+                backend = AndroidParityCtcBackend(
+                    profile,
+                    model_path,
+                    num_threads=1,
+                    expected_ort_version=None,
+                )
+            else:
+                backend = OnnxRuntimeCtcBackend(
+                    profile,
+                    model_path,
+                    num_threads=args.num_threads,
+                )
     except (ProfileError, RuntimeError, OSError) as exc:
         raise SystemExit(f"Unable to initialize ONNX Runtime inference: {exc}") from exc
 
@@ -57,6 +76,7 @@ def main(argv: Sequence[str] | None = None) -> Path:
         output_root=args.output_root,
         batch_size=args.batch_size,
         smoke_test=args.smoke_test,
+        startup_warnings=startup_warnings,
     )
 
 

@@ -1,0 +1,282 @@
+{
+  "schema_version": 1,
+  "naming_format": "model_group · official_model_name [· variant] (decoder)",
+  "models": {
+    "bookbot-orthographic-ctc": {
+      "model_group": "Bookbot",
+      "model_name": "wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Wav2Vec2/XLS-R CTC",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm/config.json"
+      }
+    },
+    "bookbot-orthographic-ctc-5gram": {
+      "model_group": "Bookbot",
+      "model_name": "wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Wav2Vec2/XLS-R CTC",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm/config.json"
+      }
+    },
+    "bookbot-phoneme-ctc": {
+      "model_group": "Bookbot",
+      "model_name": "wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Wav2Vec2/XLS-R CTC",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot/config.json"
+      }
+    },
+    "gemma-4-E2B-sw": {
+      "model_group": "Gemma",
+      "model_name": "gemma-4-E2B-it",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/google/gemma-4-E2B-it",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Gemma 4 conditional generation with audio encoder",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:gemma-4-E2B-it/config.json"
+      }
+    },
+    "hubert-large-ls960-ft-en": {
+      "model_group": "HuBERT",
+      "model_name": "hubert-large-ls960-ft",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/facebook/hubert-large-ls960-ft",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "HuBERT CTC",
+        "evidence_status": "owner_documented",
+        "source": "https://huggingface.co/facebook/hubert-large-ls960-ft"
+      }
+    },
+    "mms-1b-all-swh": {
+      "model_group": "MMS",
+      "model_name": "mms-1b-all",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/facebook/mms-1b-all",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Wav2Vec2 CTC",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:mms-1b-all/config.json"
+      }
+    },
+    "paza-phi4-multimodal-sw": {
+      "model_group": "Paza",
+      "model_name": "paza-Phi-4-multimodal-instruct",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/microsoft/paza-Phi-4-multimodal-instruct",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Phi-4 multimodal causal language model",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:paza-Phi-4-multimodal-instruct/config.json"
+      }
+    },
+    "paza-whisper-large-v3-turbo-sw": {
+      "model_group": "Paza",
+      "model_name": "paza-whisper-large-v3-turbo",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/microsoft/paza-whisper-large-v3-turbo",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Whisper encoder-decoder conditional generation",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:paza-whisper-large-v3-turbo/config.json"
+      }
+    },
+    "paza-whisper-large-v3-turbo-sw-beam5": {
+      "model_group": "Paza",
+      "model_name": "paza-whisper-large-v3-turbo",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/microsoft/paza-whisper-large-v3-turbo",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Whisper encoder-decoder conditional generation",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:paza-whisper-large-v3-turbo/config.json"
+      }
+    },
+    "qwen2.5-omni-7b-sw-text": {
+      "model_group": "Qwen",
+      "model_name": "Qwen2.5-Omni-7B",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/Qwen/Qwen2.5-Omni-7B",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Qwen2.5 Omni multimodal model",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:Qwen2.5-Omni-7B/config.json"
+      }
+    },
+    "swahili-exp41-ctc": {
+      "model_group": "Exp41",
+      "model_name": "sw-tz-child-egra-fastconformer-ctc-110m",
+      "variant": "Native NeMo",
+      "official_model_url": "https://huggingface.co/AI-for-Education/sw-tz-child-egra-fastconformer-ctc-110m",
+      "official_model_url_note": "Official Hugging Face model listing; the listed model_exp41_avg.nemo artifact matches the evaluated checkpoint",
+      "architecture": {
+        "label": "FastConformer encoder with CTC BPE decoder",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:model_exp41_avg.nemo/model_config.yaml"
+      }
+    },
+    "swahili-exp41-ctc-android-int8": {
+      "model_group": "Exp41",
+      "model_name": "sw-tz-child-egra-fastconformer-ctc-110m",
+      "variant": "Published INT8 · Android runtime proxy",
+      "official_model_url": "https://huggingface.co/AI-for-Education/sw-tz-child-egra-fastconformer-ctc-110m",
+      "official_model_url_note": "Official Hugging Face model listing; derived deployment artifact from the listed model_exp41_avg.nemo checkpoint",
+      "architecture": {
+        "label": "FastConformer encoder with CTC BPE decoder",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:swahili-exp41-ctc-android/config.json"
+      }
+    },
+    "swahili-exp41-ctc-onnx-fp32": {
+      "model_group": "Exp41",
+      "model_name": "sw-tz-child-egra-fastconformer-ctc-110m",
+      "variant": "Project ONNX FP32",
+      "official_model_url": "https://huggingface.co/AI-for-Education/sw-tz-child-egra-fastconformer-ctc-110m",
+      "official_model_url_note": "Official Hugging Face model listing; derived deployment artifact from the listed model_exp41_avg.nemo checkpoint",
+      "architecture": {
+        "label": "FastConformer encoder with CTC BPE decoder",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:swahili-exp41-ctc/config.json"
+      }
+    },
+    "swahili-exp41-ctc-onnx-int8": {
+      "model_group": "Exp41",
+      "model_name": "sw-tz-child-egra-fastconformer-ctc-110m",
+      "variant": "Project ONNX INT8",
+      "official_model_url": "https://huggingface.co/AI-for-Education/sw-tz-child-egra-fastconformer-ctc-110m",
+      "official_model_url_note": "Official Hugging Face model listing; derived deployment artifact from the listed model_exp41_avg.nemo checkpoint",
+      "architecture": {
+        "label": "FastConformer encoder with CTC BPE decoder",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:swahili-exp41-ctc/config.json"
+      }
+    },
+    "swahili-exp41-ctc-published-int8-android-frontend": {
+      "model_group": "Exp41",
+      "model_name": "sw-tz-child-egra-fastconformer-ctc-110m",
+      "variant": "Published INT8 · Android frontend",
+      "official_model_url": "https://huggingface.co/AI-for-Education/sw-tz-child-egra-fastconformer-ctc-110m",
+      "official_model_url_note": "Official Hugging Face model listing; derived deployment artifact from the listed model_exp41_avg.nemo checkpoint",
+      "architecture": {
+        "label": "FastConformer encoder with CTC BPE decoder",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:swahili-exp41-ctc-android/config.json"
+      }
+    },
+    "swahili-exp41-ctc-published-int8-desktop-frontend": {
+      "model_group": "Exp41",
+      "model_name": "sw-tz-child-egra-fastconformer-ctc-110m",
+      "variant": "Published INT8 · Desktop frontend",
+      "official_model_url": "https://huggingface.co/AI-for-Education/sw-tz-child-egra-fastconformer-ctc-110m",
+      "official_model_url_note": "Official Hugging Face model listing; derived deployment artifact from the listed model_exp41_avg.nemo checkpoint",
+      "architecture": {
+        "label": "FastConformer encoder with CTC BPE decoder",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:swahili-exp41-ctc-android/config.json"
+      }
+    },
+    "w2v-bert-2.0-swahili-asr": {
+      "model_group": "W2V-BERT",
+      "model_name": "w2v-bert-2.0-swahili-asr",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/badrex/w2v-bert-2.0-swahili-asr",
+      "official_model_url_note": "Model-owner Hugging Face listing",
+      "architecture": {
+        "label": "Wav2Vec2-BERT CTC",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:w2v-bert-2.0-swahili-asr/config.json"
+      }
+    },
+    "whisper-large-sw": {
+      "model_group": "Whisper",
+      "model_name": "whisper-large",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/openai/whisper-large",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Whisper encoder-decoder conditional generation",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:whisper-large/config.json"
+      }
+    },
+    "whisper-large-sw-beam5": {
+      "model_group": "Whisper",
+      "model_name": "whisper-large",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/openai/whisper-large",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Whisper encoder-decoder conditional generation",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:whisper-large/config.json"
+      }
+    },
+    "whisper-large-v2-sw": {
+      "model_group": "Whisper",
+      "model_name": "whisper-large-v2",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/openai/whisper-large-v2",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Whisper encoder-decoder conditional generation",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:whisper-large-v2/config.json"
+      }
+    },
+    "whisper-large-v2-sw-beam5": {
+      "model_group": "Whisper",
+      "model_name": "whisper-large-v2",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/openai/whisper-large-v2",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Whisper encoder-decoder conditional generation",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:whisper-large-v2/config.json"
+      }
+    },
+    "zipformer-streaming-robust-sw-v4": {
+      "model_group": "Bookbot",
+      "model_name": "sherpa-onnx-zipformer-streaming-robust-sw-v4",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Streaming Zipformer transducer",
+        "evidence_status": "owner_documented",
+        "source": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4"
+      }
+    },
+    "zipformer-streaming-robust-sw-v4-modified-beam4": {
+      "model_group": "Bookbot",
+      "model_name": "sherpa-onnx-zipformer-streaming-robust-sw-v4",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Streaming Zipformer transducer",
+        "evidence_status": "owner_documented",
+        "source": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4"
+      }
+    }
+  }
+}

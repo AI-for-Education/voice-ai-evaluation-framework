@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from egra_eval2.leaderboard import LeaderboardError, build_leaderboards
+from egra_eval2.leaderboard_view import display_frame
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,45 +32,6 @@ def load_leaderboards(
     return build_leaderboards(evaluations_root, latest_only=latest_only)
 
 
-def display_frame(frame: pd.DataFrame, metric: str) -> pd.DataFrame:
-    visible = frame.drop(columns=["summary_path"], errors="ignore").copy()
-    labels = {
-        "model_id": "model",
-        "run_name": "run",
-        "native_output_units": "native output",
-        "hypothesis_route": "scoring route",
-        "scored_hypothesis": "scored hypothesis",
-        "postprocessing_method": "post-processing",
-        "postprocessed_rows": "adjusted rows",
-        "postprocessed_rows_pct": "adjusted rows (%)",
-        "postprocessing_words_removed": "words removed",
-        "postprocessing_audit_source": "audit source",
-        "completed_at": "completed",
-        "global_mer": "global MER",
-    }
-    sections = (
-        "global",
-        "passage_passage",
-        "syllables_grid",
-        "syllables_isolated",
-        "nonwords_grid",
-        "nonwords_isolated",
-        "letters_grid",
-        "letters_isolated",
-    )
-    for section in sections:
-        task_label = section.replace("_", " ")
-        labels[f"{section}_{metric}"] = (
-            f"{task_label} {metric.upper()}"
-        )
-        labels[f"{section}_mer"] = f"{task_label} MER"
-        if section.endswith("_isolated"):
-            labels[f"{section}_accuracy"] = f"{task_label} accuracy"
-        else:
-            labels[f"{section}_corr"] = f"{task_label} correlation (r)"
-    return visible.rename(columns=labels)
-
-
 def render_leaderboard(
     frame: pd.DataFrame,
     skipped: list[str],
@@ -78,18 +40,22 @@ def render_leaderboard(
     metric: str,
     description: str,
 ) -> None:
-    st.caption(description + " Lower error rates rank higher. Post-processing "
-               "columns identify any adjusted hypotheses used for scoring. "
-               "Passage/grid tasks report correct-count Pearson correlation; "
-               "isolated tasks report accuracy.")
+    st.caption(
+        description
+        + " Lower error rates rank higher. Results are presented first in this "
+        "order: overall, passage, syllables, non-words, and letters; configuration "
+        "and provenance details follow. Passage/grid tasks report correct-count "
+        "Pearson correlation; isolated tasks report accuracy. Post-processing "
+        "columns identify any adjusted hypotheses used for scoring. Artifact, "
+        "preprocessing/frontend, and runtime are separate columns in that "
+        "comparison order; Android proxy results are not physical-phone "
+        "performance measurements."
+    )
     if frame.empty:
         st.info(f"No eligible {namespace} evaluations found.")
     else:
-        st.dataframe(
-            display_frame(frame, metric),
-            hide_index=True,
-            width="stretch",
-        )
+        displayed = display_frame(frame, metric)
+        st.dataframe(displayed, hide_index=True, width="stretch")
         st.download_button(
             f"Download {namespace} leaderboard (CSV)",
             data=frame.to_csv(index=False, float_format="%.4f").encode("utf-8"),

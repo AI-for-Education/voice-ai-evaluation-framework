@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import warnings
 from pathlib import Path
 from typing import Sequence
 
@@ -58,7 +59,9 @@ def main(argv: Sequence[str] | None = None) -> Path:
         profile = load_profile(args.model_config, expected_framework="transformers")
         model_path = resolve_model_path(profile)
         print(f"[INFO] Loading local model: {model_path}")
-        backend = create_backend(profile, model_path)
+        with warnings.catch_warnings(record=True) as startup_warnings:
+            warnings.simplefilter("always")
+            backend = create_backend(profile, model_path)
     except (ProfileError, RuntimeError, OSError) as exc:
         raise SystemExit(f"Unable to initialize Transformers inference: {exc}") from exc
 
@@ -75,6 +78,7 @@ def main(argv: Sequence[str] | None = None) -> Path:
             output_root=args.output_root,
             batch_size=args.batch_size,
             smoke_test=args.smoke_test,
+            startup_warnings=startup_warnings,
         )
     except Exception as exc:
         raise SystemExit(f"Transformers inference failed: {exc}") from exc

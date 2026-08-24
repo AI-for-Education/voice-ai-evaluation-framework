@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -109,3 +111,37 @@ def test_android_backend_rejects_multi_item_batches() -> None:
     backend = AndroidParityCtcBackend.__new__(AndroidParityCtcBackend)
     with pytest.raises(RuntimeError, match="exactly one audio item"):
         backend.transcribe_batch(["one.wav", "two.wav"])
+
+
+def test_android_metadata_explicitly_excludes_physical_device_validation() -> None:
+    backend = AndroidParityCtcBackend.__new__(AndroidParityCtcBackend)
+    backend.model_path = Path("model.int8.onnx")
+    backend.verified = {
+        "model_sha256": "test-sha256",
+        "quantized_operator_counts": {},
+    }
+
+    metadata = backend.metadata()
+
+    assert metadata["execution_platform"] == "pc"
+    assert metadata["mobile_hardware_emulated"] is False
+    assert metadata["physical_device_validated"] is False
+    assert metadata["validation_scope"] == "pc_executed_android_behavior_accuracy_proxy"
+
+
+def test_android_metadata_marks_controlled_shared_runtime() -> None:
+    backend = AndroidParityCtcBackend.__new__(AndroidParityCtcBackend)
+    backend.model_path = Path("model.int8.onnx")
+    backend.verified = {
+        "model_sha256": "test-sha256",
+        "quantized_operator_counts": {},
+    }
+    backend.expected_ort_version = None
+    backend.onnxruntime_version = "1.23.2"
+
+    metadata = backend.metadata()
+
+    assert metadata["validation_scope"] == "pc_controlled_android_frontend"
+    assert metadata["onnxruntime_version"] == "1.23.2"
+    assert "onnxruntime_version_required" not in metadata
+    assert metadata["validation"]["runtime_version"] == "recorded_not_pinned"

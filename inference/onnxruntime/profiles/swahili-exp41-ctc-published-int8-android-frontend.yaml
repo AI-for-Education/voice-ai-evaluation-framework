@@ -1,0 +1,35 @@
+id: swahili-exp41-ctc-published-int8-android-frontend
+framework: onnxruntime
+adapter: android_ctc
+artifact: swahili-exp41-ctc-android/model.int8.onnx
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 1
+  audio_preparation: android_pcm16_linear_16khz
+  inference:
+    artifact: published_deployment_artifact
+    frontend: deployment_parity_android_frontend
+    runtime: onnxruntime_shared_image
+    chunking: none
+  evaluation: direct_pred_text_by_output_units
+  runtime_resolution: observed_effective_values_v1
+
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+
+decoding:
+  strategy: greedy
+  generation_kwargs: {}
+
+parameter_evidence:
+  - applies_to:
+      - artifact
+      - decoding.strategy
+    level: exact
+    source: artifact:swahili-exp41-ctc-android/model.int8.onnx
+    rationale: Controlled configuration 110 keeps the published Android INT8 artifact and switches only from the desktop frontend to the Android-matching frontend in the shared image.

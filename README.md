@@ -28,11 +28,23 @@ Inference is organized under `inference/` by model framework while sharing the s
 
 Segment audio once with `run_segment.sh`, then pass the same segment manifest to any backend. All write unchanged `transcriptions.jsonl` rows with `audio_filepath`, `duration`, and `pred_text`, plus `run_metadata.json` describing the effective profile and runtime. Use `run_nemo_inference.sh`, `run_transformers_inference.sh`, `run_onnxruntime_inference.sh`, `run_onnxruntime_android_inference.sh`, `run_sherpa_onnx_inference.sh`, or `run_multimodal_inference.sh` for new runs; root `infer.py` is the only legacy NeMo `--model` API. See the README in each framework directory for model-specific details.
 
-When inference adjusts a hypothesis after decoding, the transcript row keeps
-both the scored `pred_text` and the model's original `raw_pred_text`.
-`run_metadata.json` adds a concise optional `postprocessing` summary. Older
-runs and backends without this block remain valid, and evaluation continues to
-read `pred_text` exactly as before.
+`run_metadata.json` records the normalized profile and canonical hash, pinned
+model source plus available artifact checksums, completed backend state, exact
+decoder/generation call arguments, runtime and library versions, command-line
+invocation, Python warnings from initialization and transcription, and
+Git/source-tree identity. Generative backends separate
+profile-requested values, packaged model defaults, actual call arguments, and
+their effective merged configuration.
+Profiles also reference the tracked three-stage policies in
+`inference/pipeline_contracts.json`. New run and evaluation metadata embed the
+resolved audio-preparation, inference, and evaluation contracts alongside the
+values observed only at execution time. Historical recovery uses an explicit
+`not_available` value with a reason instead of guessing; see
+`docs/pipeline-provenance.md`.
+New inference runs score the direct backend hypothesis in `pred_text`; no
+duration or repetition rule truncates model output after decoding. Historical
+rows containing `raw_pred_text` and historical metadata containing
+`postprocessing` remain readable for audit compatibility.
 
 ### Standard output layout
 
@@ -117,7 +129,7 @@ runtime for BookBot Zipformer; no separate BookBot image is required.
 | BookBot orthographic CTC (packaged 5-gram) | `run_transformers_inference.sh` + `bookbot-orthographic-ctc-5gram.yaml` | Runnable now in the rebuilt shared image. Local-artifact loading and one-file GPU inference passed; metadata confirmed `Wav2Vec2ProcessorWithLM`, `BeamSearchDecoderCTC`, the 1,056,897,033-byte packaged LM, and the pinned package/settings provenance. On the same 4.096-second smoke item, greedy returned `a` and the word-LM decoder returned an empty hypothesis; use a development set, not held-out data, if settings are ever tuned. |
 | BookBot phoneme CTC | `run_transformers_inference.sh` + `bookbot-phoneme-ctc.yaml` | One-file inference passed. Output is phonemic and must not be scored directly as orthographic WER. The local files lack Hugging Face download metadata. |
 | Wav2Vec2-BERT Swahili | `run_transformers_inference.sh` + `w2v-bert-2.0-swahili-asr.yaml` | Complete snapshot; inference passed. |
-| Paza Whisper large-v3-turbo | `run_transformers_inference.sh` + `paza-whisper-large-v3-turbo-sw.yaml` | Complete snapshot; inference passed. Caller must provide WAV files no longer than 30 seconds. The profile has no automatic segmentation or timestamp-based long-form fallback, so longer inputs may be truncated. |
+| Paza Whisper large-v3-turbo | `run_transformers_inference.sh` + `paza-whisper-large-v3-turbo-sw.yaml` | Complete snapshot; inference passed. Above the owner-documented 448-token input limit, the profile applies the documented project policy: deterministic 30-second, zero-overlap sequential chunking in memory, followed by source-order text joining. It does not enable timestamp-based long-form decoding. |
 | Whisper large | `run_transformers_inference.sh` + `whisper-large-sw.yaml` | Complete snapshot; GPU inference passed. Inputs above 30 seconds use Hugging Face's untruncated timestamp-based long-form path without modifying source audio. |
 | Whisper large-v2 | `run_transformers_inference.sh` + `whisper-large-v2-sw.yaml` | Complete snapshot; inference passed. Inputs above 30 seconds use Hugging Face's untruncated timestamp-based long-form path without modifying source audio. |
 | MMS-1B Swahili | `run_transformers_inference.sh` + `mms-1b-all-swh.yaml` | Complete Swahili package; inference and `swh` adapter loading passed. |
@@ -324,7 +336,7 @@ All the steps above can then be performed in sequence:
 
     ./run_nemo_inference.sh \
         --model_config inference/nemo/profiles/swahili-exp41-ctc.yaml \
-        --root_audio_dir input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/audio_segments
+        --audio_manifest input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl
 
     # Copy the exact value printed by "[INFO] Model run:".
     RUN_NAME=swahili-exp41-ctc_<timestamp>

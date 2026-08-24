@@ -15,6 +15,11 @@ from egra_eval2.eval_utils import adjust_letter_canonical_text
 from egra_eval2.evaluate import aggregate_row_scores, evaluate_rows
 from egra_eval2.manifest_integrity import ReferenceIntegrityError, validate_reference_rows
 from egra_eval2.scoring_text import ScoringRepresentationError, prepare_scoring_texts
+from egra_eval2.reference.views import METADATA_NAME, default_output_dir
+from inference.pipeline_provenance import (
+    PIPELINE_PROVENANCE_SCHEMA_VERSION,
+    build_evaluation_provenance,
+)
 
 
 def setup_logger() -> logging.Logger:
@@ -190,10 +195,12 @@ def write_evaluation_metadata(
     requested_representation: str,
     scoring_units: str,
     namespace: str,
+    reference_metadata_path: str | Path | None = None,
 ) -> Path:
     legacy_mismatch = requested_representation == "legacy_orthographic"
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "provenance_schema_version": PIPELINE_PROVENANCE_SCHEMA_VERSION,
         "status": "complete",
         "completed_at": datetime.now().astimezone().isoformat(),
         "source_manifest": str(manifest_in),
@@ -202,6 +209,14 @@ def write_evaluation_metadata(
         "output_namespace": namespace,
         "representation_compatible": not legacy_mismatch,
         "reference_integrity_enforced": not legacy_mismatch,
+        "pipeline_provenance": build_evaluation_provenance(
+            base=base,
+            manifest_in=manifest_in,
+            requested_representation=requested_representation,
+            scoring_units=scoring_units,
+            namespace=namespace,
+            reference_metadata_path=reference_metadata_path,
+        ),
     }
     if legacy_mismatch:
         payload["warning"] = (
@@ -619,6 +634,7 @@ def main() -> None:
         requested_representation=args.scoring_representation,
         scoring_units=scoring_units,
         namespace=summary_dirs["namespace"].name,
+        reference_metadata_path=default_output_dir(layout.root) / METADATA_NAME,
     )
     logger.info("Writing: %s", metadata_path)
 

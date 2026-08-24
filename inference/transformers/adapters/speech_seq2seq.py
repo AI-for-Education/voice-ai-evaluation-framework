@@ -16,7 +16,8 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
-from inference.profile import HallucinationGuardConfig, ModelProfile, ProfileError
+from inference.profile import ModelProfile, ProfileError
+from inference.provenance import generation_provenance
 from inference.transformers.adapters.ctc import (
     _loader_dtype,
     _model_dtype,
@@ -25,47 +26,7 @@ from inference.transformers.adapters.ctc import (
 )
 
 
-def _repeated_phrase_boundary(
-    words: list[str],
-    config: HallucinationGuardConfig,
-) -> int | None:
-    """Return the end of the first phrase when it repeats consecutively."""
-    repetitions = config.repeated_phrase_repetitions
-    for start in range(len(words)):
-        for size in range(
-            config.repeated_phrase_min_words,
-            config.repeated_phrase_max_words + 1,
-        ):
-            end = start + size * repetitions
-            if end > len(words):
-                continue
-            phrase = words[start : start + size]
-            if all(
-                words[start + repeat * size : start + (repeat + 1) * size]
-                == phrase
-                for repeat in range(1, repetitions)
-            ):
-                return start + size
-    return None
-
-
-def apply_hallucination_guard(
-    text: str,
-    *,
-    duration: float,
-    config: HallucinationGuardConfig,
-) -> tuple[str, bool]:
-    """Apply the profile's inference-time output safety limits."""
-    words = text.split()
-    limit = min(
-        len(words),
-        max(1, int(np.ceil(duration * config.max_words_per_second))),
-    )
-    repetition_boundary = _repeated_phrase_boundary(words, config)
-    if repetition_boundary is not None:
-        limit = min(limit, repetition_boundary)
-    guarded = " ".join(words[:limit])
-    return guarded, guarded != text.strip()
+# Inference emits the model hypothesis without post-decoding text modification.
 
 
 class TransformersSpeechSeq2SeqBackend:
@@ -93,7 +54,9 @@ class TransformersSpeechSeq2SeqBackend:
         self.profile = profile
         self.model_path = Path(model_path)
         if not self.model_path.is_dir():
-            raise ProfileError(f"Transformers model directory not found: {self.model_path}")
+            raise ProfileError(
+                f"Transformers model directory not found: {self.model_path}"
+            )
 
         self.device = device or _select_device()
         dtype_argument, self._dtype_fallback = _loader_dtype(
@@ -140,14 +103,22 @@ class TransformersSpeechSeq2SeqBackend:
         self._chunks_generated = 0
         if profile.language:
             self._generation_kwargs.setdefault("language", profile.language)
+        self._generation_provenance = generation_provenance(
+            getattr(self.model, "generation_config", None),
+            requested_kwargs=profile.decoding.generation_kwargs,
+            call_kwargs=self._generation_kwargs,
+            conditional_overrides=(
+                {"long_form": {"return_timestamps": True}}
+                if profile.decoding.long_form is not None
+                else {}
+            ),
+        )
 
     def _split_audio(self, audio: np.ndarray) -> list[np.ndarray]:
         audio_config = self.profile.audio
         if audio_config is None:
             return [audio]
-        maximum_samples = max(
-            1, int(audio_config.maximum_seconds * self.sampling_rate)
-        )
+        maximum_samples = max(1, int(audio_config.maximum_seconds * self.sampling_rate))
         if len(audio) <= maximum_samples:
             return [audio]
         chunk_samples = max(1, int(audio_config.chunk_seconds * self.sampling_rate))
@@ -248,7 +219,7 @@ class TransformersSpeechSeq2SeqBackend:
                 )
                 decode_groups[is_long_form].append((index, chunks[0]))
 
-            guard = self.profile.decoding.hallucination_guard
+            # Decode and return the model hypothesis without text postprocessing.
             for long_form, group in decode_groups.items():
                 if not group:
                     continue
@@ -272,9 +243,7 @@ class TransformersSpeechSeq2SeqBackend:
                         )
                     continue
 
-                decoded_predictions.update(
-                    zip(group_indices, predictions)
-                )
+                decoded_predictions.update(zip(group_indices, predictions))
 
             for index, chunks in chunked_audio:
                 try:
@@ -293,27 +262,17 @@ class TransformersSpeechSeq2SeqBackend:
                         error=f"inference_failed: {exc}",
                     )
                     continue
-                decoded_predictions[index] = (
-                    " ".join(text for text in predictions if text).strip()
-                )
+                decoded_predictions[index] = " ".join(
+                    text for text in predictions if text
+                ).strip()
 
             for index in valid_indices:
                 if rows[index] is not None:
                     continue
-                prediction = decoded_predictions[index]
-                raw_prediction = prediction
-                adjusted = False
-                if guard is not None:
-                    prediction, adjusted = apply_hallucination_guard(
-                        prediction,
-                        duration=durations[index],
-                        config=guard,
-                    )
                 rows[index] = TranscriptionResult(
                     audio_filepath=str(audio_paths[index]),
                     duration=durations[index],
-                    pred_text=prediction,
-                    raw_pred_text=raw_prediction if adjusted else None,
+                    pred_text=decoded_predictions[index],
                 )
 
         if any(row is None for row in rows):
@@ -334,25 +293,20 @@ class TransformersSpeechSeq2SeqBackend:
             "effective_torch_dtype": self._effective_dtype,
             "dtype_fallback": self._dtype_fallback,
             "generation_kwargs": dict(self._generation_kwargs),
+            "generation": self._generation_provenance,
             "long_form": (
                 vars(self.profile.decoding.long_form)
                 if self.profile.decoding.long_form is not None
                 else None
             ),
             "chunking": (
-                vars(self.profile.audio)
-                if self.profile.audio is not None
-                else None
+                vars(self.profile.audio) if self.profile.audio is not None else None
             ),
             "chunking_stats": {
                 "long_audio_files": self._chunked_files,
                 "chunks_generated": self._chunks_generated,
             },
-            "hallucination_guard": (
-                vars(self.profile.decoding.hallucination_guard)
-                if self.profile.decoding.hallucination_guard is not None
-                else None
-            ),
+            "model_output_field": "pred_text",
         }
 
     def close(self) -> None:

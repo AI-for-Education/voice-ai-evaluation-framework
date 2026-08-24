@@ -158,6 +158,9 @@ def test_sherpa_modified_beam_passes_search_config_to_runtime(
     assert constructor_calls[0]["max_active_paths"] == 4
     assert backend.metadata()["decoding_strategy"] == "modified_beam_search"
     assert backend.metadata()["max_active_paths"] == 4
+    assert backend.metadata()["recognizer_call"]["arguments"][
+        "max_active_paths"
+    ] == 4
 
 
 def test_sherpa_cuda_wheel_selects_cuda_without_provider_introspection(

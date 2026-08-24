@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -36,25 +37,42 @@ class ReorderingBackend(FakeBackend):
         return list(reversed(super().transcribe_batch(audio_paths)))
 
 
-class PostprocessingBackend(FakeBackend):
+class CompletedStateBackend(FakeBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.processed = 0
+
     def transcribe_batch(self, audio_paths: Sequence[str]) -> list[TranscriptionResult]:
         rows = super().transcribe_batch(audio_paths)
-        first = rows[0]
-        if first.audio_filepath != "first.wav":
-            return rows
-        rows[0] = TranscriptionResult(
-            audio_filepath=first.audio_filepath,
-            duration=first.duration,
-            pred_text="one two",
-            raw_pred_text="one two three four",
-        )
+        self.processed += len(rows)
+        return rows
+
+    def metadata(self):
+        return {"framework": "fake", "device": "cpu", "processed": self.processed}
+
+
+class DiagnosticBackend(FakeBackend):
+    def transcribe_batch(self, audio_paths: Sequence[str]) -> list[TranscriptionResult]:
+        warnings.warn("mock recoverable decoder warning", RuntimeWarning)
+        rows = super().transcribe_batch(audio_paths)
+        if "second.wav" in audio_paths:
+            index = list(audio_paths).index("second.wav")
+            rows[index] = TranscriptionResult(
+                audio_filepath="second.wav",
+                duration=1.23456,
+                pred_text="",
+                error="mock audio decode failure",
+            )
         return rows
 
     def metadata(self):
         return {
             "framework": "fake",
             "device": "cpu",
-            "hallucination_guard": {"max_words_per_second": 8.0},
+            "provider": "MockExecutionProvider",
+            "processor_class": "MockProcessor",
+            "sampling_rate": 16000,
+            "backend_version": "mock-1.0",
         }
 
 
@@ -91,11 +109,22 @@ def _manifest(path: Path) -> None:
 def test_runner_preserves_schema_order_writes_metadata_and_reports_progress(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = tmp_path / "input.jsonl"
     output_root = tmp_path / "output"
     _manifest(manifest)
     backend = FakeBackend()
+    monkeypatch.setenv("PIPELINE_LAUNCH_ORCHESTRATOR", "docker_compose")
+    monkeypatch.setenv("PIPELINE_LAUNCHER", "run_transformers_inference.sh")
+    monkeypatch.setenv("PIPELINE_COMPOSE_SERVICE", "transformers-asr")
+    monkeypatch.setenv(
+        "PIPELINE_IMAGE_REFERENCE", "voice-ai-evaluation-framework-asr:latest"
+    )
+
+    with warnings.catch_warnings(record=True) as startup_warnings:
+        warnings.simplefilter("always")
+        warnings.warn("model initialization fallback", RuntimeWarning)
 
     output = run_backend(
         backend=backend,
@@ -106,9 +135,12 @@ def test_runner_preserves_schema_order_writes_metadata_and_reports_progress(
         audio_manifest=str(manifest),
         output_root=str(output_root),
         batch_size=2,
+        startup_warnings=startup_warnings,
     )
 
-    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    rows = [
+        json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()
+    ]
     assert [row["audio_filepath"] for row in rows] == [
         "first.wav",
         "second.wav",
@@ -121,8 +153,39 @@ def test_runner_preserves_schema_order_writes_metadata_and_reports_progress(
         r"runner-test_\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}_UTC",
         output.parent.name,
     )
-    metadata = json.loads((output.parent / "run_metadata.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (output.parent / "run_metadata.json").read_text(encoding="utf-8")
+    )
+    assert metadata["status"] == "completed"
+    assert metadata["provenance_schema_version"] == 1
+    assert metadata["pipeline_provenance"]["recording"]["mode"] == "run_time"
+    assert set(metadata["pipeline_provenance"]["stages"]) == {
+        "audio_preparation",
+        "inference",
+        "evaluation",
+    }
+    assert (
+        metadata["pipeline_provenance"]["stages"]["audio_preparation"]
+        ["input_audio"]["status"]
+        == "not_available"
+    )
     assert metadata["profile"]["id"] == "runner-test"
+    assert re.fullmatch(
+        r"[0-9a-f]{64}", metadata["profile_identity"]["canonical_content_sha256"]
+    )
+    assert metadata["runtime"]["batch_size"] == 2
+    assert metadata["runtime"]["launch_context"]["compose_service"] == (
+        "transformers-asr"
+    )
+    assert (
+        metadata["pipeline_provenance"]["stages"]["inference"]["runtime"]
+        ["observed"]["launch_context"]["launcher"]
+        == "run_transformers_inference.sh"
+    )
+    assert len(metadata["warnings"]) == 1
+    assert metadata["warnings"][0]["phase"] == "initialization"
+    assert metadata["warnings"][0]["category"] == "RuntimeWarning"
+    assert metadata["warnings"][0]["message"] == "model initialization fallback"
     assert metadata["profile"]["parameter_evidence"][0]["level"] == "exact"
     assert metadata["profile"]["parameter_evidence"][0]["applies_to"] == [
         "decoding.strategy"
@@ -152,14 +215,15 @@ def test_runner_preserves_schema_order_writes_metadata_and_reports_progress(
     ]
 
 
-def test_runner_summarizes_postprocessing_without_changing_transcript_handoff(
+def test_runner_captures_backend_metadata_after_all_batches(
     tmp_path: Path,
 ) -> None:
     manifest = tmp_path / "input.jsonl"
     _manifest(manifest)
+    backend = CompletedStateBackend()
 
     output = run_backend(
-        backend=PostprocessingBackend(),
+        backend=backend,
         profile=_profile(),
         profile_path="profile.yaml",
         model_path="model",
@@ -169,20 +233,76 @@ def test_runner_summarizes_postprocessing_without_changing_transcript_handoff(
         batch_size=2,
     )
 
-    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
-    assert rows[0]["raw_pred_text"] == "one two three four"
-    assert rows[0]["pred_text"] == "one two"
-    assert "postprocessing" not in rows[0]
+    rows = [
+        json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(rows) == 3
+    assert rows[0]["pred_text"] == "text:first.wav"
 
-    metadata = json.loads((output.parent / "run_metadata.json").read_text(encoding="utf-8"))
-    assert metadata["postprocessing"] == {
-        "stage": "post_decode_pre_evaluation",
-        "method": "hallucination_guard",
-        "scored_text_field": "pred_text",
-        "raw_text_field": "raw_pred_text",
-        "adjusted_results": 1,
-        "total_words_removed": 2,
+    metadata = json.loads(
+        (output.parent / "run_metadata.json").read_text(encoding="utf-8")
+    )
+    assert metadata["backend"]["processed"] == 3
+    assert "postprocessing" not in metadata
+
+
+def test_mock_smoke_run_locates_row_errors_warnings_and_runtime_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "input.jsonl"
+    _manifest(manifest)
+    monkeypatch.setenv("PIPELINE_LAUNCH_ORCHESTRATOR", "docker_compose")
+    monkeypatch.setenv("PIPELINE_LAUNCHER", "run_transformers_inference.sh")
+    monkeypatch.setenv("PIPELINE_COMPOSE_SERVICE", "transformers-asr")
+    monkeypatch.setenv(
+        "PIPELINE_IMAGE_REFERENCE", "voice-ai-evaluation-framework-asr:latest"
+    )
+    monkeypatch.setenv("PIPELINE_IMAGE_ID", "sha256:mock-image")
+    monkeypatch.setenv(
+        "PIPELINE_IMAGE_REPO_DIGESTS_JSON",
+        '["voice-ai-evaluation-framework-asr@sha256:mock-digest"]',
+    )
+
+    output = run_backend(
+        backend=DiagnosticBackend(),
+        profile=_profile(),
+        profile_path="profile.yaml",
+        model_path="model",
+        root_audio_dir=None,
+        audio_manifest=str(manifest),
+        output_root=str(tmp_path / "output"),
+        batch_size=2,
+        smoke_test=True,
+    )
+    rows = [
+        json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()
+    ]
+    metadata = json.loads(
+        (output.parent / "run_metadata.json").read_text(encoding="utf-8")
+    )
+
+    assert output.parent.parent == tmp_path / "output" / "smoke_tests" / "transcripts"
+    assert rows[1]["audio_filepath"] == "second.wav"
+    assert rows[1]["error"] == "mock audio decode failure"
+    assert metadata["output"]["errors"] == 1
+    assert metadata["warnings"][0]["phase"] == "transcription"
+    assert metadata["warnings"][0]["message"] == (
+        "mock recoverable decoder warning"
+    )
+    assert metadata["backend"]["provider"] == "MockExecutionProvider"
+    assert metadata["runtime"]["launch_context"]["image"] == {
+        "reference": "voice-ai-evaluation-framework-asr:latest",
+        "id": "sha256:mock-image",
+        "repo_digests": [
+            "voice-ai-evaluation-framework-asr@sha256:mock-digest"
+        ],
     }
+    inference = metadata["pipeline_provenance"]["stages"]["inference"]
+    assert inference["frontend"]["observed"]["processor_class"] == "MockProcessor"
+    assert inference["runtime"]["observed"]["launch_context"] == (
+        metadata["runtime"]["launch_context"]
+    )
 
 
 def test_standard_transcript_layout_supports_smoke_tests(tmp_path: Path) -> None:
@@ -202,9 +322,7 @@ def test_standard_transcript_layout_supports_smoke_tests(tmp_path: Path) -> None
     )
 
     assert normal == (
-        tmp_path
-        / "transcripts"
-        / "BookBot_orthographic_2026_08_12_13_14_15_UTC"
+        tmp_path / "transcripts" / "BookBot_orthographic_2026_08_12_13_14_15_UTC"
     )
     assert smoke == (
         tmp_path

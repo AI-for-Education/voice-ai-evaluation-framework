@@ -126,8 +126,8 @@ Sources: [OpenAI Whisper CLI](https://github.com/openai/whisper/blob/main/whispe
 [Transformers generation strategies](https://huggingface.co/docs/transformers/main_classes/text_generation),
 and [Microsoft Paza model card](https://huggingface.co/microsoft/paza-whisper-large-v3-turbo).
 
-All variants retain the same model-specific long-audio and hallucination
-safeguards as their baseline. Completed greedy and beam runs remain separately
+All variants retain the same model-specific input/output contract and long-audio
+routing as their baseline. Completed greedy and beam runs remain separately
 identified by profile ID and timestamp in the output tree.
 
 MMS and W2V-BERT remain greedy-only in the tracked structure. A fair CTC
@@ -143,33 +143,30 @@ automatically, so no custom run-directory naming or overwrite handling is
 needed.
 
 Do not rerun segmentation for this comparison. Reuse the fixed 7,617-segment
-manifest above, then run post-processing and evaluation independently for each
-new transcript directory. Never pass reference text, reading passages,
+manifest above, then evaluate each new transcript directory independently.
+Never pass reference text, reading passages,
 assessment vocabulary, or evaluation data as decoder hotwords. The packaged
-`alpha`, `beta`, unknown-word offset, and boundary setting are kept fixed; beam
-width 100 is an explicit starting setting and must not be tuned on held-out
-data.
+`alpha`, `beta`, unknown-word offset, and boundary setting are kept fixed.
+Beam width 100 and one-best output match the installed decoder defaults and are
+explicit in the profile to prevent version drift; they must not be tuned on
+held-out data.
 
-Use `--root_audio_dir` instead of `--audio_manifest` to discover segmented WAV
-files recursively. The default output is
+Use `--audio_manifest` with the fixed segment manifest so every comparison keeps
+the same input set and order. Reserve `--root_audio_dir` for ad hoc discovery
+when no ordered manifest exists. The default output is
 `input_output_data/output/transcripts/<profile-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/`. Pass
 `--smoke_test` to use
 `input_output_data/output/smoke_tests/transcripts/<profile-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/`.
 During inference the CLI shows a file progress bar and prints the resolved
 device, batch size, output directory, final result count and error count.
 
-## Model-specific safeguards
+## Model-specific decoding behaviour
 
 These models stay in the same Transformers folder, launcher, and CUDA image; the
 profiles select the differences that affect model input or decoding:
 
-- All three Whisper profile pairs limit implausible generation tails to at most eight
-  words per input second and stop after three consecutive copies of an exact
-  5–8-word phrase. When this changes a hypothesis, `pred_text` contains the
-  guarded inference result and `raw_pred_text` preserves the unadjusted model
-  output in the same JSONL row.
-  `run_metadata.json` summarizes how many rows were adjusted and how many words
-  were removed, and states explicitly that evaluation uses `pred_text`.
+- Every Whisper profile returns the direct decoded model hypothesis in
+  `pred_text`. No duration or repeated-phrase rule alters it after decoding.
 
 - Both Paza profiles retain the packaged empty suppression-token list instead
   of introducing locally selected language-token suppression.
@@ -185,30 +182,28 @@ profiles select the differences that affect model input or decoding:
   callers to segment long inputs and does not document long-form timestamps.
   The two Paza profiles instead segment overlength inputs into deterministic
   30-second, zero-overlap chunks in memory, decode each chunk with timestamps
-  disabled, join text in source order, and apply the existing hallucination
-  guard once to the reconstructed transcript.
+  disabled, and join text in source order.
 
 Every active value is stored in the YAML profile and copied to
-`run_metadata.json`. The optional post-processing summary is provenance only:
-none of these safeguards is implemented in evaluation, and its absence on a
-legacy run is valid.
+`run_metadata.json`, together with the effective generation configuration and
+the defaults supplied by the model or runtime.
 
 ## Profiles
 
 | Profile | Source checkpoint | Notes |
 | --- | --- | --- |
 | `bookbot-orthographic-ctc.yaml` | `bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm` | Orthographic; explicit plain processor preserves greedy no-KenLM behaviour. |
-| `bookbot-orthographic-ctc-5gram.yaml` | `bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm` | Orthographic; packaged 5-gram KenLM beam search with explicit beam width 100 and one persistent decoder worker. Requires `pyctcdecode==0.5.0` and `kenlm==0.3.0` from the current Dockerfile. |
+| `bookbot-orthographic-ctc-5gram.yaml` | `bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm` | Orthographic; packaged 5-gram KenLM beam search. Explicit beam width 100 and one-best output match the installed decoder defaults; one persistent worker is the deterministic project runtime choice. Requires `pyctcdecode==0.5.0` and `kenlm==0.3.0` from the current Dockerfile. |
 | `bookbot-phoneme-ctc.yaml` | `bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot` | Phoneme output; do not score directly as orthographic WER. |
 | `mms-1b-all-swh.yaml` | `facebook/mms-1b-all` | Selects and loads the `swh` language adapter. |
 | `w2v-bert-2.0-swahili-asr.yaml` | `badrex/w2v-bert-2.0-swahili-asr` | Automatic Wav2Vec2-BERT processor. |
 | `paza-whisper-large-v3-turbo-sw.yaml` | `microsoft/paza-whisper-large-v3-turbo` | Greedy (`num_beams: 1`); project-scoped 30-second sequential chunking above the owner-documented token limit. |
 | `paza-whisper-large-v3-turbo-sw-beam5.yaml` | `microsoft/paza-whisper-large-v3-turbo` | Beam-5 decoder with the same project-scoped sequential chunking policy. |
 | `whisper-large-sw.yaml` | `openai/whisper-large` | Greedy (`num_beams: 1`); deterministic short form through 30 seconds and native timestamp-based long form above 30 seconds. |
-| `whisper-large-sw-beam5.yaml` | `openai/whisper-large` | Beam-5 comparison structure; same input/output and safeguards; not yet run. |
+| `whisper-large-sw-beam5.yaml` | `openai/whisper-large` | Beam-5 comparison structure; same input/output and long-form routing; not yet run. |
 | `whisper-large-v2-sw.yaml` | `openai/whisper-large-v2` | Greedy (`num_beams: 1`); deterministic short form through 30 seconds and native timestamp-based long form above 30 seconds. |
-| `whisper-large-v2-sw-beam5.yaml` | `openai/whisper-large-v2` | Beam-5 comparison structure; same input/output and safeguards; not yet run. |
-| `hubert-large-ls960-ft-en.yaml` | `facebook/hubert-large-ls960-ft` | English-only benchmark checkpoint. |
+| `whisper-large-v2-sw-beam5.yaml` | `openai/whisper-large-v2` | Beam-5 comparison structure; same input/output and long-form routing; not yet run. |
+| `hubert-large-ls960-ft-en.yaml` | `facebook/hubert-large-ls960-ft` | English-only profile; the pinned artifact is not installed locally. |
 
 CUDA is selected automatically when available. Explicit half-precision profile
 settings fall back to float32 on CPU, and every effective device/dtype setting

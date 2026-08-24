@@ -12,6 +12,7 @@ import numpy as np
 
 from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
+from inference.onnxruntime.android_backend import verify_android_bundle
 from inference.onnxruntime.artifacts import (
     FP32_MODEL_NAME,
     INT8_MODEL_NAME,
@@ -71,10 +72,38 @@ class OnnxRuntimeCtcBackend:
                 self.model_path,
                 verify_hashes=verify_hashes,
             )
-        except ArtifactError as exc:
-            raise RuntimeError(f"Invalid Exp41 ONNX artifact bundle: {exc}") from exc
-        self.artifact_metadata = verified["metadata"]
-        self.vocab_size = int(verified["vocab_size"])
+        except ArtifactError as local_error:
+            try:
+                published = verify_android_bundle(self.model_path)
+            except RuntimeError as published_error:
+                raise RuntimeError(
+                    "Invalid Exp41 ONNX artifact bundle: "
+                    f"local export validation failed ({local_error}); "
+                    f"published Android validation failed ({published_error})"
+                ) from published_error
+            self.artifact_metadata = None
+            self.vocab_size = len(published["vocab"])
+            self._artifact_metadata_fields = {
+                "artifact_target": "packaged_android_reference",
+                "source_checkpoint_verified": False,
+                "selected_artifact": self.model_path.name,
+                "selected_artifact_sha256": published["model_sha256"],
+            }
+        else:
+            self.artifact_metadata = verified["metadata"]
+            self.vocab_size = int(verified["vocab_size"])
+            source = self.artifact_metadata["source_checkpoint"]
+            artifact_record = self.artifact_metadata["artifacts"][
+                self.model_path.name
+            ]
+            self._artifact_metadata_fields = {
+                "artifact_target": artifact_record["deployment_role"],
+                "same_trained_checkpoint": True,
+                "source_profile_id": source["profile_id"],
+                "source_checkpoint_sha256": source["sha256"],
+                "selected_artifact": self.model_path.name,
+                "selected_artifact_sha256": artifact_record["sha256"],
+            }
 
         try:
             import onnx_asr
@@ -91,6 +120,20 @@ class OnnxRuntimeCtcBackend:
         session_options = ort.SessionOptions()
         session_options.intra_op_num_threads = num_threads
         session_options.inter_op_num_threads = 1
+        self._model_load_call = {
+            "api": "onnx_asr.load_model",
+            "model_type": "nemo-conformer-ctc",
+            "quantization": self.quantization,
+            "providers": ["CPUExecutionProvider"],
+            "session_options": {
+                "intra_op_num_threads": num_threads,
+                "inter_op_num_threads": 1,
+            },
+            "preprocessor_config": {
+                "max_concurrent_workers": 1,
+                "use_numpy_preprocessors": True,
+            },
+        }
         try:
             self.recognizer = onnx_asr.load_model(
                 "nemo-conformer-ctc",
@@ -105,7 +148,7 @@ class OnnxRuntimeCtcBackend:
             )
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to load local Exp41 ONNX artifact {self.model_path}: {exc}"
+                f"Failed to load Exp41 ONNX artifact {self.model_path}: {exc}"
             ) from exc
 
     def _decode(self, waveforms: list[np.ndarray]) -> list[str]:
@@ -171,8 +214,6 @@ class OnnxRuntimeCtcBackend:
         return [row for row in rows if row is not None]
 
     def metadata(self) -> dict[str, Any]:
-        source = self.artifact_metadata["source_checkpoint"]
-        artifact_record = self.artifact_metadata["artifacts"][self.model_path.name]
         return {
             "framework": "onnxruntime",
             "adapter": "ctc",
@@ -181,18 +222,14 @@ class OnnxRuntimeCtcBackend:
             "execution_platform": "pc",
             "execution_architecture": platform.machine(),
             "mobile_hardware_emulated": False,
-            "artifact_target": artifact_record["deployment_role"],
-            "same_trained_checkpoint": True,
-            "source_profile_id": source["profile_id"],
-            "source_checkpoint_sha256": source["sha256"],
-            "selected_artifact": self.model_path.name,
-            "selected_artifact_sha256": artifact_record["sha256"],
+            **self._artifact_metadata_fields,
             "precision": self.precision,
             "quantization": self.quantization,
             "decoding_strategy": "greedy_ctc",
             "sample_rate": SAMPLE_RATE,
             "vocab_size_including_ctc_blank": self.vocab_size,
             "num_threads": self.num_threads,
+            "model_load_call": self._model_load_call,
             "segmentation": "reuses supplied framework audio paths; no re-segmentation",
             "onnx_asr_version": _distribution_version("onnx-asr"),
             "onnxruntime_version": _distribution_version(

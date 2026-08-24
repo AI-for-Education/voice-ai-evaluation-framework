@@ -29,6 +29,7 @@ _TOP_LEVEL_KEYS = {
     "hardware",
     "loader",
     "decoding",
+    "pipeline_contract",
     "parameter_evidence",
 }
 _LOADER_KEYS = {
@@ -43,15 +44,10 @@ _DECODING_KEYS = {
     "generation_kwargs",
     "ctc_lm_kwargs",
     "transducer_search_kwargs",
-    "hallucination_guard",
+    # Post-decoding text guards are intentionally unsupported.
     "long_form",
 }
-_HALLUCINATION_GUARD_KEYS = {
-    "max_words_per_second",
-    "repeated_phrase_min_words",
-    "repeated_phrase_max_words",
-    "repeated_phrase_repetitions",
-}
+# Model hypotheses are evaluated without text postprocessing.
 _LONG_FORM_KEYS = {
     "strategy",
     "threshold_seconds",
@@ -100,6 +96,19 @@ _PARAMETER_EVIDENCE_LEVELS = {
     "project",
     "unvalidated",
 }
+_PIPELINE_CONTRACT_KEYS = {
+    "schema_version",
+    "audio_preparation",
+    "inference",
+    "evaluation",
+    "runtime_resolution",
+}
+_PIPELINE_INFERENCE_KEYS = {
+    "artifact",
+    "frontend",
+    "runtime",
+    "chunking",
+}
 _ADAPTERS = {
     "multimodal": {"gemma4_audio", "phi4_audio", "qwen_omni_audio"},
     "nemo": {"nemo"},
@@ -138,12 +147,7 @@ class TransducerSearchConfig:
     max_active_paths: int
 
 
-@dataclass(frozen=True)
-class HallucinationGuardConfig:
-    max_words_per_second: float
-    repeated_phrase_min_words: int
-    repeated_phrase_max_words: int
-    repeated_phrase_repetitions: int
+# No post-decoding mutation config is exposed by model profiles.
 
 
 @dataclass(frozen=True)
@@ -158,9 +162,8 @@ class DecodingConfig:
     generation_kwargs: dict[str, Any] = field(default_factory=dict)
     ctc_lm_kwargs: CTCLMConfig | None = None
     transducer_search_kwargs: TransducerSearchConfig | None = None
-    hallucination_guard: HallucinationGuardConfig | None = None
+    # pred_text is always the direct backend hypothesis.
     long_form: WhisperLongFormConfig | None = None
-
 
 
 @dataclass(frozen=True)
@@ -170,6 +173,7 @@ class AudioConfig:
     chunk_seconds: float
     overlap_seconds: float = 0.0
 
+
 @dataclass(frozen=True)
 class HardwareConfig:
     memory_strategy: str
@@ -177,6 +181,7 @@ class HardwareConfig:
     gpu_max_memory_gib: float | None
     cpu_max_memory_gib: float | None
     output_mode: str
+
 
 @dataclass(frozen=True)
 class ParameterEvidence:
@@ -186,6 +191,21 @@ class ParameterEvidence:
     rationale: str
 
 
+@dataclass(frozen=True)
+class InferencePipelineContract:
+    artifact: str
+    frontend: str
+    runtime: str
+    chunking: str
+
+
+@dataclass(frozen=True)
+class PipelineContract:
+    schema_version: int
+    audio_preparation: str
+    inference: InferencePipelineContract
+    evaluation: str
+    runtime_resolution: str
 
 
 @dataclass(frozen=True)
@@ -205,7 +225,9 @@ class ModelProfile:
     loader: LoaderConfig
     decoding: DecodingConfig
 
+    pipeline_contract: PipelineContract | None = None
     parameter_evidence: tuple[ParameterEvidence, ...] = ()
+
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         if payload["loader"]["attention_implementation"] is None:
@@ -222,6 +244,8 @@ class ModelProfile:
                 }
                 for item in payload["parameter_evidence"]
             ]
+        if payload["pipeline_contract"] is None:
+            del payload["pipeline_contract"]
         if payload["decoding"]["ctc_lm_kwargs"] is None:
             # Keep existing greedy/seq2seq metadata stable; the dedicated LM
             # block appears only for the new beam-search profile instance.
@@ -239,8 +263,7 @@ class ModelProfile:
         if payload["hardware"] is None:
             del payload["hardware"]
 
-        if payload["decoding"]["hallucination_guard"] is None:
-            del payload["decoding"]["hallucination_guard"]
+        # No postprocessing field is serialized.
         if payload["decoding"]["long_form"] is None:
             del payload["decoding"]["long_form"]
         return payload
@@ -317,7 +340,9 @@ def _build_loader(
             "'wav2vec2_with_lm'"
         )
     if config.local_files_only is not True:
-        raise ProfileError("loader.local_files_only must remain true for offline inference")
+        raise ProfileError(
+            "loader.local_files_only must remain true for offline inference"
+        )
     if config.trust_remote_code and not allow_trusted_local_code:
         raise ProfileError(
             "loader.trust_remote_code may only be enabled for the bundled "
@@ -338,8 +363,6 @@ def _build_loader(
             "flash_attention_2, or null"
         )
     return config
-
-
 
 
 def _build_parameter_evidence(
@@ -410,18 +433,101 @@ def _build_parameter_evidence(
             )
         )
     return tuple(evidence)
+
+
+def _build_pipeline_contract(value: Any) -> PipelineContract | None:
+    if value is None:
+        return None
+    data = _require_mapping(value, "pipeline_contract")
+    _unknown_keys(data, _PIPELINE_CONTRACT_KEYS, "pipeline_contract")
+    missing = sorted(_PIPELINE_CONTRACT_KEYS - set(data))
+    if missing:
+        raise ProfileError(
+            "pipeline_contract is missing required key(s): " + ", ".join(missing)
+        )
+    if data["schema_version"] != 1:
+        raise ProfileError("pipeline_contract.schema_version must be 1")
+
+    audio_preparation = data["audio_preparation"]
+    evaluation = data["evaluation"]
+    runtime_resolution = data["runtime_resolution"]
+    for path, item in (
+        ("pipeline_contract.audio_preparation", audio_preparation),
+        ("pipeline_contract.evaluation", evaluation),
+        ("pipeline_contract.runtime_resolution", runtime_resolution),
+    ):
+        if not isinstance(item, str) or not item.strip():
+            raise ProfileError(f"{path} must be a non-empty contract reference")
+
+    inference_data = _require_mapping(
+        data["inference"], "pipeline_contract.inference"
+    )
+    _unknown_keys(
+        inference_data,
+        _PIPELINE_INFERENCE_KEYS,
+        "pipeline_contract.inference",
+    )
+    missing = sorted(_PIPELINE_INFERENCE_KEYS - set(inference_data))
+    if missing:
+        raise ProfileError(
+            "pipeline_contract.inference is missing required key(s): "
+            + ", ".join(missing)
+        )
+    normalized: dict[str, str] = {}
+    for key in sorted(_PIPELINE_INFERENCE_KEYS):
+        item = inference_data[key]
+        if not isinstance(item, str) or not item.strip():
+            raise ProfileError(
+                f"pipeline_contract.inference.{key} must be a non-empty "
+                "contract reference"
+            )
+        normalized[key] = item.strip()
+    contract = PipelineContract(
+        schema_version=1,
+        audio_preparation=audio_preparation.strip(),
+        inference=InferencePipelineContract(**normalized),
+        evaluation=evaluation.strip(),
+        runtime_resolution=runtime_resolution.strip(),
+    )
+    # Keep profile references fail-closed against the tracked registry while
+    # leaving the registry definitions out of each compact model YAML.
+    from inference.pipeline_provenance import resolve_contract_references
+
+    resolved = resolve_contract_references(asdict(contract))
+
+    resolved_inference = resolved["inference"]
+    resolved_sections = [
+        resolved["audio_preparation"],
+        resolved_inference["artifact"],
+        resolved_inference["frontend"],
+        resolved_inference["runtime"],
+        resolved_inference["chunking"],
+        resolved["evaluation"],
+        resolved["runtime_resolution"],
+    ]
+    if any(
+        isinstance(section, dict) and section.get("status") == "not_available"
+        for section in resolved_sections
+    ):
+        raise ProfileError(
+            "pipeline_contract contains a reference missing from "
+            "inference/pipeline_contracts.json"
+        )
+    return contract
+
+
 def _validate_generation_kwargs(generation_kwargs: dict[str, Any]) -> None:
     for key in ("max_new_tokens", "num_beams"):
         if key in generation_kwargs and (
             type(generation_kwargs[key]) is not int or generation_kwargs[key] < 1
         ):
-            raise ProfileError(f"decoding.generation_kwargs.{key} must be a positive integer")
+            raise ProfileError(
+                f"decoding.generation_kwargs.{key} must be a positive integer"
+            )
 
     for key in ("do_sample", "early_stopping"):
         if key in generation_kwargs and type(generation_kwargs[key]) is not bool:
-            raise ProfileError(
-                f"decoding.generation_kwargs.{key} must be a boolean"
-            )
+            raise ProfileError(f"decoding.generation_kwargs.{key} must be a boolean")
 
     if "length_penalty" in generation_kwargs:
         value = generation_kwargs["length_penalty"]
@@ -449,55 +555,7 @@ def _validate_generation_kwargs(generation_kwargs: dict[str, Any]) -> None:
         )
 
 
-
-def _build_hallucination_guard(
-    data: dict[str, Any],
-) -> HallucinationGuardConfig:
-    _unknown_keys(data, _HALLUCINATION_GUARD_KEYS, "hallucination_guard")
-    required = set(_HALLUCINATION_GUARD_KEYS)
-    missing = sorted(required - set(data))
-    if missing:
-        raise ProfileError(
-            "decoding.hallucination_guard is missing required key(s): "
-            + ", ".join(missing)
-        )
-
-    max_wps = data["max_words_per_second"]
-    if type(max_wps) not in {int, float} or not math.isfinite(float(max_wps)):
-        raise ProfileError(
-            "decoding.hallucination_guard.max_words_per_second must be a finite number"
-        )
-    if float(max_wps) <= 0:
-        raise ProfileError(
-            "decoding.hallucination_guard.max_words_per_second must be greater than zero"
-        )
-
-    integer_keys = (
-        "repeated_phrase_min_words",
-        "repeated_phrase_max_words",
-        "repeated_phrase_repetitions",
-    )
-    for key in integer_keys:
-        if type(data[key]) is not int or data[key] < 1:
-            raise ProfileError(
-                f"decoding.hallucination_guard.{key} must be a positive integer"
-            )
-    if data["repeated_phrase_max_words"] < data["repeated_phrase_min_words"]:
-        raise ProfileError(
-            "decoding.hallucination_guard.repeated_phrase_max_words cannot be "
-            "less than repeated_phrase_min_words"
-        )
-    if data["repeated_phrase_repetitions"] < 2:
-        raise ProfileError(
-            "decoding.hallucination_guard.repeated_phrase_repetitions must be at least 2"
-        )
-
-    return HallucinationGuardConfig(
-        max_words_per_second=float(max_wps),
-        repeated_phrase_min_words=data["repeated_phrase_min_words"],
-        repeated_phrase_max_words=data["repeated_phrase_max_words"],
-        repeated_phrase_repetitions=data["repeated_phrase_repetitions"],
-    )
+# Profiles reject any post-decoding text mutation setting as an unknown key.
 
 
 def _build_whisper_long_form(data: dict[str, Any]) -> WhisperLongFormConfig:
@@ -542,8 +600,7 @@ def _build_ctc_lm_kwargs(data: dict[str, Any]) -> CTCLMConfig:
     missing = sorted(required - set(data))
     if missing:
         raise ProfileError(
-            "decoding.ctc_lm_kwargs is missing required key(s): "
-            + ", ".join(missing)
+            "decoding.ctc_lm_kwargs is missing required key(s): " + ", ".join(missing)
         )
 
     for key in ("beam_width", "n_best"):
@@ -562,14 +619,10 @@ def _build_ctc_lm_kwargs(data: dict[str, Any]) -> CTCLMConfig:
     for key in ("alpha", "beta", "unk_score_offset"):
         value = data[key]
         if type(value) not in {int, float} or not math.isfinite(float(value)):
-            raise ProfileError(
-                f"decoding.ctc_lm_kwargs.{key} must be a finite number"
-            )
+            raise ProfileError(f"decoding.ctc_lm_kwargs.{key} must be a finite number")
 
     if type(data["lm_score_boundary"]) is not bool:
-        raise ProfileError(
-            "decoding.ctc_lm_kwargs.lm_score_boundary must be a boolean"
-        )
+        raise ProfileError("decoding.ctc_lm_kwargs.lm_score_boundary must be a boolean")
 
     return CTCLMConfig(
         beam_width=data["beam_width"],
@@ -674,8 +727,7 @@ def _build_hardware(data: dict[str, Any]) -> HardwareConfig:
     if numeric["minimum_gpu_memory_gib"] is None:
         raise ProfileError("hardware.minimum_gpu_memory_gib is required")
     if memory_strategy == "cpu_disk_offload" and (
-        numeric["gpu_max_memory_gib"] is None
-        or numeric["cpu_max_memory_gib"] is None
+        numeric["gpu_max_memory_gib"] is None or numeric["cpu_max_memory_gib"] is None
     ):
         raise ProfileError(
             "cpu_disk_offload requires hardware.gpu_max_memory_gib and "
@@ -697,11 +749,15 @@ def _build_hardware(data: dict[str, Any]) -> HardwareConfig:
     )
 
 
-def _build_decoding(data: dict[str, Any], framework: str, adapter: str) -> DecodingConfig:
+def _build_decoding(
+    data: dict[str, Any], framework: str, adapter: str
+) -> DecodingConfig:
     _unknown_keys(data, _DECODING_KEYS, "decoding")
     if "strategy" not in data:
         raise ProfileError("decoding.strategy is required")
-    generation_kwargs = _require_mapping(data.get("generation_kwargs"), "generation_kwargs")
+    generation_kwargs = _require_mapping(
+        data.get("generation_kwargs"), "generation_kwargs"
+    )
     _unknown_keys(generation_kwargs, _GENERATION_KEYS, "generation_kwargs")
     if not isinstance(data["strategy"], str) or not data["strategy"].strip():
         raise ProfileError("decoding.strategy must be a non-empty string")
@@ -720,11 +776,7 @@ def _build_decoding(data: dict[str, Any], framework: str, adapter: str) -> Decod
                 "transducer_search_kwargs",
             )
         )
-    hallucination_guard = None
-    if "hallucination_guard" in data:
-        hallucination_guard = _build_hallucination_guard(
-            _require_mapping(data["hallucination_guard"], "hallucination_guard")
-        )
+    # No post-decoding mutation settings are accepted.
     long_form = None
     if "long_form" in data:
         long_form = _build_whisper_long_form(
@@ -750,12 +802,16 @@ def _build_decoding(data: dict[str, Any], framework: str, adapter: str) -> Decod
             f"decoding.strategy '{strategy}' is invalid for {framework}/{adapter}; "
             f"expected one of: {', '.join(sorted(expected))}"
         )
-    if adapter not in {
-        "speech_seq2seq",
-        "gemma4_audio",
-        "phi4_audio",
-        "qwen_omni_audio",
-    } and generation_kwargs:
+    if (
+        adapter
+        not in {
+            "speech_seq2seq",
+            "gemma4_audio",
+            "phi4_audio",
+            "qwen_omni_audio",
+        }
+        and generation_kwargs
+    ):
         raise ProfileError(
             "decoding.generation_kwargs is only valid for generative adapters"
         )
@@ -777,13 +833,7 @@ def _build_decoding(data: dict[str, Any], framework: str, adapter: str) -> Decod
             "decoding.transducer_search_kwargs is only valid for "
             "modified_beam_search decoding"
         )
-    if hallucination_guard is not None and (
-        framework,
-        adapter,
-    ) != ("transformers", "speech_seq2seq"):
-        raise ProfileError(
-            "decoding.hallucination_guard is only valid for transformers/speech_seq2seq"
-        )
+    # Decoder output is returned directly for every framework.
     if long_form is not None and (
         framework,
         adapter,
@@ -800,7 +850,7 @@ def _build_decoding(data: dict[str, Any], framework: str, adapter: str) -> Decod
         generation_kwargs=dict(generation_kwargs),
         ctc_lm_kwargs=ctc_lm_kwargs,
         transducer_search_kwargs=transducer_search_kwargs,
-        hallucination_guard=hallucination_guard,
+        # No post-decoding mutation configuration.
         long_form=long_form,
     )
 
@@ -820,7 +870,9 @@ def parse_profile(data: Any) -> ModelProfile:
     if framework not in _ADAPTERS:
         raise ProfileError(f"Unsupported framework: {framework}")
     if adapter not in _ADAPTERS[framework]:
-        raise ProfileError(f"Unsupported adapter '{adapter}' for framework '{framework}'")
+        raise ProfileError(
+            f"Unsupported adapter '{adapter}' for framework '{framework}'"
+        )
 
     task_value = data.get("task", "transcribe")
     if not isinstance(task_value, str):
@@ -847,7 +899,6 @@ def parse_profile(data: Any) -> ModelProfile:
         raise ProfileError(
             "output_notation and output_inventory are only valid for phoneme output"
         )
-
 
     loader = _build_loader(
         _require_mapping(data.get("loader"), "loader"),
@@ -928,10 +979,12 @@ def parse_profile(data: Any) -> ModelProfile:
         raise ProfileError(
             "audio chunking and decoding.long_form cannot be enabled together"
         )
-    if decoding.strategy == "beam_search" and loader.processor_mode != "wav2vec2_with_lm":
+    if (
+        decoding.strategy == "beam_search"
+        and loader.processor_mode != "wav2vec2_with_lm"
+    ):
         raise ProfileError(
-            "CTC beam_search decoding requires loader.processor_mode "
-            "'wav2vec2_with_lm'"
+            "CTC beam_search decoding requires loader.processor_mode 'wav2vec2_with_lm'"
         )
     if (
         loader.processor_mode == "wav2vec2_with_lm"
@@ -948,6 +1001,7 @@ def parse_profile(data: Any) -> ModelProfile:
         data.get("parameter_evidence"),
         profile_data=data,
     )
+    pipeline_contract = _build_pipeline_contract(data.get("pipeline_contract"))
 
     return ModelProfile(
         id=data["id"].strip(),
@@ -964,11 +1018,14 @@ def parse_profile(data: Any) -> ModelProfile:
         hardware=hardware,
         loader=loader,
         decoding=decoding,
+        pipeline_contract=pipeline_contract,
         parameter_evidence=parameter_evidence,
     )
 
 
-def load_profile(path: str | Path, *, expected_framework: str | None = None) -> ModelProfile:
+def load_profile(
+    path: str | Path, *, expected_framework: str | None = None
+) -> ModelProfile:
     """Load and validate one tracked YAML model profile."""
     if yaml is None:
         raise ProfileError("PyYAML is required to load --model_config profiles")
@@ -1004,13 +1061,19 @@ def resolve_model_path(
     require_exists: bool = True,
 ) -> Path:
     """Resolve a profile artifact below its framework model root."""
-    root = Path(model_root) if model_root is not None else default_model_root(profile.framework)
+    root = (
+        Path(model_root)
+        if model_root is not None
+        else default_model_root(profile.framework)
+    )
     root = root.resolve()
     candidate = (root / profile.artifact).resolve()
     try:
         candidate.relative_to(root)
     except ValueError as exc:
-        raise ProfileError(f"Model artifact escaped its model root: {profile.artifact}") from exc
+        raise ProfileError(
+            f"Model artifact escaped its model root: {profile.artifact}"
+        ) from exc
     if require_exists and not candidate.exists():
         raise ProfileError(
             f"Model artifact not found for profile '{profile.id}': {candidate}"

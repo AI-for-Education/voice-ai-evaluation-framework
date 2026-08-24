@@ -11,6 +11,16 @@ artifact: paza-whisper-large-v3-turbo
 language: sw
 task: transcribe
 output_units: orthographic
+pipeline_contract:
+  schema_version: 1
+  audio_preparation: shared_soundfile_librosa_16khz
+  inference:
+    artifact: canonical_checkpoint
+    frontend: canonical_transformers_auto_processor
+    runtime: shared_transformers_image
+    chunking: profile_sequential_zero_overlap
+  evaluation: direct_pred_text_by_output_units
+  runtime_resolution: observed_effective_values_v1
 loader:
   processor_mode: auto
   local_files_only: true
@@ -25,11 +35,7 @@ decoding:
     length_penalty: 0.8
     return_timestamps: false
     suppress_tokens: []
-  hallucination_guard:
-    max_words_per_second: 8.0
-    repeated_phrase_min_words: 5
-    repeated_phrase_max_words: 8
-    repeated_phrase_repetitions: 3
+  # pred_text is the direct model hypothesis; no text postprocessing is applied.
 audio:
   maximum_seconds: 30
   long_audio_strategy: sequential_chunks
@@ -52,14 +58,7 @@ parameter_evidence:
     level: exact
     source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo/blob/main/generation_config.json
     rationale: The packaged generation configuration sets an empty suppression list and disables timestamp output.
-  - applies_to:
-      - decoding.hallucination_guard.max_words_per_second
-      - decoding.hallucination_guard.repeated_phrase_min_words
-      - decoding.hallucination_guard.repeated_phrase_max_words
-      - decoding.hallucination_guard.repeated_phrase_repetitions
-    level: unvalidated
-    source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo
-    rationale: The owner supports duration and repetition guards but requires per-language validation; the local 8 WPS and three-repeat thresholds are not calibrated.
+  # The evaluation uses the direct model hypothesis without a post-decoding guard.
   - applies_to:
       - audio.maximum_seconds
       - audio.long_audio_strategy

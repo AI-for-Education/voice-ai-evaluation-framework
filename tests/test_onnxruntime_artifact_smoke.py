@@ -10,13 +10,15 @@ from inference.profile import load_profile, resolve_model_path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_ARTIFACT_SMOKE = os.environ.get("RUN_ASR_ARTIFACT_SMOKE") == "1"
+pytestmark = [
+    pytest.mark.artifact,
+    pytest.mark.skipif(
+        not RUN_ARTIFACT_SMOKE,
+        reason="set RUN_ASR_ARTIFACT_SMOKE=1 to load local model weights",
+    ),
+]
 
 
-@pytest.mark.artifact
-@pytest.mark.skipif(
-    not RUN_ARTIFACT_SMOKE,
-    reason="set RUN_ASR_ARTIFACT_SMOKE=1 to load local model weights",
-)
 @pytest.mark.parametrize(
     ("profile_name", "precision"),
     [

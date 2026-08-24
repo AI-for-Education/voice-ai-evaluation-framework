@@ -83,6 +83,42 @@ def _write_ipa_view(dataset: Path, inventory: str) -> None:
     )
 
 
+def _load_resolve_outputs(monkeypatch: pytest.MonkeyPatch):
+    """Import the output resolver without loading the full evaluation stack."""
+    evaluate_stub = types.ModuleType("egra_eval2.evaluate")
+    evaluate_stub.aggregate_row_scores = lambda *args, **kwargs: {}
+    evaluate_stub.evaluate_rows = lambda value: value
+    monkeypatch.setitem(sys.modules, "egra_eval2.evaluate", evaluate_stub)
+    sys.modules.pop("eval_pipeline2", None)
+
+    from eval_pipeline2 import resolve_outputs
+
+    return resolve_outputs
+
+
+def _evaluation_args(
+    run_root: Path,
+    *,
+    scoring_representation: str,
+    derive_output_root: bool = False,
+    out_csv: Path | None = None,
+) -> SimpleNamespace:
+    """Build the common CLI-shaped namespace used by output-routing tests."""
+    manifest_name = "ref_manifest.clean.jsonl" if derive_output_root else "clean.jsonl"
+    return SimpleNamespace(
+        output_root=None if derive_output_root else str(run_root),
+        manifest_in=str(run_root / "manifests" / manifest_name),
+        scoring_representation=scoring_representation,
+        out_csv=str(out_csv) if out_csv is not None else None,
+        summary_can_ref_dir=None,
+        summary_can_hyp_dir=None,
+        summary_ref_hyp_dir=None,
+    )
+
+
+# Reference and hypothesis representation routing
+
+
 def test_orthographic_profile_keeps_existing_manifest_text(tmp_path: Path) -> None:
     dataset, manifest = _paths(tmp_path, {"output_units": "orthographic"})
     source = _manifest_df()
@@ -175,6 +211,9 @@ def test_phoneme_profile_uses_matching_ipa_reference(tmp_path: Path) -> None:
     ]
 
 
+# Native phoneme inventory alignment
+
+
 def test_reviewed_bookbot_ipa_inventory_mapping() -> None:
     assert BOOKBOT_GRUUT_TO_AFRICA_G2P.status == "approved"
     assert not BOOKBOT_GRUUT_TO_AFRICA_G2P.unresolved
@@ -217,6 +256,9 @@ def test_matching_inventory_normalizes_missing_hypothesis() -> None:
 
 def test_shared_normalizer_preserves_ipa_combining_marks() -> None:
     assert text_normalize("t\u0361ʃ ə\u0303!") == "t\u0361ʃ ə\u0303"
+
+
+# Manifest and completed-run metadata requirements
 
 
 def test_standard_evaluation_manifest_requires_run_metadata(tmp_path: Path) -> None:
@@ -296,27 +338,20 @@ def test_phoneme_manifest_requires_audio_and_hypothesis_columns(
             logger=logging.getLogger("test_scoring_text"),
         )
 
+# Representation-specific output routing
+
+
 def test_explicit_ipa_evaluation_uses_separate_output_folder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    evaluate_stub = types.ModuleType("egra_eval2.evaluate")
-    evaluate_stub.aggregate_row_scores = lambda *args, **kwargs: {}
-    evaluate_stub.evaluate_rows = lambda value: value
-    monkeypatch.setitem(sys.modules, "egra_eval2.evaluate", evaluate_stub)
-    sys.modules.pop("eval_pipeline2", None)
-    from eval_pipeline2 import resolve_outputs
+    resolve_outputs = _load_resolve_outputs(monkeypatch)
 
     run_root = tmp_path / "output" / "evaluations" / "model_run"
-    manifest = run_root / "manifests" / "ref_manifest.clean.jsonl"
-    args = SimpleNamespace(
-        output_root=None,
-        manifest_in=str(manifest),
+    args = _evaluation_args(
+        run_root,
         scoring_representation="ipa",
-        out_csv=None,
-        summary_can_ref_dir=None,
-        summary_can_hyp_dir=None,
-        summary_ref_hyp_dir=None,
+        derive_output_root=True,
     )
 
     outputs = resolve_outputs(args, logging.getLogger("test_scoring_text"))
@@ -385,22 +420,12 @@ def test_evaluation_outputs_are_namespaced_by_representation(
     units: str,
     folder: str,
 ) -> None:
-    evaluate_stub = types.ModuleType("egra_eval2.evaluate")
-    evaluate_stub.aggregate_row_scores = lambda *args, **kwargs: {}
-    evaluate_stub.evaluate_rows = lambda value: value
-    monkeypatch.setitem(sys.modules, "egra_eval2.evaluate", evaluate_stub)
-    sys.modules.pop("eval_pipeline2", None)
-    from eval_pipeline2 import resolve_outputs
+    resolve_outputs = _load_resolve_outputs(monkeypatch)
 
     run_root = tmp_path / "output" / "evaluations" / "model_run"
-    args = SimpleNamespace(
-        output_root=str(run_root),
-        manifest_in=str(run_root / "manifests" / "clean.jsonl"),
+    args = _evaluation_args(
+        run_root,
         scoring_representation=requested,
-        out_csv=None,
-        summary_can_ref_dir=None,
-        summary_can_hyp_dir=None,
-        summary_ref_hyp_dir=None,
     )
 
     outputs = resolve_outputs(
@@ -416,22 +441,13 @@ def test_evaluation_rejects_custom_output_outside_representation_folder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    evaluate_stub = types.ModuleType("egra_eval2.evaluate")
-    evaluate_stub.aggregate_row_scores = lambda *args, **kwargs: {}
-    evaluate_stub.evaluate_rows = lambda value: value
-    monkeypatch.setitem(sys.modules, "egra_eval2.evaluate", evaluate_stub)
-    sys.modules.pop("eval_pipeline2", None)
-    from eval_pipeline2 import resolve_outputs
+    resolve_outputs = _load_resolve_outputs(monkeypatch)
 
     run_root = tmp_path / "output" / "evaluations" / "model_run"
-    args = SimpleNamespace(
-        output_root=str(run_root),
-        manifest_in=str(run_root / "manifests" / "clean.jsonl"),
+    args = _evaluation_args(
+        run_root,
         scoring_representation="orthographic",
-        out_csv=str(run_root / "egra_eval_detailed.csv"),
-        summary_can_ref_dir=None,
-        summary_can_hyp_dir=None,
-        summary_ref_hyp_dir=None,
+        out_csv=run_root / "egra_eval_detailed.csv",
     )
 
     with pytest.raises(SystemExit, match="representation output directory"):

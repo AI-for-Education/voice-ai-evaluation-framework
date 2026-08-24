@@ -27,6 +27,7 @@ from inference.multimodal.adapters.common import (
     torch_dtype_from_profile,
 )
 from inference.profile import ModelProfile, ProfileError
+from inference.provenance import generation_provenance
 
 
 def _local_auto_map(value: Any) -> Any:
@@ -43,7 +44,10 @@ def _prepare_processor_snapshot(model_path: Path, destination: Path) -> Path:
     for source in model_path.iterdir():
         if not source.is_file():
             continue
-        if source.suffix == ".safetensors" or source.name == "model.safetensors.index.json":
+        if (
+            source.suffix == ".safetensors"
+            or source.name == "model.safetensors.index.json"
+        ):
             continue
         if source.name in {".gitattributes", "README.md"}:
             continue
@@ -92,7 +96,9 @@ class Phi4AudioBackend:
         self.processor = None
         self._runtime_dir: Path | None = None
         if not self.model_path.is_dir():
-            raise ProfileError(f"Multimodal model directory not found: {self.model_path}")
+            raise ProfileError(
+                f"Multimodal model directory not found: {self.model_path}"
+            )
 
         self.device = device or torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -132,9 +138,7 @@ class Phi4AudioBackend:
             "trust_remote_code": profile.loader.trust_remote_code,
         }
         model_dtype = torch_dtype_from_profile(profile.loader.torch_dtype)
-        attention_implementation = (
-            profile.loader.attention_implementation or "sdpa"
-        )
+        attention_implementation = profile.loader.attention_implementation or "sdpa"
         try:
             self.processor = AutoProcessor.from_pretrained(
                 str(processor_path),
@@ -175,6 +179,11 @@ class Phi4AudioBackend:
             f"<|user|><|audio_1|>{profile.prompt}<|end|><|assistant|>"
         )
         self._generation_kwargs = dict(profile.decoding.generation_kwargs)
+        self._generation_provenance = generation_provenance(
+            self.generation_config,
+            requested_kwargs=profile.decoding.generation_kwargs,
+            call_kwargs=self._generation_kwargs,
+        )
         self._metadata: dict[str, Any] = {
             "framework": "multimodal",
             "adapter": "phi4_audio",
@@ -199,6 +208,8 @@ class Phi4AudioBackend:
                 "output_mode": profile.hardware.output_mode,
             },
             "generation_kwargs": dict(self._generation_kwargs),
+            "generation": self._generation_provenance,
+            "rendered_prompt": self._rendered_prompt,
             "prompt": profile.prompt,
             "long_audio": {
                 "strategy": profile.audio.long_audio_strategy,

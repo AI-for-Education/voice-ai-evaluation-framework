@@ -122,7 +122,9 @@ def verify_android_bundle(model_path: str | Path) -> dict[str, Any]:
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Android-parity config is unreadable: {config_path}") from exc
+        raise RuntimeError(
+            f"Android-parity config is unreadable: {config_path}"
+        ) from exc
     if config != _EXPECTED_CONFIG:
         raise RuntimeError(
             f"Android-parity config mismatch: expected {_EXPECTED_CONFIG}, got {config}"
@@ -155,7 +157,10 @@ def verify_android_bundle(model_path: str | Path) -> dict[str, Any]:
         raise RuntimeError("Android ONNX graph must expose exactly one logits output")
     output_type = graph.graph.output[0].type.tensor_type
     output_dims = output_type.shape.dim
-    if output_type.elem_type != TensorProto.FLOAT or output_dims[-1].dim_value != VOCAB_SIZE:
+    if (
+        output_type.elem_type != TensorProto.FLOAT
+        or output_dims[-1].dim_value != VOCAB_SIZE
+    ):
         raise RuntimeError(f"Android ONNX output must end in {VOCAB_SIZE} float logits")
 
     op_counts = Counter(node.op_type for node in graph.graph.node)
@@ -193,9 +198,9 @@ def linear_resample(
     left = np.clip(positions.astype(np.int64), 0, samples.size - 1)
     right = np.minimum(left + 1, samples.size - 1)
     alpha = (positions - left).astype(np.float32)
-    return (
-        samples[left] * (np.float32(1.0) - alpha) + samples[right] * alpha
-    ).astype(np.float32, copy=False)
+    return (samples[left] * (np.float32(1.0) - alpha) + samples[right] * alpha).astype(
+        np.float32, copy=False
+    )
 
 
 def _create_android_mel_filterbank() -> np.ndarray:
@@ -227,12 +232,12 @@ def _create_android_mel_filterbank() -> np.ndarray:
         center = max(int(bin_points[mel_index]), left + 1)
         right = max(int(bin_points[mel_index + 1]), center + 1)
         for frequency_index in range(left, min(center, FFT_BINS)):
-            filters[mel_index - 1, frequency_index] = (
-                (frequency_index - left) / (center - left)
+            filters[mel_index - 1, frequency_index] = (frequency_index - left) / (
+                center - left
             )
         for frequency_index in range(center, min(right, FFT_BINS)):
-            filters[mel_index - 1, frequency_index] = (
-                (right - frequency_index) / (right - center)
+            filters[mel_index - 1, frequency_index] = (right - frequency_index) / (
+                right - center
             )
         norm = np.float32(
             2.0 / max(float(hz_points[mel_index + 1] - hz_points[mel_index - 1]), 1e-10)
@@ -278,12 +283,10 @@ def _create_android_fft_tables() -> tuple[
             cosines[index] = current_cos
             sines[index] = current_sin
             next_cos = np.float32(
-                np.float32(current_cos * step_cos)
-                - np.float32(current_sin * step_sin)
+                np.float32(current_cos * step_cos) - np.float32(current_sin * step_sin)
             )
             next_sin = np.float32(
-                np.float32(current_cos * step_sin)
-                + np.float32(current_sin * step_cos)
+                np.float32(current_cos * step_sin) + np.float32(current_sin * step_cos)
             )
             current_cos = next_cos
             current_sin = next_sin
@@ -353,11 +356,7 @@ def _android_fft_power(frames: np.ndarray) -> np.ndarray:
 
 _HANN_WINDOW = np.asarray(
     [
-        np.float32(
-            0.5
-            - 0.5
-            * math.cos(2.0 * math.pi * index / (WINDOW_SIZE - 1))
-        )
+        np.float32(0.5 - 0.5 * math.cos(2.0 * math.pi * index / (WINDOW_SIZE - 1)))
         for index in range(WINDOW_SIZE)
     ],
     dtype=np.float32,
@@ -411,9 +410,7 @@ def extract_android_features(samples: np.ndarray) -> np.ndarray:
             np.cumsum(squared_differences, dtype=np.float32)[-1]
             / np.float32(values.size)
         )
-        std = np.float32(
-            max(np.float32(math.sqrt(float(variance))), np.float32(1e-5))
-        )
+        std = np.float32(max(np.float32(math.sqrt(float(variance))), np.float32(1e-5)))
         features[mel_index] = np.asarray(differences / std, dtype=np.float32)
     return np.ascontiguousarray(features, dtype=np.float32)
 
@@ -433,9 +430,11 @@ def decode_android_greedy(
         if best_id != previous and best_id != blank_id:
             token_ids.append(int(best_id))
         previous = int(best_id)
-    return "".join(id_to_token.get(token_id, "") for token_id in token_ids).replace(
-        "▁", " "
-    ).strip()
+    return (
+        "".join(id_to_token.get(token_id, "") for token_id in token_ids)
+        .replace("▁", " ")
+        .strip()
+    )
 
 
 def _load_android_wav(path: str) -> tuple[np.ndarray, int, float]:
@@ -461,6 +460,7 @@ class AndroidParityCtcBackend:
         model_path: str | Path,
         *,
         num_threads: int = 1,
+        expected_ort_version: str | None = EXPECTED_ORT_VERSION,
     ) -> None:
         if profile.framework != "onnxruntime" or profile.adapter != "android_ctc":
             raise ProfileError(
@@ -480,14 +480,14 @@ class AndroidParityCtcBackend:
         try:
             import onnxruntime as ort
         except ModuleNotFoundError as exc:
+            raise RuntimeError("Android frontend inference requires ONNX Runtime") from exc
+        if expected_ort_version is not None and ort.__version__ != expected_ort_version:
             raise RuntimeError(
-                "Android parity requires the dedicated ONNX Runtime 1.22.0 image"
-            ) from exc
-        if ort.__version__ != EXPECTED_ORT_VERSION:
-            raise RuntimeError(
-                "Android parity requires onnxruntime==1.22.0, "
-                f"found {ort.__version__}"
+                "Android parity requires "
+                f"onnxruntime=={expected_ort_version}, found {ort.__version__}"
             )
+        self.expected_ort_version = expected_ort_version
+        self.onnxruntime_version = ort.__version__
         options = ort.SessionOptions()
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
@@ -551,7 +551,14 @@ class AndroidParityCtcBackend:
         ]
 
     def metadata(self) -> dict[str, Any]:
-        return {
+        expected_ort_version = getattr(
+            self, "expected_ort_version", EXPECTED_ORT_VERSION
+        )
+        onnxruntime_version = getattr(
+            self, "onnxruntime_version", expected_ort_version
+        )
+        controlled_frontend = expected_ort_version is None
+        metadata = {
             "framework": "onnxruntime",
             "adapter": "android_ctc",
             "device": "cpu",
@@ -559,6 +566,12 @@ class AndroidParityCtcBackend:
             "execution_platform": "pc",
             "execution_architecture": platform.machine(),
             "mobile_hardware_emulated": False,
+            "physical_device_validated": False,
+            "validation_scope": (
+                "pc_controlled_android_frontend"
+                if controlled_frontend
+                else "pc_executed_android_behavior_accuracy_proxy"
+            ),
             "artifact_target": "packaged_android_reference",
             "selected_artifact": self.model_path.name,
             "selected_artifact_sha256": self.verified["model_sha256"],
@@ -574,15 +587,24 @@ class AndroidParityCtcBackend:
             "features_size": FEATURE_DIM,
             "batch_size_required": 1,
             "num_threads": 1,
-            "onnxruntime_version_required": EXPECTED_ORT_VERSION,
+            "session_options": {
+                "intra_op_num_threads": 1,
+                "inter_op_num_threads": 1,
+            },
+            "onnxruntime_version": onnxruntime_version,
             "vocab_size_including_ctc_blank": VOCAB_SIZE,
             "validation": {
                 "artifact_hash": "passed",
                 "onnx_contract": "passed",
                 "quantized_operators": "passed",
-                "runtime_version": "passed",
+                "runtime_version": (
+                    "recorded_not_pinned" if controlled_frontend else "passed"
+                ),
             },
         }
+        if expected_ort_version is not None:
+            metadata["onnxruntime_version_required"] = expected_ort_version
+        return metadata
 
     def close(self) -> None:
         self.session = None

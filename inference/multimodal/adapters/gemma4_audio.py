@@ -18,6 +18,7 @@ from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
 from inference.multimodal.adapters.common import torch_dtype_from_profile
 from inference.profile import ModelProfile, ProfileError
+from inference.provenance import generation_provenance
 
 
 def _select_device() -> torch.device:
@@ -75,7 +76,9 @@ class Gemma4AudioBackend:
                 "Gemma4AudioBackend requires a multimodal/gemma4_audio profile"
             )
         if profile.prompt is None or profile.audio is None:
-            raise ProfileError("The Gemma 4 audio profile requires prompt and audio settings")
+            raise ProfileError(
+                "The Gemma 4 audio profile requires prompt and audio settings"
+            )
         if profile.decoding.strategy != "generate":
             raise ProfileError("The Gemma 4 audio adapter requires generate decoding")
 
@@ -84,7 +87,9 @@ class Gemma4AudioBackend:
         self.model = None
         self.processor = None
         if not self.model_path.is_dir():
-            raise ProfileError(f"Multimodal model directory not found: {self.model_path}")
+            raise ProfileError(
+                f"Multimodal model directory not found: {self.model_path}"
+            )
 
         self.device = device or _select_device()
         if self.device.type != "cuda":
@@ -138,6 +143,11 @@ class Gemma4AudioBackend:
             enable_thinking=False,
         )
         self._generation_kwargs = dict(profile.decoding.generation_kwargs)
+        self._generation_provenance = generation_provenance(
+            getattr(self.model, "generation_config", None),
+            requested_kwargs=profile.decoding.generation_kwargs,
+            call_kwargs=self._generation_kwargs,
+        )
         self._model_class = type(self.model).__name__
         self._processor_class = type(self.processor).__name__
         self._metadata: dict[str, Any] = {
@@ -148,8 +158,12 @@ class Gemma4AudioBackend:
             "device": str(self.device),
             "sampling_rate": self.sampling_rate,
             "requested_torch_dtype": profile.loader.torch_dtype,
-            "effective_torch_dtype": str(_model_dtype(self.model)).removeprefix("torch."),
+            "effective_torch_dtype": str(_model_dtype(self.model)).removeprefix(
+                "torch."
+            ),
             "generation_kwargs": dict(self._generation_kwargs),
+            "generation": self._generation_provenance,
+            "rendered_prompt": self._rendered_prompt,
             "prompt": profile.prompt,
             "long_audio": {
                 "strategy": profile.audio.long_audio_strategy,

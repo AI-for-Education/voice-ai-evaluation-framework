@@ -159,6 +159,52 @@ real-artifact test is `tests/test_onnxruntime_android_artifact_smoke.py`.
 This is an Android-behaviour **accuracy proxy**, not ARM emulation. Physical
 phone tests remain authoritative for latency, memory, battery, and final
 cross-runtime numerical parity.
+
+## Controlled cumulative comparison
+
+The deployment transition is represented by three factors: artifact,
+preprocessing, and execution environment. The four configurations are:
+
+1. `000`: local INT8 artifact, desktop frontend, shared environment.
+2. `100`: published Android artifact, desktop frontend, shared environment.
+3. `110`: published Android artifact, Android frontend, shared environment.
+4. `111`: published Android artifact, Android frontend, pinned Android environment.
+
+`000` and `111` are the existing endpoint profiles. The two intermediate
+profiles use the existing `onnxruntime-asr` shared image; no additional
+Dockerfile or image rebuild is required for their structure.
+
+Prepare `100` with:
+
+```bash
+./run_onnxruntime_inference.sh \
+  --model_config inference/onnxruntime/profiles/swahili-exp41-ctc-published-int8-desktop-frontend.yaml \
+  --audio_manifest "$MANIFEST" \
+  --batch_size 1 \
+  --num_threads 1
+```
+
+Prepare `110` with:
+
+```bash
+./run_onnxruntime_inference.sh \
+  --model_config inference/onnxruntime/profiles/swahili-exp41-ctc-published-int8-android-frontend.yaml \
+  --audio_manifest "$MANIFEST" \
+  --batch_size 1 \
+  --num_threads 1
+```
+
+The shared entrypoint validates the published artifact in both intermediate
+runs. For `110`, it uses the Android frontend but records rather than pins the
+shared image's ONNX Runtime version. The dedicated Android launcher remains
+unchanged and continues to require `onnxruntime==1.22.0` for `111`.
+
+Interpret adjacent results only:
+
+1. `000 -> 100` measures the artifact change.
+2. `100 -> 110` measures the frontend change.
+3. `110 -> 111` measures the execution-environment change.
+
 ## Provenance and reuse note
 
 The conversion layout was checked against

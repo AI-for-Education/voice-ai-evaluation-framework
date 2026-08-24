@@ -8,6 +8,16 @@ task: transcribe
 output_units: phoneme
 output_notation: ipa
 output_inventory: bookbot_gruut_sw_v1
+pipeline_contract:
+  schema_version: 1
+  audio_preparation: shared_soundfile_librosa_16khz
+  inference:
+    artifact: canonical_checkpoint
+    frontend: canonical_transformers_auto_processor
+    runtime: shared_transformers_image
+    chunking: none
+  evaluation: direct_pred_text_by_output_units
+  runtime_resolution: observed_effective_values_v1
 loader:
   processor_mode: wav2vec2_plain
   local_files_only: true

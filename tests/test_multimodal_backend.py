@@ -139,7 +139,12 @@ def test_long_audio_is_chunked_and_rejoined_as_one_result(
     monkeypatch.setattr(
         gemma4_audio,
         "load_audio_and_resample",
-        lambda path, sample_rate: (np.ones(10, dtype=np.float32), sample_rate, 2.5, False),
+        lambda path, sample_rate: (
+            np.ones(10, dtype=np.float32),
+            sample_rate,
+            2.5,
+            False,
+        ),
     )
 
     results = backend.transcribe_batch(["long.wav"])
@@ -151,8 +156,12 @@ def test_long_audio_is_chunked_and_rejoined_as_one_result(
     assert processor.audio_lengths == [4, 4, 2]
     assert len(model.generation_calls) == 3
     assert all(call["max_new_tokens"] == 8 for call in model.generation_calls)
-    assert backend.metadata()["long_audio_files"] == 1
-    assert backend.metadata()["chunks_generated"] == 3
+    metadata = backend.metadata()
+    assert metadata["long_audio_files"] == 1
+    assert metadata["chunks_generated"] == 3
+    assert metadata["generation"]["requested_profile_kwargs"] == {"max_new_tokens": 8}
+    assert metadata["generation"]["effective_generation_config"]["max_new_tokens"] == 8
+    assert metadata["rendered_prompt"] == "rendered prompt with <|audio|>"
 
 
 def test_audio_read_failure_preserves_order_and_returns_error(

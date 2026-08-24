@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "audio_preparation": {
+    "shared_soundfile_librosa_16khz": {
+      "summary": "Decode WAV audio with SoundFile, average multichannel audio to mono float32, and resample to the backend target rate with librosa.resample without overriding its res_type default.",
+      "loader": "soundfile",
+      "sample_dtype": "float32",
+      "channel_policy": "average_channels_to_mono",
+      "resampling": {
+        "policy": "shared_resampling_policy",
+        "implementation": "librosa.resample_library_default",
+        "target_sample_rate_hz": 16000
+      },
+      "authority": "project",
+      "evidence": {
+        "level": "exact",
+        "source": "repo:inference/common.py",
+        "rationale": "The shared loader implementation fixes waveform decoding, mono conversion, dtype, and the resampling call used by these adapters."
+      }
+    },
+    "android_pcm16_linear_16khz": {
+      "summary": "Require mono PCM16 WAV input, convert samples to float32, and reproduce the Android demo's linear interpolation to 16 kHz.",
+      "loader": "soundfile_pcm16",
+      "sample_dtype": "float32_from_pcm16",
+      "channel_policy": "require_mono",
+      "resampling": {
+        "policy": "deployment_parity_resampling",
+        "implementation": "android_reference_linear_interpolation",
+        "target_sample_rate_hz": 16000
+      },
+      "authority": "deployment_reference",
+      "evidence": {
+        "level": "exact",
+        "source": "https://github.com/AI-for-Education/nemoasr-android/blob/6cd031267aed45e47347bc05a0eb63eee285f0d8/android/NemoAsrDemo/app/src/main/java/com/example/nemoasrdemo/OnnxAsrEngine.kt",
+        "rationale": "The local Android-compatible backend reproduces the pinned deployment loader and resampling algorithm."
+      }
+    }
+  },
+  "inference": {
+    "artifacts": {
+      "canonical_checkpoint": {
+        "summary": "Use the model owner's checkpoint or packaged native model as the primary artifact.",
+        "authority": "model_owner",
+        "evidence": {
+          "level": "supported",
+          "source": "artifact:selected_model",
+          "rationale": "The exact selected artifact and its recoverable file or repository identities are recorded separately in model_identity."
+        }
+      },
+      "project_export": {
+        "summary": "Use a project-created runtime export of the canonical checkpoint.",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:inference/onnxruntime/README.md",
+          "rationale": "The export role is defined by the repository's controlled ONNX comparison."
+        }
+      },
+      "published_deployment_artifact": {
+        "summary": "Use the exact artifact published for the Android deployment.",
+        "authority": "deployment_reference",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:inference/onnxruntime/README.md",
+          "rationale": "The packaged deployment artifact is selected and hash-checked by the Android-compatible backend."
+        }
+      }
+    },
+    "frontends": {
+      "canonical_transformers_auto_processor": {
+        "classification": "canonical_model_frontend",
+        "summary": "Load the pinned artifact's AutoProcessor/feature extractor and pass its declared sampling rate to the shared waveform loader.",
+        "implementation": "transformers_auto_processor_from_local_artifact",
+        "authority": "model_owner",
+        "evidence": {
+          "level": "exact",
+          "source": "artifact:preprocessor_config.json",
+          "rationale": "The effective processor class, artifact configuration identities, and sampling rate are recorded by the backend and model identity."
+        }
+      },
+      "canonical_nemo_model_preprocessor": {
+        "classification": "canonical_model_frontend",
+        "summary": "Resample the waveform to 16 kHz, then let the restored NeMo model apply the preprocessor packaged in its .nemo configuration.",
+        "implementation": "nemo_restored_model_preprocessor",
+        "feature_parameters": {
+          "sample_rate_hz": 16000,
+          "feature_bins": 80,
+          "window_samples": 400,
+          "hop_samples": 160,
+          "fft_size": 512,
+          "window": "hann",
+          "preemphasis": 0.97,
+          "dither": 0.00001,
+          "log_spectrogram": true,
+          "normalization": "per_feature",
+          "configuration_owner": "selected_nemo_artifact"
+        },
+        "authority": "model_owner",
+        "evidence": {
+          "level": "exact",
+          "source": "artifact:model_exp41_avg.nemo/model_config.yaml",
+          "rationale": "The selected .nemo archive contains the trained model's preprocessor configuration."
+        }
+      },
+      "compatible_onnx_asr_nemo_frontend": {
+        "classification": "compatible_third_party_frontend",
+        "summary": "Use onnx-asr's NeMo-compatible feature extractor for a desktop ONNX execution.",
+        "implementation": "onnx_asr_nemo_preprocessor",
+        "feature_parameters": {
+          "sample_rate_hz": 16000,
+          "feature_bins": 80,
+          "window_samples": 400,
+          "hop_samples": 160,
+          "fft_size": 512,
+          "preemphasis": 0.97,
+          "framing": "centered_padding",
+          "mel_filterbank": "onnx_asr_packaged_nemo80",
+          "log_guard": "2^-24",
+          "normalization_variance": "sample_t_minus_1"
+        },
+        "authority": "third_party",
+        "evidence": {
+          "level": "supported",
+          "source": "repo:inference/onnxruntime/backend.py",
+          "rationale": "The repository pins the integration and records the effective onnx-asr version; it is compatible but is not the canonical NeMo frontend."
+        }
+      },
+      "deployment_parity_android_frontend": {
+        "classification": "deployment_parity_frontend",
+        "summary": "Reproduce the pinned Android demo's custom normalized log-mel frontend before ONNX execution.",
+        "implementation": "android_reference_80_bin_log_mel",
+        "feature_parameters": {
+          "sample_rate_hz": 16000,
+          "feature_bins": 80,
+          "window_samples": 400,
+          "hop_samples": 160,
+          "fft_size": 512,
+          "window": "hann",
+          "preemphasis": "none",
+          "framing": "valid_unpadded",
+          "fft": "custom_float32_radix2",
+          "mel_filterbank": "custom_htk_style",
+          "log_floor": 1e-10,
+          "normalization_variance": "population"
+        },
+        "authority": "deployment_reference",
+        "evidence": {
+          "level": "exact",
+          "source": "https://github.com/AI-for-Education/nemoasr-android/blob/6cd031267aed45e47347bc05a0eb63eee285f0d8/android/NemoAsrDemo/app/src/main/java/com/example/nemoasrdemo/OnnxAsrEngine.kt",
+          "rationale": "The local backend ports the pinned deployment frontend and records its revision and fixed feature dimensions."
+        }
+      },
+      "canonical_sherpa_online_frontend": {
+        "classification": "canonical_model_frontend",
+        "summary": "Use the Sherpa-ONNX online recognizer frontend required by the published Zipformer artifact.",
+        "implementation": "sherpa_onnx_online_recognizer",
+        "feature_parameters": {
+          "sample_rate_hz": 16000,
+          "feature_bins": 80,
+          "remaining_parameters": "resolved_by_sherpa_onnx_online_recognizer"
+        },
+        "authority": "model_owner",
+        "evidence": {
+          "level": "supported",
+          "source": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4",
+          "rationale": "The artifact is published for Sherpa-ONNX and the backend records the effective recognizer call and runtime version."
+        }
+      }
+    },
+    "runtimes": {
+      "shared_transformers_image": {
+        "summary": "Use the repository's shared Transformers runtime image; exact package and host versions are run observations, not model requirements.",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:docker-compose.yml",
+          "rationale": "Image selection is project-owned while run_metadata records the packages and platform actually observed."
+        }
+      },
+      "multimodal_image": {
+        "summary": "Use the model-family multimodal runtime selected by the launcher, with effective dtype, attention backend, and device mapping recorded at runtime.",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:docker-compose.yml",
+          "rationale": "The repository selects the runtime image and the backend records effective model loading decisions."
+        }
+      },
+      "nemo_image": {
+        "summary": "Use the native NeMo runtime image and restored-model API.",
+        "authority": "framework_owner",
+        "evidence": {
+          "level": "supported",
+          "source": "https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/asr/results.html",
+          "rationale": "The model runs through NeMo's native transcription API; exact package and platform values remain runtime observations."
+        }
+      },
+      "onnxruntime_shared_image": {
+        "summary": "Use the repository's shared ONNX Runtime image on the current PC.",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:docker-compose.yml",
+          "rationale": "This environment is a controlled project runtime, not a physical Android-device claim."
+        }
+      },
+      "android_pinned_runtime_proxy": {
+        "summary": "Use the Android-parity launcher with the pinned ONNX Runtime requirement, single-item batch, and one thread on the current PC.",
+        "authority": "deployment_reference",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:inference/onnxruntime/README.md",
+          "rationale": "The launcher enforces the deployment runtime controls while metadata explicitly records that execution is on a PC rather than a physical mobile device."
+        }
+      },
+      "sherpa_onnx_image": {
+        "summary": "Use the repository's Sherpa-ONNX runtime image and record provider, version, and thread controls.",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:docker-compose.yml",
+          "rationale": "Image selection is project-owned and effective recognizer/runtime values are recorded by the backend."
+        }
+      }
+    },
+    "chunking": {
+      "none": {
+        "summary": "Do not apply a repository-level long-audio chunking policy.",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:inference/profile.py",
+          "rationale": "No audio or long_form section is enabled in the selected profile."
+        }
+      },
+      "whisper_timestamp_long_form": {
+        "summary": "Use Transformers Whisper timestamp-based long-form generation when the profile threshold is exceeded.",
+        "authority": "model_owner",
+        "evidence": {
+          "level": "supported",
+          "source": "https://huggingface.co/docs/transformers/model_doc/whisper",
+          "rationale": "The profile records the threshold and selects the supported timestamp-based long-form route."
+        }
+      },
+      "profile_sequential_zero_overlap": {
+        "summary": "Split long audio into deterministic sequential chunks using the profile's maximum, chunk, and zero-overlap values, then join chunk hypotheses in order.",
+        "authority": "project",
+        "evidence": {
+          "level": "project",
+          "source": "repo:docs/model-profile-evidence-implementation.md",
+          "rationale": "The need or hardware constraint may come from the model family, but the exact duration and zero-overlap stitching policy are project choices unless separately evidenced."
+        }
+      }
+    }
+  },
+  "evaluation": {
+    "direct_pred_text_by_output_units": {
+      "summary": "Evaluate the backend's unmodified pred_text in a representation compatible with the profile's declared output units.",
+      "hypothesis_field": "pred_text",
+      "text_postprocessing": "none",
+      "reference_integrity": "required_except_archived_legacy_diagnostic",
+      "authority": "project",
+      "evidence": {
+        "level": "exact",
+        "source": "repo:docs/core-inference-workflow.md",
+        "rationale": "The workflow contract fixes the inference-to-evaluation handoff and representation compatibility rules."
+      }
+    }
+  },
+  "runtime_resolution": {
+    "observed_effective_values_v1": {
+      "summary": "Values that cannot be fixed honestly before execution are resolved from the live backend, artifact, input headers, runtime, and evaluator.",
+      "run_time_fields": [
+        "audio_preparation.input_audio",
+        "audio_preparation.effective_target_sample_rate_hz",
+        "inference.artifact.identity",
+        "inference.frontend.observed.processor_class",
+      "inference.frontend.observed.feature_configuration_identity",
+      "inference.runtime.observed.launch_context",
+      "inference.runtime.observed.python",
+        "inference.runtime.observed.platform",
+        "inference.runtime.observed.packages",
+        "inference.runtime.observed.argv",
+        "inference.runtime.observed.device",
+        "inference.runtime.observed.provider",
+        "inference.runtime.observed.requested_torch_dtype",
+        "inference.runtime.observed.effective_torch_dtype",
+        "inference.runtime.observed.attention_implementation",
+        "inference.runtime.observed.threads_or_workers",
+        "inference.runtime.observed.backend_versions",
+        "inference.chunking.observed.statistics",
+        "inference.decoder.effective_strategy"
+      ],
+      "evaluation_time_fields": [
+        "evaluation.effective.requested_scoring_representation",
+        "evaluation.effective.effective_scoring_units",
+        "evaluation.effective.output_namespace",
+        "evaluation.links.reference_view_metadata",
+        "evaluation.links.detailed_scores",
+        "evaluation.links.summary"
+      ],
+      "unavailable_value_policy": {
+        "status": "not_available",
+        "require_reason": true,
+        "guessing_forbidden": true
+      },
+      "authority": "project",
+      "evidence": {
+        "level": "exact",
+        "source": "repo:inference/pipeline_provenance.py",
+        "rationale": "The metadata writer resolves these fields from observed execution state and uses an explicit not_available object when historical or live evidence is absent."
+      }
+    }
+  }
+}

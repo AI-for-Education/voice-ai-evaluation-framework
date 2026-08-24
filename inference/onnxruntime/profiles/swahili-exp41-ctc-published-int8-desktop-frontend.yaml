@@ -1,0 +1,35 @@
+id: swahili-exp41-ctc-published-int8-desktop-frontend
+framework: onnxruntime
+adapter: ctc
+artifact: swahili-exp41-ctc-android/model.int8.onnx
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 1
+  audio_preparation: shared_soundfile_librosa_16khz
+  inference:
+    artifact: published_deployment_artifact
+    frontend: compatible_onnx_asr_nemo_frontend
+    runtime: onnxruntime_shared_image
+    chunking: none
+  evaluation: direct_pred_text_by_output_units
+  runtime_resolution: observed_effective_values_v1
+
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+
+decoding:
+  strategy: greedy
+  generation_kwargs: {}
+
+parameter_evidence:
+  - applies_to:
+      - artifact
+      - decoding.strategy
+    level: exact
+    source: artifact:swahili-exp41-ctc-android/model.int8.onnx
+    rationale: Controlled configuration 100 uses the exact published Android INT8 artifact with the existing desktop frontend and shared ONNX Runtime image.

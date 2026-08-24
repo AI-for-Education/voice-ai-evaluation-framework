@@ -13,6 +13,15 @@ from inference.profile import (
 )
 
 
+def _sequential_chunking() -> dict[str, object]:
+    return {
+        "maximum_seconds": 30,
+        "long_audio_strategy": "sequential_chunks",
+        "chunk_seconds": 30,
+        "overlap_seconds": 0,
+    }
+
+
 BASE_PROFILE = {
     "id": "example",
     "framework": "transformers",
@@ -49,12 +58,7 @@ MULTIMODAL_PROFILE = {
         "strategy": "generate",
         "generation_kwargs": {"do_sample": False, "max_new_tokens": 32},
     },
-    "audio": {
-        "maximum_seconds": 30,
-        "long_audio_strategy": "sequential_chunks",
-        "chunk_seconds": 30,
-        "overlap_seconds": 0,
-    },
+    "audio": _sequential_chunking(),
 }
 
 
@@ -101,6 +105,9 @@ def _transducer_profile(
     }
 
 
+# Core profile schema
+
+
 def test_parse_profile_rejects_unknown_keys() -> None:
     profile = dict(BASE_PROFILE, surprise=True)
     with pytest.raises(ProfileError, match="Unknown profile key"):
@@ -138,6 +145,9 @@ def test_plain_processor_mode_is_ctc_only() -> None:
     )
     with pytest.raises(ProfileError, match="only valid for transformers/ctc"):
         parse_profile(profile)
+
+
+# CTC decoding profiles
 
 
 def test_valid_ctc_lm_profile_has_typed_defaults() -> None:
@@ -220,6 +230,9 @@ def test_ctc_lm_configuration_cannot_leak_into_greedy_profile() -> None:
         parse_profile(profile)
 
 
+# Transducer search profiles
+
+
 def test_modified_beam_search_has_typed_transducer_config() -> None:
     profile = parse_profile(_transducer_profile("modified_beam_search"))
 
@@ -252,6 +265,9 @@ def test_transducer_search_config_is_required_and_cannot_leak() -> None:
     profile["decoding"]["transducer_search_kwargs"] = {"max_active_paths": 4}
     with pytest.raises(ProfileError, match="only valid"):
         parse_profile(profile)
+
+
+# Speech-seq2seq and long-audio profiles
 
 
 def test_timestamp_generation_is_disabled_for_initial_delivery() -> None:
@@ -295,7 +311,6 @@ def test_whisper_long_form_profile_is_explicit_and_typed() -> None:
     }
 
 
-
 def test_speech_seq2seq_profile_accepts_explicit_audio_chunking() -> None:
     data = dict(
         BASE_PROFILE,
@@ -304,12 +319,7 @@ def test_speech_seq2seq_profile_accepts_explicit_audio_chunking() -> None:
             "strategy": "generate",
             "generation_kwargs": {"do_sample": False},
         },
-        audio={
-            "maximum_seconds": 30,
-            "long_audio_strategy": "sequential_chunks",
-            "chunk_seconds": 30,
-            "overlap_seconds": 0,
-        },
+        audio=_sequential_chunking(),
     )
 
     profile = parse_profile(data)
@@ -328,12 +338,7 @@ def test_speech_seq2seq_rejects_two_long_audio_strategies() -> None:
             "generation_kwargs": {"do_sample": False},
             "long_form": {"strategy": "timestamp", "threshold_seconds": 30},
         },
-        audio={
-            "maximum_seconds": 30,
-            "long_audio_strategy": "sequential_chunks",
-            "chunk_seconds": 30,
-            "overlap_seconds": 0,
-        },
+        audio=_sequential_chunking(),
     )
 
     with pytest.raises(ProfileError, match="cannot be enabled together"):
@@ -343,16 +348,12 @@ def test_speech_seq2seq_rejects_two_long_audio_strategies() -> None:
 def test_ctc_profile_still_rejects_audio_chunking() -> None:
     data = dict(
         BASE_PROFILE,
-        audio={
-            "maximum_seconds": 30,
-            "long_audio_strategy": "sequential_chunks",
-            "chunk_seconds": 30,
-            "overlap_seconds": 0,
-        },
+        audio=_sequential_chunking(),
     )
 
     with pytest.raises(ProfileError, match="audio is only valid"):
         parse_profile(data)
+
 
 @pytest.mark.parametrize(
     ("long_form", "message"),
@@ -393,6 +394,9 @@ def test_whisper_long_form_rejects_sampling() -> None:
 
     with pytest.raises(ProfileError, match="do_sample to be false"):
         parse_profile(profile)
+
+
+# Multimodal generation profiles
 
 
 def test_multimodal_profile_has_frozen_prompt_and_audio_policy() -> None:
@@ -483,6 +487,8 @@ def test_loader_rejects_non_scalar_mode() -> None:
         parse_profile(profile)
 
 
+# Parameter evidence and reproducibility
+
 
 def test_parameter_evidence_is_optional_typed_and_serialized() -> None:
     profile_data = copy.deepcopy(BASE_PROFILE)
@@ -547,13 +553,15 @@ def test_parameter_evidence_rejects_invalid_records(
     with pytest.raises(ProfileError, match=message):
         parse_profile(dict(BASE_PROFILE, parameter_evidence=evidence))
 
+
+# Artifact resolution and tracked-profile integration
+
+
 def test_resolve_model_path_stays_below_root(tmp_path: Path) -> None:
     artifact = tmp_path / "example-model"
     artifact.mkdir()
     profile = parse_profile(BASE_PROFILE)
     assert resolve_model_path(profile, model_root=tmp_path) == artifact.resolve()
-
-
 
 
 def _result_affecting_profile_paths(payload: dict[str, object]) -> set[str]:
@@ -572,7 +580,6 @@ def _result_affecting_profile_paths(payload: dict[str, object]) -> set[str]:
         "generation_kwargs",
         "ctc_lm_kwargs",
         "transducer_search_kwargs",
-        "hallucination_guard",
         "long_form",
     ):
         value = decoding.get(section)
@@ -600,12 +607,13 @@ def _result_affecting_profile_paths(payload: dict[str, object]) -> set[str]:
 def test_all_tracked_profiles_are_valid_and_unique() -> None:
     repo = Path(__file__).resolve().parents[1]
     profile_paths = sorted((repo / "inference").glob("*/profiles/*.yaml"))
-    assert len(profile_paths) == 21
+    assert len(profile_paths) == 23
 
     ids: set[str] = set()
     for path in profile_paths:
         profile = load_profile(path)
         assert profile.framework == path.parents[1].name
+        assert profile.pipeline_contract is not None
         assert profile.parameter_evidence
         for item in profile.parameter_evidence:
             if item.source.startswith("repo:"):
@@ -615,9 +623,7 @@ def test_all_tracked_profiles_are_valid_and_unique() -> None:
                 )
         assert "parameter_evidence" in profile.to_dict()
         covered = {
-            field
-            for item in profile.parameter_evidence
-            for field in item.applies_to
+            field for item in profile.parameter_evidence for field in item.applies_to
         }
         missing = _result_affecting_profile_paths(profile.to_dict()) - covered
         assert not missing, f"{path} lacks parameter evidence for: {sorted(missing)}"
@@ -672,8 +678,7 @@ def test_zipformer_decoder_pair_preserves_model_contract() -> None:
     )
     greedy = load_profile(profiles_root / "zipformer-streaming-robust-sw-v4.yaml")
     beam = load_profile(
-        profiles_root
-        / "zipformer-streaming-robust-sw-v4-modified-beam4.yaml"
+        profiles_root / "zipformer-streaming-robust-sw-v4-modified-beam4.yaml"
     )
 
     assert (
@@ -721,29 +726,27 @@ def test_every_local_transformers_artifact_has_a_profile() -> None:
     )
 
 
+# Post-decoding guardrails and dedicated multimodal requirements
 
-def test_speech_seq2seq_hallucination_guard_is_explicit_and_typed() -> None:
-    guard = {
-        "max_words_per_second": 8.0,
-        "repeated_phrase_min_words": 5,
-        "repeated_phrase_max_words": 8,
-        "repeated_phrase_repetitions": 3,
-    }
-    profile = parse_profile(
-        dict(
-            BASE_PROFILE,
-            adapter="speech_seq2seq",
-            decoding={
-                "strategy": "generate",
-                "generation_kwargs": {"return_timestamps": False},
-                "hallucination_guard": guard,
+
+def test_post_decoding_guard_is_rejected_for_seq2seq() -> None:
+    profile = dict(
+        BASE_PROFILE,
+        adapter="speech_seq2seq",
+        decoding={
+            "strategy": "generate",
+            "generation_kwargs": {"return_timestamps": False},
+            "hallucination_guard": {
+                "max_words_per_second": 8.0,
+                "repeated_phrase_min_words": 5,
+                "repeated_phrase_max_words": 8,
+                "repeated_phrase_repetitions": 3,
             },
-        )
+        },
     )
 
-    assert profile.decoding.hallucination_guard is not None
-    assert profile.decoding.hallucination_guard.max_words_per_second == 8.0
-    assert profile.to_dict()["decoding"]["hallucination_guard"] == guard
+    with pytest.raises(ProfileError, match="Unknown decoding key.*hallucination_guard"):
+        parse_profile(profile)
 
 
 def test_hallucination_guard_is_rejected_for_ctc() -> None:
@@ -755,7 +758,7 @@ def test_hallucination_guard_is_rejected_for_ctc() -> None:
         "repeated_phrase_repetitions": 3,
     }
 
-    with pytest.raises(ProfileError, match="only valid for transformers/speech_seq2seq"):
+    with pytest.raises(ProfileError, match="Unknown decoding key.*hallucination_guard"):
         parse_profile(profile)
 
 

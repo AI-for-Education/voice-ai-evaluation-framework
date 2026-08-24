@@ -21,7 +21,9 @@ def _profile():
     )
 
 
-def test_nemo_backend_preserves_order_and_writes_read_errors(monkeypatch, tmp_path: Path) -> None:
+def test_nemo_backend_preserves_order_and_writes_read_errors(
+    monkeypatch, tmp_path: Path
+) -> None:
     backend = NemoBackend.__new__(NemoBackend)
     backend.profile = _profile()
     backend.model = object()
@@ -89,3 +91,20 @@ def test_nemo_backend_turns_batch_failure_into_one_error_per_input(
     assert len(rows) == 2
     assert all(row.pred_text == "" for row in rows)
     assert all(row.error == "inference_failed: model failed" for row in rows)
+
+
+def test_nemo_metadata_records_effective_decoder_and_override_config() -> None:
+    backend = NemoBackend.__new__(NemoBackend)
+    backend.profile = _profile()
+    backend._model_class = "EncDecCTCModel"
+    backend.device = "cuda:0"
+    backend._effective_decoder_type = "ctc"
+    backend._effective_decoding_config = {"strategy": "greedy_batch"}
+    backend._transcribe_override_config = {"batch_size": 4, "num_workers": 0}
+    backend.num_workers = 0
+    backend.tmp_dir = Path("/tmp/nemo")
+    backend.debug = False
+
+    metadata = backend.metadata()
+
+    assert metadata["effective_decoder_type"] == "ctc"

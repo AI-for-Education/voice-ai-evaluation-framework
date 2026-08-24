@@ -24,6 +24,13 @@ RUN python3 -m pip install --upgrade \
 # mounts only input_output_data/output read-only at runtime.
 COPY egra_leaderboard.py /app/egra_leaderboard.py
 COPY egra_eval2/leaderboard.py /app/egra_eval2/leaderboard.py
+COPY egra_eval2/leaderboard_context.py /app/egra_eval2/leaderboard_context.py
+COPY egra_eval2/leaderboard_view.py /app/egra_eval2/leaderboard_view.py
+COPY egra_eval2/model_presentation.py /app/egra_eval2/model_presentation.py
+COPY egra_eval2/model_presentation.json /app/egra_eval2/model_presentation.json
+COPY inference/__init__.py /app/inference/__init__.py
+COPY inference/pipeline_provenance.py /app/inference/pipeline_provenance.py
+COPY inference/provenance.py /app/inference/provenance.py
 
 EXPOSE 8501
 

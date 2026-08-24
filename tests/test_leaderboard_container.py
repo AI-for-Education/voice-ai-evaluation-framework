@@ -33,5 +33,20 @@ def test_leaderboard_dockerfile_is_minimal_and_does_not_inherit_asr() -> None:
     assert "voice-ai-evaluation-framework-asr" not in dockerfile
     assert "streamlit==1.51.0" in dockerfile
     assert "COPY egra_leaderboard.py /app/egra_leaderboard.py" in dockerfile
+    assert (
+        "COPY egra_eval2/leaderboard_context.py "
+        "/app/egra_eval2/leaderboard_context.py"
+    ) in dockerfile
+    assert (
+        "COPY egra_eval2/leaderboard_view.py /app/egra_eval2/leaderboard_view.py"
+    ) in dockerfile
+    assert (
+        "COPY egra_eval2/model_presentation.json "
+        "/app/egra_eval2/model_presentation.json"
+    ) in dockerfile
+    assert (
+        "COPY inference/pipeline_provenance.py "
+        "/app/inference/pipeline_provenance.py"
+    ) in dockerfile
     assert "COPY input_output_data" not in dockerfile
     assert "egra_dashboard.py" not in dockerfile

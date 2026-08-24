@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import warnings
 from pathlib import Path
 from typing import Callable, List, Sequence
 
@@ -97,14 +98,16 @@ def main(argv: Sequence[str] | None = None) -> Path:
         profile = load_profile(args.model_config, expected_framework="nemo")
         model_path = resolve_model_path(profile)
         print(f"[INFO] Loading local model: {model_path}")
-        backend = NemoBackend(
-            profile=profile,
-            model_path=model_path,
-            batch_size=args.batch_size,
-            cpu_workers=args.cpu_workers,
-            tmp_dir=args.tmp_dir,
-            debug=args.debug,
-        )
+        with warnings.catch_warnings(record=True) as startup_warnings:
+            warnings.simplefilter("always")
+            backend = NemoBackend(
+                profile=profile,
+                model_path=model_path,
+                batch_size=args.batch_size,
+                cpu_workers=args.cpu_workers,
+                tmp_dir=args.tmp_dir,
+                debug=args.debug,
+            )
     except (ProfileError, RuntimeError, OSError) as exc:
         raise SystemExit(f"Unable to initialize NeMo inference: {exc}") from exc
     return run_backend(
@@ -117,6 +120,7 @@ def main(argv: Sequence[str] | None = None) -> Path:
         output_root=args.output_root,
         batch_size=args.batch_size,
         smoke_test=args.smoke_test,
+        startup_warnings=startup_warnings,
     )
 
 
