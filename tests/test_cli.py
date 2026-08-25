@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -225,8 +226,43 @@ def test_evaluation_output_defaults_follow_transcript_run() -> None:
     ) == smoke_evaluation
 
 
+@pytest.mark.parametrize(
+    ("audio_flag", "prediction_flag"),
+    [
+        ("--audio_manifest", "--prediction_manifest"),
+        ("--manifest_base_in", "--asr_manifest"),
+        ("--manifest_base_in", "--nemo_manifest"),
+    ],
+)
+def test_manifest_pipeline_accepts_preferred_and_legacy_manifest_names(
+    monkeypatch: pytest.MonkeyPatch,
+    audio_flag: str,
+    prediction_flag: str,
+) -> None:
+    from manifest_pipeline import parse_args
 
-def test_supplied_asr_manifest_replaces_stale_base_hypotheses() -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "manifest_pipeline.py",
+            "--dataset_root",
+            "dataset",
+            audio_flag,
+            "segments.jsonl",
+            prediction_flag,
+            "predictions.jsonl",
+        ],
+    )
+
+    args = parse_args()
+
+    assert args.manifest_base_in == "segments.jsonl"
+    assert args.asr_manifest == ["predictions.jsonl"]
+
+
+
+def test_supplied_prediction_manifest_replaces_stale_base_hypotheses() -> None:
     from manifest_pipeline import _attach_authoritative_hypotheses
 
     raw = pd.DataFrame(

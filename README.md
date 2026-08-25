@@ -77,7 +77,7 @@ input_output_data/output/
 
 Inference creates the model/UTC-timestamp name automatically. `run_manifest.sh`
 derives the matching evaluation directory from the standard
-`--asr_manifest` path. `run_eval2.sh` writes each scoring representation into
+`--prediction_manifest` path. `run_eval2.sh` writes each scoring representation into
 its own child directory, so WER and PER results cannot replace one another.
 `auto` writes orthographic models under `orthographic/` and native phoneme
 models under `ipa/`. The explicit `legacy_orthographic` mode exists only to
@@ -101,12 +101,13 @@ and error counts; the exact output path is also printed.
 | Transformers inference input | `--audio_manifest` | Exact audio segments to transcribe | — |
 | Sherpa-ONNX inference input | `--audio_manifest` | Exact audio segments to transcribe | — |
 | Multimodal inference input | `--audio_manifest` | Exact audio segments to transcribe | N/A |
-| Manifest merge input | `--asr_manifest` | Backend predictions in `transcriptions.jsonl` | `--nemo_manifest` (legacy NeMo-oriented merge calls only) |
+| Manifest merge audio input | `--audio_manifest` | Exact audio rows used for inference | `--manifest_base_in` |
+| Manifest merge predictions | `--prediction_manifest` | Backend predictions in `transcriptions.jsonl` | `--asr_manifest`, `--nemo_manifest` |
 | Evaluation input | `--manifest_in` | Cleaned manifest containing references and predictions | — |
 
-Use the preferred names for every new command. The compatibility names exist
-only so previously working NeMo commands do not break; Transformers commands should
-not use them.
+Use the preferred names for every new command. Compatibility names remain only
+so existing commands continue to work; use the framework-neutral preferred names
+for all new manifest merge calls.
 
 Run the same merge and evaluation steps once per model output. Report each
 model's metrics separately; phoneme-model WER/MER is not directly comparable
@@ -254,15 +255,15 @@ CPU image build plus removal or override of that Compose GPU reservation.
    RUN_NAME=<model>_<timestamp>   # copy the value printed by inference
    ./run_manifest.sh \
      --dataset_root input_output_data/input/<dataset_name> \
-     --manifest_base_in input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl \
-     --asr_manifest input_output_data/output/transcripts/$RUN_NAME/transcriptions.jsonl
+     --audio_manifest input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl \
+     --prediction_manifest input_output_data/output/transcripts/$RUN_NAME/transcriptions.jsonl
    ```
 
    This generates:
    - `input_output_data/output/evaluations/$RUN_NAME/manifests/ref_manifest.raw.jsonl`
    - `input_output_data/output/evaluations/$RUN_NAME/manifests/ref_manifest.clean.jsonl`
 
-   When `--asr_manifest` is supplied, its hypotheses are authoritative: existing
+   When `--prediction_manifest` is supplied, its hypotheses are authoritative: existing
    `pred_text` values in the base manifest are not retained. Manifest building and
    evaluation also fail fast if `ref_text` or `can_text` contains a known Unicode
    replacement/mojibake marker. This check does not reject valid IPA Unicode or
@@ -343,8 +344,8 @@ All the steps above can then be performed in sequence:
 
     ./run_manifest.sh \
         --dataset_root input_output_data/input/heldout_combined_fixed_20260525 \
-        --manifest_base_in input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl \
-        --asr_manifest input_output_data/output/transcripts/$RUN_NAME/transcriptions.jsonl
+        --audio_manifest input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl \
+        --prediction_manifest input_output_data/output/transcripts/$RUN_NAME/transcriptions.jsonl
 
     ./run_eval2.sh \
         --dataset_root input_output_data/input/heldout_combined_fixed_20260525 \
@@ -359,7 +360,7 @@ All the steps above can then be performed in sequence:
 - Segment-only flow is the default documented flow:
 - `run_segment.sh`: creates segment audio + segment manifest.
 - `run_nemo_inference.sh`, `run_transformers_inference.sh`, `run_sherpa_onnx_inference.sh`, or `run_multimodal_inference.sh`: transcribes segment audio using a required model profile.
-- `run_manifest.sh`: builds/cleans final segment-level manifest from `--manifest_base_in`.
+- `run_manifest.sh`: builds/cleans the final segment-level manifest from `--audio_manifest` and optionally attaches `--prediction_manifest`.
 - `run_eval2.sh`: scores only from an existing cleaned segment manifest (`--manifest_in`).
 
 ---
@@ -460,8 +461,8 @@ All the steps above can then be performed in sequence:
 - Emits the unchanged `transcriptions.jsonl` schema and a separate `run_metadata.json` record.
 
 **Manifest build (`manifest_pipeline.py`)**
-- In segment-only flow, loads a base segment manifest from `--manifest_base_in`.
-- Attaches ASR hypotheses from `--asr_manifest` (optional; `--nemo_manifest` is a legacy alias).
+- In segment-only flow, loads the exact segmented audio rows from `--audio_manifest`.
+- Attaches ASR hypotheses from `--prediction_manifest` (optional; `--asr_manifest` and `--nemo_manifest` are legacy aliases).
 - Writes cleaned segment manifests (for example `ref_manifest.segment.raw.jsonl` and `ref_manifest.segment.clean.jsonl`).
 
 **Evaluation (`eval_pipeline2.py`)**
@@ -585,8 +586,8 @@ ordering and avoids rediscovering files:
 ### 5) Build final segment manifest (REF/CAN/HYP source for evaluation)
 
 We provide `run_manifest.sh`. It will:
-- Load base segment manifest from `--manifest_base_in` (preserve segment granularity).
-- Attach ASR hypotheses from `--asr_manifest`.
+- Load the segmented audio manifest from `--audio_manifest` (preserve segment granularity).
+- Attach ASR hypotheses from `--prediction_manifest`.
 - Derive `evaluations/<model>_<timestamp>/` from a standard transcript path.
 - Write raw and cleaned segment manifests under that run's `manifests/` folder.
 
@@ -594,8 +595,8 @@ Usage:
 ```bash
 ./run_manifest.sh \
   --dataset_root /io/input/<dataset> \
-  --manifest_base_in /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
-  --asr_manifest /io/output/transcripts/<model>_<timestamp>/transcriptions.jsonl
+  --audio_manifest /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
+  --prediction_manifest /io/output/transcripts/<model>_<timestamp>/transcriptions.jsonl
 ```
 
 ### 6) Run evaluation
@@ -752,14 +753,14 @@ directly. It also remaps the former NeMo model-directory prefix when that old
 path no longer exists. Do not use direct model paths with the new launchers.
 
 ### Manifest build (`manifest_pipeline.py`)
-The dataset and base segment manifest remain explicit. The evaluation output is
+The dataset and segmented audio manifest remain explicit. The evaluation output is
 derived from a standard transcript path unless you override it.
 
 Run `python3 manifest_pipeline.py --help` to see available options. Highlights:
 - `--dataset_root /io/input/<dataset>` — required; automatically discovers the `Student_*` CSVs plus `0_Audio/` and `2_TextGrid/`.
-- `--manifest_base_in /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl` — required in segment-only flow; preserves segment rows.
-- `--output_root /io/output/evaluations/<model>_<timestamp>` — optional exact destination; otherwise derived from `--asr_manifest` by replacing `transcripts` with `evaluations`.
-- `--asr_manifest /path/to/transcriptions.jsonl` — optional; if provided, `pred_text` is attached from either backend. `--nemo_manifest` remains an alias.
+- `--audio_manifest /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl` — required in segment-only flow; defines and preserves the exact audio segment rows used for inference. `--manifest_base_in` remains an alias.
+- `--output_root /io/output/evaluations/<model>_<timestamp>` — optional exact destination; otherwise derived from `--prediction_manifest` by replacing `transcripts` with `evaluations`.
+- `--prediction_manifest /path/to/transcriptions.jsonl` — optional; if provided, `pred_text` is attached from any backend. `--asr_manifest` and `--nemo_manifest` remain aliases.
 
 ### Evaluation (`eval_pipeline2.py`)
 Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
@@ -778,7 +779,7 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - **No GPU used**: Rebuild the default CUDA image, confirm Docker can access the NVIDIA GPU, and check that the resolved ASR service retains `gpus: all`.
 - **Empty or short `pred_text`**: Check that the model matches the language/domain. Also verify sample rate conversion (the script resamples to 16 kHz automatically).
 - **Missing REF text in segment base manifest**: Ensure `run_segment.sh` used the correct `--textgrid_root` and that audio/TextGrid stems align.
-- **Segment ASR not attached**: Check that `--asr_manifest` in `run_manifest.sh` points to segmented ASR output and that `--match_on` is appropriate.
+- **Segment ASR not attached**: Check that `--prediction_manifest` in `run_manifest.sh` points to segmented ASR output and that `--match_on` is appropriate.
 - **Segmentation not applied in inference**: Ensure matching `.TextGrid` files exist under `2_TextGrid/` and names align with audio stems; segmentation follows all parsed intervals from TextGrid.
 - **Unexpected full rows in segment manifest**: re-run `run_segment.sh`; strict mode drops non-segmentable rows and writes only `*_segmentN.wav` entries.
 - **Profile rejected before loading**: Check for unknown keys, an invalid framework/adapter/decoding combination, an absolute or escaping artifact path, or a missing local artifact.
@@ -805,7 +806,7 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
   Preserves the legacy NeMo `--model` command and delegates to the reorganized NeMo implementation.
 
 - **`manifest_pipeline.py`**  
-  Builds and cleans final manifests; in segment-only flow it loads `--manifest_base_in` and attaches ASR `pred_text` from `--asr_manifest`.
+  Builds and cleans final manifests; in segment-only flow it loads `--audio_manifest` and attaches ASR `pred_text` from `--prediction_manifest`.
 
 - **`eval_pipeline2.py`**
   Runs scoring and report generation using only a cleaned manifest (`--manifest_in`) plus dataset metadata CSVs.

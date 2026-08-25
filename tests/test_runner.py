@@ -201,7 +201,7 @@ def test_runner_preserves_schema_order_writes_metadata_and_reports_progress(
     assert "Transcribing runner-test" in captured.err
     assert "3/3" in captured.err
 
-    # This is the same loader used by manifest_pipeline.py for --asr_manifest.
+    # This is the same loader used by manifest_pipeline.py for --prediction_manifest.
     merged_input = load_nemo_manifest(str(output))
     assert merged_input["audio_path"].tolist() == [
         "first.wav",

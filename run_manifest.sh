@@ -4,13 +4,13 @@ set -euo pipefail
 usage() {
   cat <<'EOF' >&2
 Usage:
-  ./run_manifest.sh --dataset_root PATH --manifest_base_in PATH [extra options]
+  ./run_manifest.sh --dataset_root PATH --audio_manifest PATH [extra options]
 
 Example:
   ./run_manifest.sh \
     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
-    --manifest_base_in input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.raw_segments.jsonl \
-    --asr_manifest input_output_data/output/transcripts/<model>_<timestamp>/transcriptions.jsonl
+    --audio_manifest input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.raw_segments.jsonl \
+    --prediction_manifest input_output_data/output/transcripts/<model>_<timestamp>/transcriptions.jsonl
 
 With the standard transcript path, output is inferred as:
   input_output_data/output/evaluations/<model>_<timestamp>/manifests/
@@ -22,7 +22,7 @@ EOF
 
 DATASET_ROOT=""
 OUTPUT_ROOT=""
-MANIFEST_BASE_IN=""
+AUDIO_MANIFEST=""
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -35,9 +35,9 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_ROOT="$2"
       shift 2
       ;;
-    --manifest_base_in)
-      MANIFEST_BASE_IN="$2"
-      EXTRA_ARGS+=("$1" "$2")
+    --audio_manifest|--manifest_base_in)
+      AUDIO_MANIFEST="$2"
+      EXTRA_ARGS+=(--audio_manifest "$2")
       shift 2
       ;;
     --help|-h)
@@ -50,7 +50,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$DATASET_ROOT" || -z "$MANIFEST_BASE_IN" ]]; then
+if [[ -z "$DATASET_ROOT" || -z "$AUDIO_MANIFEST" ]]; then
   usage
 fi
 

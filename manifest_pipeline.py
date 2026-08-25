@@ -66,19 +66,26 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--egra_csv", default=None)
     p.add_argument("--passages_csv", default=None)
     p.add_argument(
+        "--audio_manifest",
         "--manifest_base_in",
+        dest="manifest_base_in",
         default=None,
-        help="Optional existing base manifest (JSONL/concatenated JSON) to preserve row granularity (e.g., segment-level).",
+        help=(
+            "Audio manifest whose rows define the evaluation inputs; normally the "
+            "same segmented manifest supplied to inference. "
+            "--manifest_base_in remains a backward-compatible alias."
+        ),
     )
     p.add_argument(
+        "--prediction_manifest",
         "--asr_manifest",
         "--nemo_manifest",
         dest="asr_manifest",
         action="append",
         default=None,
         help=(
-            "ASR transcriptions.jsonl to attach; repeat for multiple manifests. "
-            "--nemo_manifest remains a backward-compatible alias."
+            "Prediction transcriptions.jsonl to attach; repeat for multiple manifests. "
+            "--asr_manifest and --nemo_manifest remain backward-compatible aliases."
         ),
     )
     p.add_argument("--manifest_audio_key", default="audio_filepath")
@@ -197,7 +204,7 @@ def _compute_duration_if_missing(audio_path: str, duration_value: object) -> flo
 def load_base_manifest_dataframe(path: str, logger: logging.Logger) -> pd.DataFrame:
     in_path = Path(path)
     if not in_path.exists():
-        raise SystemExit(f"--manifest_base_in file not found: {in_path}")
+        raise SystemExit(f"--audio_manifest file not found: {in_path}")
     objs = _load_json_objects(in_path)
     rows = []
     for obj in objs:
@@ -273,7 +280,7 @@ def main() -> None:
         raw_df = load_base_manifest_dataframe(args.manifest_base_in, logger)
 
         if args.asr_manifest:
-            logger.info("Loading %d ASR manifest(s) to attach pred_text...", len(args.asr_manifest))
+            logger.info("Loading %d prediction manifest(s) to attach pred_text...", len(args.asr_manifest))
             asr_df = load_many_manifests(
                 args.asr_manifest,
                 audio_key=args.manifest_audio_key,
@@ -288,10 +295,10 @@ def main() -> None:
                 logger=logger,
             )
         else:
-            logger.info("No --asr_manifest supplied; keeping pred_text from base manifest.")
+            logger.info("No --prediction_manifest supplied; keeping pred_text from audio manifest.")
     else:
         if not args.passages_csv:
-            raise SystemExit("--passages_csv is required when --manifest_base_in is not provided.")
+            raise SystemExit("--passages_csv is required when --audio_manifest is not provided.")
         passages_path = Path(args.passages_csv)
         if not passages_path.exists():
             raise SystemExit(f"--passages_csv file not found: {passages_path}")
@@ -302,7 +309,7 @@ def main() -> None:
         df_egra = add_audio_keys(df_egra, audio_col="audio_file")
 
         if args.asr_manifest:
-            logger.info("Loading %d ASR manifest(s)...", len(args.asr_manifest))
+            logger.info("Loading %d prediction manifest(s)...", len(args.asr_manifest))
             asr_df = load_many_manifests(
                 args.asr_manifest,
                 audio_key=args.manifest_audio_key,
@@ -312,7 +319,7 @@ def main() -> None:
             )
             df_egra = attach_hypotheses(df_egra, asr_df, match_on=args.match_on, logger=logger)
         else:
-            logger.info("No --asr_manifest supplied; pred_text will be empty in output manifest.")
+            logger.info("No --prediction_manifest supplied; pred_text will be empty in output manifest.")
             df_egra["hyp_text"] = ""
 
         df_egra = add_refs_from_textgrid(
