@@ -16,18 +16,18 @@ from egra_eval2.leaderboard_context import (
     artifact_context as _artifact_context,
     contract_references as _contract_references,
     decoding_label as _decoding_label,
+    execution_stack_context as _execution_stack_context,
+    execution_target_label as _execution_target_label,
+    inference_engine_version as _inference_engine_version,
     nonnegative_int as _nonnegative_int,
-    platform_label as _platform_label,
     preprocessing_context as _preprocessing_context,
-    runtime_context as _runtime_context,
-    runtime_version as _runtime_version,
 )
 from egra_eval2.model_presentation import (
     MODEL_NAME_MAPPING_COLUMNS,
     MODEL_PRESENTATION_REGISTRY_PATH,
     build_name_mapping_rows,
     default_model_presentation_registry,
-    presentation_for_model,
+    presentation_for_inference_setup,
     structured_model_label,
 )
 
@@ -294,7 +294,7 @@ def _candidate_row(
         )
 
     run_metadata = _run_metadata_for_run(evaluations_root, run_dir.name)
-    profile = run_metadata.get("profile")
+    profile = run_metadata.get("inference_profile", run_metadata.get("profile"))
     if not isinstance(profile, dict):
         metadata_path = (
             evaluations_root.parent
@@ -303,10 +303,14 @@ def _candidate_row(
             / "run_metadata.json"
         )
         raise LeaderboardError(f"ASR run metadata has no profile: {metadata_path}")
-    model_id = profile.get("id")
+    inference_setup_id = profile.get(
+        "inference_setup_id", profile.get("id")
+    )
     native_output_units = profile.get("output_units")
-    if not isinstance(model_id, str) or not model_id.strip():
-        raise LeaderboardError(f"Run profile has no model id: {run_dir.name}")
+    if not isinstance(inference_setup_id, str) or not inference_setup_id.strip():
+        raise LeaderboardError(
+            f"Run inference profile has no inference setup id: {run_dir.name}"
+        )
     if native_output_units not in {"orthographic", "phoneme"}:
         raise LeaderboardError(
             f"Run profile has unsupported output units: {run_dir.name}"
@@ -328,23 +332,29 @@ def _candidate_row(
     if not isinstance(completed_at, str):
         completed_at = ""
     references, context_evidence = _contract_references(profile, run_metadata)
-    runtime_context, runtime_launch_observed = _runtime_context(
+    execution_stack, stack_launch_observed = _execution_stack_context(
         profile, run_metadata, references
     )
-    if runtime_launch_observed:
-        context_evidence += "; runtime launch observed"
-    elif profile.get("framework") == "onnxruntime" and _runtime_version(
-        run_metadata
-    )[0]:
-        context_evidence += "; runtime package/backend observed"
+    inference_library = profile.get(
+        "inference_library", profile.get("framework")
+    )
+    if stack_launch_observed:
+        context_evidence += "; execution environment observed"
+    elif inference_library in {"onnxruntime", "sherpa_onnx"} and (
+        _inference_engine_version(run_metadata)[0]
+    ):
+        context_evidence += "; inference engine observed"
     decoding = _decoding_label(profile)
-    platform_label = _platform_label(profile, run_metadata, references)
-    presentation = presentation_for_model(model_id.strip())
+    execution_target = _execution_target_label(profile, run_metadata, references)
+    presentation = presentation_for_inference_setup(inference_setup_id.strip())
     architecture = presentation["architecture"]
+    model_artifact = _artifact_context(profile, run_metadata, references)
+    input_processing = _preprocessing_context(references)
+    inference_setup = f"{input_processing}; {decoding} decoding"
     row: dict[str, Any] = {
-        "model_id": model_id.strip(),
+        "inference_setup_id": inference_setup_id.strip(),
+        "run_id": run_dir.name,
         "model_label": "",
-        "run_name": run_dir.name,
         "model_group": presentation["model_group"],
         "model_name": presentation["model_name"],
         "model_variant": presentation["variant"],
@@ -352,17 +362,24 @@ def _candidate_row(
         "official_model_url_note": presentation["official_model_url_note"],
         "architecture": architecture["label"],
         "architecture_evidence_status": architecture["evidence_status"],
-        "platform": platform_label,
+        "execution_target": execution_target,
         "decoding": decoding,
-        "artifact_context": _artifact_context(profile, run_metadata, references),
-        "preprocessing_context": _preprocessing_context(references),
-        "runtime_context": runtime_context,
+        "model_artifact": model_artifact,
+        "inference_setup": inference_setup,
+        "execution_stack": execution_stack,
         "context_evidence": context_evidence,
         "evaluation_status": _evaluation_status(run_metadata),
         "native_output_units": native_output_units,
         "hypothesis_route": _hypothesis_route(namespace, native_output_units),
         "completed_at": completed_at,
         "summary_path": str(summary_path),
+        # Deprecated v1 aliases retained for downstream CSV readers.
+        "model_id": inference_setup_id.strip(),
+        "run_name": run_dir.name,
+        "platform": execution_target,
+        "artifact_context": model_artifact,
+        "preprocessing_context": input_processing,
+        "runtime_context": execution_stack,
     }
     row["model_label"] = structured_model_label(presentation, decoding)
     row.update(
@@ -385,6 +402,13 @@ def _columns_for(namespace: str) -> list[str]:
         "official_model_url_note",
         "architecture",
         "architecture_evidence_status",
+        "inference_setup_id",
+        "run_id",
+        "execution_target",
+        "model_artifact",
+        "inference_setup",
+        "execution_stack",
+        # Deprecated v1 aliases are written after their canonical fields.
         "model_id",
         "run_name",
         "platform",
@@ -435,7 +459,7 @@ def build_leaderboard(
             continue
         try:
             row = _candidate_row(root, run_dir, namespace)
-            if str(row["model_id"]) in RETIRED_LEADERBOARD_MODEL_IDS:
+            if str(row["inference_setup_id"]) in RETIRED_LEADERBOARD_MODEL_IDS:
                 continue
             rows.append(row)
         except LeaderboardError as exc:
@@ -449,14 +473,16 @@ def build_leaderboard(
     metric = str(REPRESENTATIONS[namespace]["error_metric"])
     global_metric = f"global_{metric}"
     frame = frame.sort_values(
-        ["model_id", "completed_at", "run_name"],
+        ["inference_setup_id", "completed_at", "run_id"],
         ascending=[True, False, False],
         kind="stable",
     )
     if latest_only:
-        frame = frame.drop_duplicates(subset="model_id", keep="first")
+        frame = frame.drop_duplicates(subset="inference_setup_id", keep="first")
     frame = frame.sort_values(
-        [global_metric, "model_id"], ascending=[True, True], kind="stable"
+        [global_metric, "inference_setup_id"],
+        ascending=[True, True],
+        kind="stable",
     ).reset_index(drop=True)
     frame.insert(0, "rank", range(1, len(frame) + 1))
     return frame[columns], skipped
@@ -482,15 +508,17 @@ def build_leaderboards(
 def _latest_evaluated_rows(
     frames: dict[str, pd.DataFrame],
 ) -> dict[str, dict[str, Any]]:
-    """Index the newest generated row per stable model ID across namespaces."""
+    """Index the newest row per inference setup across namespaces."""
     evaluated = pd.concat(frames.values(), ignore_index=True)
     if evaluated.empty:
         return {}
     latest = evaluated.sort_values(
-        ["model_id", "completed_at"], ascending=[True, False], kind="stable"
-    ).drop_duplicates(subset="model_id", keep="first")
+        ["inference_setup_id", "completed_at"],
+        ascending=[True, False],
+        kind="stable",
+    ).drop_duplicates(subset="inference_setup_id", keep="first")
     return {
-        str(row["model_id"]): row
+        str(row["inference_setup_id"]): row
         for row in latest.to_dict(orient="records")
     }
 
@@ -504,12 +532,13 @@ def _profile_presentation_contexts() -> dict[str, dict[str, str]]:
     profile_paths = sorted((repository / "inference").glob("*/profiles/*.yaml"))
     for path in profile_paths:
         profile = load_profile(path).to_dict()
-        if str(profile["id"]) in RETIRED_LEADERBOARD_MODEL_IDS:
+        setup_id = str(profile["inference_setup_id"])
+        if setup_id in RETIRED_LEADERBOARD_MODEL_IDS:
             continue
         references, _ = _contract_references(profile, {})
-        contexts[str(profile["id"])] = {
+        contexts[setup_id] = {
             "decoder": _decoding_label(profile),
-            "platform": _platform_label(profile, {}, references),
+            "platform": _execution_target_label(profile, {}, references),
         }
     return contexts
 
@@ -545,7 +574,8 @@ def write_leaderboards(
     mapping_rows = [
         row
         for row in mapping_rows
-        if str(row["previous_model_id"]) not in RETIRED_LEADERBOARD_MODEL_IDS
+        if str(row["previous_inference_setup_id"])
+        not in RETIRED_LEADERBOARD_MODEL_IDS
     ]
     mapping = pd.DataFrame(mapping_rows, columns=MODEL_NAME_MAPPING_COLUMNS)
     mapping_path = destination / "leaderboard_model_name_mapping.csv"
@@ -555,40 +585,68 @@ def write_leaderboards(
     paths["name_mapping"] = mapping_path
 
     metadata = {
-        "schema_version": 4,
+        "schema_version": 5,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "evaluations_root": str(Path(evaluations_root)),
+        "latest_completed_run_per_inference_setup": latest_only,
         "latest_completed_run_per_model": latest_only,
+        "deprecated_aliases": {
+            "latest_completed_run_per_model": (
+                "latest_completed_run_per_inference_setup"
+            ),
+            "columns": {
+                "model_id": "inference_setup_id",
+                "run_name": "run_id",
+                "platform": "execution_target",
+                "artifact_context": "model_artifact",
+                "preprocessing_context": "inference_setup",
+                "runtime_context": "execution_stack",
+            },
+        },
         "presentation_naming": {
             "format": registry["naming_format"],
             "registry": file_identity(MODEL_PRESENTATION_REGISTRY_PATH),
-            "registered_models": len(
-                set(registry["models"]) - RETIRED_LEADERBOARD_MODEL_IDS
+            "registered_inference_setups": len(
+                set(registry["inference_setups"])
+                - RETIRED_LEADERBOARD_MODEL_IDS
             ),
+            "registered_models": len(
+                set(registry["inference_setups"])
+                - RETIRED_LEADERBOARD_MODEL_IDS
+            ),
+            "deprecated_aliases": {
+                "registered_models": "registered_inference_setups",
+                "mapping_columns.previous_model_id": (
+                    "mapping_columns.previous_inference_setup_id"
+                ),
+                "mapping_columns.platform": "mapping_columns.execution_target",
+            },
             "old_to_new_mapping": {
                 "path": str(mapping_path),
                 "rows": len(mapping),
             },
             "decoder_source": "embedded completed-run profile",
-            "model_source": "presentation registry keyed by stable profile model_id",
+            "model_source": (
+                "presentation registry keyed by stable inference_setup_id"
+            ),
             "stable_identity_renamed": False,
         },
         "comparison_factors": {
             "order": [
-                "artifact_context",
-                "preprocessing_context",
-                "runtime_context",
+                "model_artifact",
+                "inference_setup",
+                "execution_stack",
             ],
             "definitions": {
-                "artifact_context": "Which model/checkpoint/export/deployment artifact was selected.",
-                "preprocessing_context": "Audio preparation, model frontend/feature extraction, and chunking before decoding.",
-                "runtime_context": "Launcher, Compose service, container image, and observed or required runtime version; never inferred from artifact or frontend.",
+                "model_artifact": "Which checkpoint, export, or deployment artifact was selected.",
+                "inference_setup": "Input processing, chunking, and decoding selected for the run.",
+                "execution_stack": "Inference library and engine plus the observed execution environment; never inferred from the model artifact.",
             },
             "evidence_priority": [
-                "observed completed-run launch context and backend/package metadata",
+                "observed completed-run environment and inference-adapter metadata",
                 "pipeline contract embedded in completed run metadata",
                 "contract recoverable from the embedded completed-run profile",
-                "legacy profile/backend fallback with unavailable facts stated explicitly",
+                "legacy profile/adapter fallback with unavailable facts stated explicitly",
             ],
         },
         "leaderboards": {

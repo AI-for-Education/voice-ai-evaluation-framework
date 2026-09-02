@@ -1,6 +1,6 @@
 # Exp41 mobile-target ONNX validation on PC
 
-This backend tests two deployment artifacts derived from the existing internal
+This inference route tests two deployment artifacts derived from the existing internal
 Exp41 NeMo checkpoint:
 
 - `model.onnx`: FP32 portable reference.
@@ -20,7 +20,7 @@ subsampling factor 8, SentencePiece vocabulary, and greedy CTC decoding.
 - Records source and derived-file hashes in `artifact_metadata.json`.
 - Resumes safely: a rerun verifies and skips a completed stage; it never
   overwrites an existing model file.
-- Runs FP32 and INT8 through the normal framework manifest/output contract on
+- Runs FP32 and INT8 through the shared manifest/output contract on
   PC CPU.
 
 This step does **not** build an APK, package assets for Android, or emulate an
@@ -66,14 +66,14 @@ Use the same segment manifest for native NeMo, FP32 ONNX, and INT8 ONNX:
 MANIFEST="input_output_data/output/segments/<run>/manifest.jsonl"
 
 ./run_onnxruntime_inference.sh \
-  --model_config inference/onnxruntime/profiles/swahili-exp41-ctc-onnx-fp32.yaml \
+  --inference_profile inference/onnxruntime/profiles/swahili-exp41-ctc-onnx-fp32.yaml \
   --audio_manifest "$MANIFEST" \
   --batch_size 1 \
   --num_threads 2 \
   --smoke_test
 
 ./run_onnxruntime_inference.sh \
-  --model_config inference/onnxruntime/profiles/swahili-exp41-ctc-onnx-int8.yaml \
+  --inference_profile inference/onnxruntime/profiles/swahili-exp41-ctc-onnx-int8.yaml \
   --audio_manifest "$MANIFEST" \
   --batch_size 1 \
   --num_threads 2 \
@@ -92,13 +92,13 @@ manifest and fixed thread/batch settings:
 
 ```bash
 ./run_onnxruntime_inference.sh \
-  --model_config inference/onnxruntime/profiles/swahili-exp41-ctc-onnx-fp32.yaml \
+  --inference_profile inference/onnxruntime/profiles/swahili-exp41-ctc-onnx-fp32.yaml \
   --audio_manifest "$MANIFEST" \
   --batch_size 8 \
   --num_threads 2
 
 ./run_onnxruntime_inference.sh \
-  --model_config inference/onnxruntime/profiles/swahili-exp41-ctc-onnx-int8.yaml \
+  --inference_profile inference/onnxruntime/profiles/swahili-exp41-ctc-onnx-int8.yaml \
   --audio_manifest "$MANIFEST" \
   --batch_size 8 \
   --num_threads 2
@@ -116,9 +116,9 @@ directory. Compare native NeMo, FP32, and INT8 as deployment variants with:
 ## Android-parity accuracy proxy
 
 This is a separate result instance; it does not replace the PC `onnx-asr`
-baseline above. It runs the exact public mobile artifact with the pinned Android
-runtime version and mirrors the demo's PCM16 reader, linear resampler, log-mel
-frontend, and greedy CTC decoder.
+baseline above. It runs the exact public mobile artifact with the pinned ONNX
+Runtime version and mirrors the demo's PCM16 reader, linear resampler, log-mel
+input processing, and greedy CTC decoder.
 
 The local ignored bundle is:
 
@@ -144,13 +144,13 @@ Run it with the existing segmented manifest:
 
 ```bash
 ./run_onnxruntime_android_inference.sh \
-  --model_config inference/onnxruntime/profiles/swahili-exp41-ctc-android-int8.yaml \
+  --inference_profile inference/onnxruntime/profiles/swahili-exp41-ctc-android-int8.yaml \
   --audio_manifest "$MANIFEST" \
   --batch_size 1 \
   --num_threads 1
 ```
 
-The launcher rejects other batch or thread values. Backend startup also checks
+The launcher rejects other batch or thread values. Adapter startup also checks
 the artifact hash and size, vocabulary/blank id, ONNX input/output contract,
 quantized operator counts, and `onnxruntime==1.22.0`. Focused frontend and
 decoder tests live in `tests/test_onnxruntime_android_backend.py`; the opt-in
@@ -158,17 +158,17 @@ real-artifact test is `tests/test_onnxruntime_android_artifact_smoke.py`.
 
 This is an Android-behaviour **accuracy proxy**, not ARM emulation. Physical
 phone tests remain authoritative for latency, memory, battery, and final
-cross-runtime numerical parity.
+cross-environment numerical parity.
 
 ## Controlled cumulative comparison
 
-The deployment transition is represented by three factors: artifact,
-preprocessing, and execution environment. The four configurations are:
+The deployment transition is represented by three factors: artifact, input
+processing, and execution stack. The four configurations are:
 
-1. `000`: local INT8 artifact, desktop frontend, shared environment.
-2. `100`: published Android artifact, desktop frontend, shared environment.
-3. `110`: published Android artifact, Android frontend, shared environment.
-4. `111`: published Android artifact, Android frontend, pinned Android environment.
+1. `000`: local INT8 artifact, desktop input processing, shared execution stack.
+2. `100`: published Android artifact, desktop input processing, shared execution stack.
+3. `110`: published Android artifact, Android input processing, shared execution stack.
+4. `111`: published Android artifact, Android input processing, pinned Android-parity execution stack.
 
 `000` and `111` are the existing endpoint profiles. The two intermediate
 profiles use the existing `onnxruntime-asr` shared image; no additional
@@ -178,7 +178,7 @@ Prepare `100` with:
 
 ```bash
 ./run_onnxruntime_inference.sh \
-  --model_config inference/onnxruntime/profiles/swahili-exp41-ctc-published-int8-desktop-frontend.yaml \
+  --inference_profile inference/onnxruntime/profiles/swahili-exp41-ctc-published-int8-desktop-frontend.yaml \
   --audio_manifest "$MANIFEST" \
   --batch_size 1 \
   --num_threads 1
@@ -188,22 +188,22 @@ Prepare `110` with:
 
 ```bash
 ./run_onnxruntime_inference.sh \
-  --model_config inference/onnxruntime/profiles/swahili-exp41-ctc-published-int8-android-frontend.yaml \
+  --inference_profile inference/onnxruntime/profiles/swahili-exp41-ctc-published-int8-android-frontend.yaml \
   --audio_manifest "$MANIFEST" \
   --batch_size 1 \
   --num_threads 1
 ```
 
 The shared entrypoint validates the published artifact in both intermediate
-runs. For `110`, it uses the Android frontend but records rather than pins the
+runs. For `110`, it uses Android input processing but records rather than pins the
 shared image's ONNX Runtime version. The dedicated Android launcher remains
 unchanged and continues to require `onnxruntime==1.22.0` for `111`.
 
 Interpret adjacent results only:
 
 1. `000 -> 100` measures the artifact change.
-2. `100 -> 110` measures the frontend change.
-3. `110 -> 111` measures the execution-environment change.
+2. `100 -> 110` measures the input-processing change.
+3. `110 -> 111` measures the execution-stack change.
 
 ## Provenance and reuse note
 

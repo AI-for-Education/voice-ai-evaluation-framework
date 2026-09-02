@@ -17,7 +17,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Android-parity validation of the packaged Exp41 INT8 ONNX model"
     )
-    parser.add_argument("--model_config", required=True)
+    parser.add_argument(
+        "--inference_profile",
+        "--model_config",
+        dest="inference_profile",
+        required=True,
+        help="Inference profile YAML (--model_config is deprecated)",
+    )
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--root_audio_dir", default=None)
     input_group.add_argument("--audio_manifest", default=None)
@@ -36,8 +42,14 @@ def main(argv: Sequence[str] | None = None) -> Path:
         raise SystemExit("Android parity requires --num_threads 1")
 
     try:
-        print(f"[INFO] Loading Android-parity profile: {args.model_config}")
-        profile = load_profile(args.model_config, expected_framework="onnxruntime")
+        print(
+            f"[INFO] Loading Android-parity inference profile: "
+            f"{args.inference_profile}"
+        )
+        profile = load_profile(
+            args.inference_profile,
+            expected_inference_library="onnxruntime",
+        )
         model_path = resolve_model_path(profile)
         print(f"[INFO] Loading pinned Android model: {model_path}")
         with warnings.catch_warnings(record=True) as startup_warnings:
@@ -51,7 +63,7 @@ def main(argv: Sequence[str] | None = None) -> Path:
     return run_backend(
         backend=backend,
         profile=profile,
-        profile_path=args.model_config,
+        profile_path=args.inference_profile,
         model_path=str(model_path),
         root_audio_dir=args.root_audio_dir,
         audio_manifest=args.audio_manifest,

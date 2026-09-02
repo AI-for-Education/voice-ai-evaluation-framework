@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "audio_preparation": {
     "shared_soundfile_librosa_16khz": {
       "summary": "Decode WAV audio with SoundFile, average multichannel audio to mono float32, and resample to the backend target rate with librosa.resample without overriding its res_type default.",
@@ -37,18 +37,18 @@
     }
   },
   "inference": {
-    "artifacts": {
+    "model_artifacts": {
       "canonical_checkpoint": {
         "summary": "Use the model owner's checkpoint or packaged native model as the primary artifact.",
         "authority": "model_owner",
         "evidence": {
           "level": "supported",
           "source": "artifact:selected_model",
-          "rationale": "The exact selected artifact and its recoverable file or repository identities are recorded separately in model_identity."
+          "rationale": "The exact selected artifact and its recoverable file or repository identities are recorded separately in the model-artifact identity."
         }
       },
       "project_export": {
-        "summary": "Use a project-created runtime export of the canonical checkpoint.",
+        "summary": "Use a project-created ONNX export of the canonical checkpoint.",
         "authority": "project",
         "evidence": {
           "level": "exact",
@@ -66,7 +66,7 @@
         }
       }
     },
-    "frontends": {
+    "input_processing": {
       "canonical_transformers_auto_processor": {
         "classification": "canonical_model_frontend",
         "summary": "Load the pinned artifact's AutoProcessor/feature extractor and pass its declared sampling rate to the shared waveform loader.",
@@ -163,13 +163,17 @@
         "evidence": {
           "level": "supported",
           "source": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4",
-          "rationale": "The artifact is published for Sherpa-ONNX and the backend records the effective recognizer call and runtime version."
+          "rationale": "The artifact is published for Sherpa-ONNX and the inference adapter records the effective recognizer call and ONNX Runtime version."
         }
       }
     },
-    "runtimes": {
+    "execution_stacks": {
       "shared_transformers_image": {
-        "summary": "Use the repository's shared Transformers runtime image; exact package and host versions are run observations, not model requirements.",
+        "summary": "Run through Transformers and PyTorch in the repository's shared ASR container; exact package, hardware, and host versions are run observations.",
+        "runner": "repository_inference_runner",
+        "inference_library": "transformers",
+        "inference_engine": "pytorch",
+        "environment": "shared_asr_container",
         "authority": "project",
         "evidence": {
           "level": "exact",
@@ -178,7 +182,11 @@
         }
       },
       "multimodal_image": {
-        "summary": "Use the model-family multimodal runtime selected by the launcher, with effective dtype, attention backend, and device mapping recorded at runtime.",
+        "summary": "Run through the selected multimodal Transformers adapter and PyTorch container, recording effective dtype, attention implementation, and device mapping.",
+        "runner": "repository_inference_runner",
+        "inference_library": "transformers_multimodal_adapter",
+        "inference_engine": "pytorch",
+        "environment": "launcher_selected_multimodal_container",
         "authority": "project",
         "evidence": {
           "level": "exact",
@@ -187,39 +195,55 @@
         }
       },
       "nemo_image": {
-        "summary": "Use the native NeMo runtime image and restored-model API.",
+        "summary": "Run through NeMo's restored-model API and PyTorch in the shared ASR container.",
+        "runner": "repository_inference_runner",
+        "inference_library": "nemo",
+        "inference_engine": "pytorch",
+        "environment": "shared_asr_container",
         "authority": "framework_owner",
         "evidence": {
           "level": "supported",
           "source": "https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/asr/results.html",
-          "rationale": "The model runs through NeMo's native transcription API; exact package and platform values remain runtime observations."
+          "rationale": "The model runs through NeMo's native transcription API; exact package and platform values remain execution observations."
         }
       },
       "onnxruntime_shared_image": {
-        "summary": "Use the repository's shared ONNX Runtime image on the current PC.",
+        "summary": "Run through onnx-asr using ONNX Runtime in the shared ASR container on the current PC.",
+        "runner": "repository_inference_runner",
+        "inference_library": "onnx_asr",
+        "inference_engine": "onnx_runtime",
+        "environment": "shared_asr_container_on_pc",
         "authority": "project",
         "evidence": {
           "level": "exact",
           "source": "repo:docker-compose.yml",
-          "rationale": "This environment is a controlled project runtime, not a physical Android-device claim."
+          "rationale": "This is a controlled project execution environment, not a physical Android-device claim."
         }
       },
       "android_pinned_runtime_proxy": {
-        "summary": "Use the Android-parity launcher with the pinned ONNX Runtime requirement, single-item batch, and one thread on the current PC.",
+        "summary": "Run the Android-parity adapter with the pinned ONNX Runtime requirement, single-item batch, and one thread on the current PC.",
+        "runner": "repository_inference_runner",
+        "inference_library": "repository_android_parity_adapter",
+        "inference_engine": "onnx_runtime",
+        "environment": "dedicated_android_parity_container_on_pc",
         "authority": "deployment_reference",
         "evidence": {
           "level": "exact",
           "source": "repo:inference/onnxruntime/README.md",
-          "rationale": "The launcher enforces the deployment runtime controls while metadata explicitly records that execution is on a PC rather than a physical mobile device."
+          "rationale": "The launcher enforces the deployment controls while metadata explicitly records that execution is on a PC rather than a physical mobile device."
         }
       },
       "sherpa_onnx_image": {
-        "summary": "Use the repository's Sherpa-ONNX runtime image and record provider, version, and thread controls.",
+        "summary": "Run through Sherpa-ONNX using ONNX Runtime in the shared ASR container, recording provider, version, and thread controls.",
+        "runner": "repository_inference_runner",
+        "inference_library": "sherpa_onnx",
+        "inference_engine": "onnx_runtime",
+        "environment": "shared_asr_container",
         "authority": "project",
         "evidence": {
           "level": "exact",
           "source": "repo:docker-compose.yml",
-          "rationale": "Image selection is project-owned and effective recognizer/runtime values are recorded by the backend."
+          "rationale": "Image selection is project-owned and effective recognizer and engine values are recorded by the inference adapter."
         }
       }
     },
@@ -247,49 +271,49 @@
         "authority": "project",
         "evidence": {
           "level": "project",
-          "source": "repo:docs/model-profile-evidence-implementation.md",
-          "rationale": "The need or hardware constraint may come from the model family, but the exact duration and zero-overlap stitching policy are project choices unless separately evidenced."
+          "source": "local-development:docs/inference-setup-evidence.md",
+          "rationale": "The need or hardware constraint may come from the model family, but the exact duration and zero-overlap stitching policy are project choices unless separately evidenced. The supporting note is local-development-only and is not versioned."
         }
       }
     }
   },
   "evaluation": {
     "direct_pred_text_by_output_units": {
-      "summary": "Evaluate the backend's unmodified pred_text in a representation compatible with the profile's declared output units.",
+      "summary": "Evaluate the inference adapter's unmodified pred_text in a representation compatible with the profile's declared output units.",
       "hypothesis_field": "pred_text",
       "text_postprocessing": "none",
       "reference_integrity": "required_except_archived_legacy_diagnostic",
       "authority": "project",
       "evidence": {
         "level": "exact",
-        "source": "repo:docs/core-inference-workflow.md",
-        "rationale": "The workflow contract fixes the inference-to-evaluation handoff and representation compatibility rules."
+        "source": "local-development:docs/project-onboarding-guide.md",
+        "rationale": "The workflow contract fixes the inference-to-evaluation handoff and representation compatibility rules. The supporting guide is local-development-only and is not versioned."
       }
     }
   },
-  "runtime_resolution": {
-    "observed_effective_values_v1": {
-      "summary": "Values that cannot be fixed honestly before execution are resolved from the live backend, artifact, input headers, runtime, and evaluator.",
-      "run_time_fields": [
-        "audio_preparation.input_audio",
-        "audio_preparation.effective_target_sample_rate_hz",
-        "inference.artifact.identity",
-        "inference.frontend.observed.processor_class",
-      "inference.frontend.observed.feature_configuration_identity",
-      "inference.runtime.observed.launch_context",
-      "inference.runtime.observed.python",
-        "inference.runtime.observed.platform",
-        "inference.runtime.observed.packages",
-        "inference.runtime.observed.argv",
-        "inference.runtime.observed.device",
-        "inference.runtime.observed.provider",
-        "inference.runtime.observed.requested_torch_dtype",
-        "inference.runtime.observed.effective_torch_dtype",
-        "inference.runtime.observed.attention_implementation",
-        "inference.runtime.observed.threads_or_workers",
-        "inference.runtime.observed.backend_versions",
-        "inference.chunking.observed.statistics",
-        "inference.decoder.effective_strategy"
+  "observation_policies": {
+    "observed_effective_values_v2": {
+      "summary": "Values that cannot be fixed honestly before execution are recorded from the live inference adapter, artifact, input headers, execution environment, and evaluator.",
+      "run_fields": [
+        "inference_setup.audio_preparation.input_audio",
+        "inference_setup.audio_preparation.effective_target_sample_rate_hz",
+        "model_artifact.identity",
+        "inference_setup.input_processing.observed.processor_class",
+        "inference_setup.input_processing.observed.feature_configuration_identity",
+        "execution_stack.observed.environment.launch",
+        "execution_stack.observed.environment.python",
+        "execution_stack.observed.environment.platform",
+        "execution_stack.observed.inference_library.packages",
+        "execution_stack.observed.runner.argv",
+        "execution_stack.observed.hardware.device",
+        "execution_stack.observed.inference_engine.provider",
+        "execution_stack.observed.hardware.requested_torch_dtype",
+        "execution_stack.observed.hardware.effective_torch_dtype",
+        "execution_stack.observed.hardware.attention_implementation",
+        "execution_stack.observed.hardware.threads_or_workers",
+        "execution_stack.observed.inference_engine.versions",
+        "inference_setup.chunking.observed.statistics",
+        "inference_setup.decoding.effective_strategy"
       ],
       "evaluation_time_fields": [
         "evaluation.effective.requested_scoring_representation",

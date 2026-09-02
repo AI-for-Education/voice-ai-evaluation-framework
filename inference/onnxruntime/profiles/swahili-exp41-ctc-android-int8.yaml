@@ -1,20 +1,20 @@
-id: swahili-exp41-ctc-android-int8
-framework: onnxruntime
+profile_schema_version: 2
+inference_setup_id: swahili-exp41-ctc-android-int8
+inference_library: onnxruntime
 adapter: android_ctc
 artifact: swahili-exp41-ctc-android/model.int8.onnx
 language: sw
 task: transcribe
 output_units: orthographic
 pipeline_contract:
-  schema_version: 1
+  schema_version: 2
   audio_preparation: android_pcm16_linear_16khz
-  inference:
-    artifact: published_deployment_artifact
-    frontend: deployment_parity_android_frontend
-    runtime: android_pinned_runtime_proxy
-    chunking: none
+  model_artifact: published_deployment_artifact
+  input_processing: deployment_parity_android_frontend
+  execution_stack: android_pinned_runtime_proxy
+  chunking: none
   evaluation: direct_pred_text_by_output_units
-  runtime_resolution: observed_effective_values_v1
+  observation_policy: observed_effective_values_v2
 
 loader:
   processor_mode: auto

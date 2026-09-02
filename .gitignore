@@ -49,3 +49,4 @@ Thumbs.db
 # Private working notes (kept locally, not versioned)
 /docs/*
 !/docs/core-inference-workflow.md
+!/docs/vocabulary.md

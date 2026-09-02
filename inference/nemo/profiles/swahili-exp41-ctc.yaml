@@ -1,20 +1,20 @@
-id: swahili-exp41-ctc
-framework: nemo
+profile_schema_version: 2
+inference_setup_id: swahili-exp41-ctc
+inference_library: nemo
 adapter: nemo
 artifact: model_exp41_avg.nemo
 language: sw
 task: transcribe
 output_units: orthographic
 pipeline_contract:
-  schema_version: 1
+  schema_version: 2
   audio_preparation: shared_soundfile_librosa_16khz
-  inference:
-    artifact: canonical_checkpoint
-    frontend: canonical_nemo_model_preprocessor
-    runtime: nemo_image
-    chunking: none
+  model_artifact: canonical_checkpoint
+  input_processing: canonical_nemo_model_preprocessor
+  execution_stack: nemo_image
+  chunking: none
   evaluation: direct_pred_text_by_output_units
-  runtime_resolution: observed_effective_values_v1
+  observation_policy: observed_effective_values_v2
 
 loader:
   processor_mode: auto

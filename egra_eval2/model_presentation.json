@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "naming_format": "model_group · official_model_name [· variant] (decoder)",
-  "models": {
+  "inference_setups": {
     "bookbot-orthographic-ctc": {
       "model_group": "Bookbot",
       "model_name": "wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm",

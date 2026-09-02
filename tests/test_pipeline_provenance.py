@@ -11,6 +11,7 @@ import pytest
 from inference.backfill_pipeline_provenance import backfill
 from inference.pipeline_provenance import (
     build_pipeline_provenance,
+    execution_environment_from_environment,
     infer_contract_references,
     resolve_contract_references,
     runtime_launch_context_from_environment,
@@ -30,13 +31,13 @@ def test_all_tracked_profiles_resolve_their_declared_contract() -> None:
         assert references == payload["pipeline_contract"]
         resolved = resolve_contract_references(references)
         assert resolved["audio_preparation"]["authority"]
-        assert resolved["inference"]["frontend"]["classification"] in {
+        assert resolved["input_processing"]["classification"] in {
             "canonical_model_frontend",
             "compatible_third_party_frontend",
             "deployment_parity_frontend",
         }
         assert resolved["evaluation"]["hypothesis_field"] == "pred_text"
-        assert resolved["runtime_resolution"]["unavailable_value_policy"] == {
+        assert resolved["observation_policy"]["unavailable_value_policy"] == {
             "status": "not_available",
             "require_reason": True,
             "guessing_forbidden": True,
@@ -60,7 +61,7 @@ def test_wav_header_summary_observes_format_without_decoding(tmp_path: Path) -> 
 
 
 def test_runtime_launch_context_records_container_identity_without_guessing() -> None:
-    context = runtime_launch_context_from_environment(
+    context = execution_environment_from_environment(
         {
             "PIPELINE_LAUNCH_ORCHESTRATOR": "docker_compose",
             "PIPELINE_LAUNCHER": "run_onnxruntime_inference.sh",
@@ -82,11 +83,12 @@ def test_runtime_launch_context_records_container_identity_without_guessing() ->
             "repo_digests": ["example/asr@sha256:def456"],
         },
     }
-    unavailable = runtime_launch_context_from_environment({})
+    unavailable = execution_environment_from_environment({})
     assert unavailable["status"] == "not_available"
+    assert runtime_launch_context_from_environment({}) == unavailable
 
 
-def test_all_profile_launchers_use_the_central_runtime_identity_helper() -> None:
+def test_all_profile_launchers_use_the_central_execution_environment_helper() -> None:
     repository = Path(__file__).resolve().parents[1]
     expected = {
         "run_nemo_inference.sh": ("nemo-asr", "voice-ai-evaluation-framework-asr:latest"),
@@ -122,11 +124,20 @@ def test_all_profile_launchers_use_the_central_runtime_identity_helper() -> None
 
     for launcher, (service, image) in expected.items():
         source = (repository / launcher).read_text(encoding="utf-8")
-        assert 'source "$SCRIPT_DIR/inference/runtime_identity.sh"' in source
-        assert "pipeline_runtime_docker_args" in source
+        assert (
+            'source "$SCRIPT_DIR/inference/execution_environment_identity.sh"'
+            in source
+        )
+        assert "pipeline_execution_environment_docker_args" in source
         assert f'"{service}"' in source
         assert f'"{image}"' in source
-        assert '"${PIPELINE_RUNTIME_DOCKER_ARGS[@]}"' in source
+        assert '"${PIPELINE_EXECUTION_ENVIRONMENT_DOCKER_ARGS[@]}"' in source
+
+    shim = (repository / "inference/runtime_identity.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'source "$SCRIPT_DIR/execution_environment_identity.sh"' in shim
+    assert "pipeline_runtime_docker_args" in shim
 
 
 def test_unknown_historical_profile_is_explicitly_not_available(tmp_path: Path) -> None:

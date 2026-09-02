@@ -463,7 +463,11 @@ def test_generation_kwargs_are_typed_before_model_loading(
     ("section", "value", "message"),
     [
         ("id", ["model"], "id is required"),
-        ("framework", {"name": "transformers"}, "framework is required"),
+        (
+            "framework",
+            {"name": "transformers"},
+            "inference_library is required",
+        ),
         ("language", ["sw"], "language must be a string or null"),
         ("task", ["transcribe"], "task must be a string"),
     ],
@@ -612,6 +616,12 @@ def test_all_tracked_profiles_are_valid_and_unique() -> None:
     ids: set[str] = set()
     for path in profile_paths:
         profile = load_profile(path)
+        payload = profile.to_dict()
+        assert payload["profile_schema_version"] == 2
+        assert "id" not in payload
+        assert "framework" not in payload
+        assert payload["inference_setup_id"] == profile.inference_setup_id
+        assert payload["inference_library"] == profile.inference_library
         assert profile.framework == path.parents[1].name
         assert profile.pipeline_contract is not None
         assert profile.parameter_evidence
@@ -629,6 +639,25 @@ def test_all_tracked_profiles_are_valid_and_unique() -> None:
         assert not missing, f"{path} lacks parameter evidence for: {sorted(missing)}"
         assert profile.id not in ids
         ids.add(profile.id)
+
+
+def test_v1_profile_normalizes_to_v2_and_conflicts_fail() -> None:
+    profile = parse_profile(BASE_PROFILE)
+    payload = profile.to_dict()
+
+    assert payload["profile_schema_version"] == 2
+    assert payload["inference_setup_id"] == BASE_PROFILE["id"]
+    assert payload["inference_library"] == BASE_PROFILE["framework"]
+    assert profile.id == profile.inference_setup_id
+    assert profile.framework == profile.inference_library
+
+    conflicting = dict(
+        BASE_PROFILE,
+        profile_schema_version=2,
+        inference_setup_id="different",
+    )
+    with pytest.raises(ProfileError, match="Conflicting profile fields"):
+        parse_profile(conflicting)
 
 
 @pytest.mark.parametrize(

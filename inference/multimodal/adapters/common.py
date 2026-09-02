@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from inference.profile import ModelProfile
+from inference.profile import InferenceProfile
 
 
 def torch_dtype_from_profile(value: str) -> torch.dtype:
@@ -29,7 +29,7 @@ def split_audio(
     audio: np.ndarray,
     *,
     sampling_rate: int,
-    profile: ModelProfile,
+    profile: InferenceProfile,
 ) -> list[np.ndarray]:
     """Split audio according to the profile while preserving source order."""
     if profile.audio is None:

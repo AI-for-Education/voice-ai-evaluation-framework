@@ -15,11 +15,11 @@ from tqdm import tqdm
 
 from inference.common import resolve_audio_paths
 from inference.contracts import ASRBackend, TranscriptionResult
-from inference.profile import ModelProfile
+from inference.profile import InferenceProfile
 from inference.pipeline_provenance import (
     PIPELINE_PROVENANCE_SCHEMA_VERSION,
     build_pipeline_provenance,
-    runtime_launch_context_from_environment,
+    execution_environment_from_environment,
     summarize_wav_headers,
 )
 from inference.provenance import (
@@ -57,16 +57,48 @@ def _warning_rows(
     ]
 
 
+def _legacy_profile_payload(profile: dict[str, Any]) -> dict[str, Any]:
+    """Build the v1 profile alias written for compatibility readers."""
+    legacy = dict(profile)
+    legacy.pop("profile_schema_version", None)
+    legacy["id"] = legacy.pop("inference_setup_id")
+    legacy["framework"] = legacy.pop("inference_library")
+    contract = legacy.get("pipeline_contract")
+    if isinstance(contract, dict) and contract.get("schema_version") == 2:
+        legacy["pipeline_contract"] = {
+            "schema_version": 1,
+            "audio_preparation": contract["audio_preparation"],
+            "inference": {
+                "artifact": contract["model_artifact"],
+                "frontend": contract["input_processing"],
+                "runtime": contract["execution_stack"],
+                "chunking": contract["chunking"],
+            },
+            "evaluation": contract["evaluation"],
+            "runtime_resolution": contract["observation_policy"],
+        }
+    return legacy
+
+
 def resolve_transcript_output_dir(
     *,
     output_root: str | Path,
-    profile_id: str,
+    inference_setup_id: str | None = None,
+    profile_id: str | None = None,
     smoke_test: bool,
     started_at: datetime,
 ) -> Path:
-    """Build the standard transcript directory for one model run."""
+    """Build the transcript directory for one inference run.
+
+    ``profile_id`` is the deprecated v1 alias for ``inference_setup_id``.
+    """
+    if inference_setup_id and profile_id and inference_setup_id != profile_id:
+        raise ValueError("Conflicting inference_setup_id and profile_id")
+    selected_id = inference_setup_id or profile_id
+    if not selected_id:
+        raise ValueError("inference_setup_id is required")
     timestamp = started_at.astimezone(timezone.utc).strftime("%Y_%m_%d_%H_%M_%S_UTC")
-    run_name = f"{_safe_run_component(profile_id)}_{timestamp}"
+    run_name = f"{_safe_run_component(selected_id)}_{timestamp}"
     base = Path(output_root)
     if smoke_test:
         base = base / "smoke_tests"
@@ -76,7 +108,7 @@ def resolve_transcript_output_dir(
 def run_backend(
     *,
     backend: ASRBackend,
-    profile: ModelProfile,
+    profile: InferenceProfile,
     profile_path: str,
     model_path: str,
     root_audio_dir: str | None,
@@ -103,7 +135,7 @@ def run_backend(
         )
         destination = resolve_transcript_output_dir(
             output_root=output_root,
-            profile_id=profile.id,
+            inference_setup_id=profile.inference_setup_id,
             smoke_test=smoke_test,
             started_at=started,
         )
@@ -111,14 +143,14 @@ def run_backend(
         output_manifest = destination / "transcriptions.jsonl"
         metadata_path = destination / "run_metadata.json"
         backend_metadata = backend.metadata()
-        print(f"[INFO] Model run: {destination.name}")
+        print(f"[INFO] Inference run: {destination.name}")
         print(f"[INFO] Device: {backend_metadata.get('device', 'unknown')}")
         print(f"[INFO] Audio files: {len(audio_paths)} | batch_size={batch_size}")
         print(f"[INFO] Transcript output: {destination}")
         with output_manifest.open("w", encoding="utf-8") as output:
             with tqdm(
                 total=len(audio_paths),
-                desc=f"Transcribing {profile.id}",
+                desc=f"Transcribing {profile.inference_setup_id}",
                 unit="file",
                 dynamic_ncols=True,
             ) as progress:
@@ -157,22 +189,23 @@ def run_backend(
         backend.close()
 
     profile_payload = profile.to_dict()
+    legacy_profile_payload = _legacy_profile_payload(profile_payload)
     profile_file = file_identity(profile_path)
     profile_file["canonical_content_sha256"] = canonical_json_sha256(profile_payload)
     selected_model_identity = model_identity(model_path, artifact=profile.artifact)
-    runtime_metadata = {
+    execution_stack_metadata = {
         "python": platform.python_version(),
         "platform": platform.platform(),
         "batch_size": batch_size,
         "argv": list(sys.argv),
         "packages": package_versions(),
-        "launch_context": runtime_launch_context_from_environment(),
+        "launch_context": execution_environment_from_environment(),
     }
     input_audio_summary = summarize_wav_headers(audio_paths)
     pipeline_provenance = build_pipeline_provenance(
         profile=profile_payload,
         backend=backend_metadata,
-        runtime=runtime_metadata,
+        execution_stack=execution_stack_metadata,
         model_identity=selected_model_identity,
         profile_link={
             "path": str(Path(profile_path)),
@@ -184,16 +217,29 @@ def run_backend(
         recording_mode="run_time",
     )
     metadata: dict[str, Any] = {
+        "metadata_schema_version": 2,
         "provenance_schema_version": PIPELINE_PROVENANCE_SCHEMA_VERSION,
         "status": "completed",
-        "profile": profile_payload,
+        "inference_setup_id": profile.inference_setup_id,
+        "run_id": destination.name,
+        "inference_profile": profile_payload,
+        "inference_profile_path": str(Path(profile_path)),
+        "inference_profile_identity": profile_file,
+        "model_artifact": {
+            "path": model_path,
+            "identity": selected_model_identity,
+        },
+        "inference_adapter": backend_metadata,
+        "execution_stack": execution_stack_metadata,
+        # Deprecated v1 aliases are dual-written for existing readers.
+        "profile": legacy_profile_payload,
         "profile_path": str(Path(profile_path)),
         "profile_identity": profile_file,
         "model_path": model_path,
         "model_identity": selected_model_identity,
         "repository": git_identity(),
         "backend": backend_metadata,
-        "runtime": runtime_metadata,
+        "runtime": execution_stack_metadata,
         "input": {
             "root_audio_dir": root_audio_dir,
             "audio_manifest": audio_manifest,
@@ -211,6 +257,15 @@ def run_backend(
         "warnings": observed_warnings,
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "pipeline_provenance": pipeline_provenance,
+        "deprecated_aliases": {
+            "profile": "inference_profile",
+            "profile_path": "inference_profile_path",
+            "profile_identity": "inference_profile_identity",
+            "model_path": "model_artifact.path",
+            "model_identity": "model_artifact.identity",
+            "backend": "inference_adapter",
+            "runtime": "execution_stack",
+        },
     }
     # Evaluation consumes the backend's unmodified pred_text.
     metadata_path.write_text(

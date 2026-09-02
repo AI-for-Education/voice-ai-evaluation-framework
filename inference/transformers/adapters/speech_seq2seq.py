@@ -16,7 +16,7 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
-from inference.profile import ModelProfile, ProfileError
+from inference.profile import InferenceProfile, ProfileError
 from inference.provenance import generation_provenance
 from inference.transformers.adapters.ctc import (
     _loader_dtype,
@@ -34,12 +34,15 @@ class TransformersSpeechSeq2SeqBackend:
 
     def __init__(
         self,
-        profile: ModelProfile,
+        profile: InferenceProfile,
         model_path: str | Path,
         *,
         device: torch.device | None = None,
     ) -> None:
-        if profile.framework != "transformers" or profile.adapter != "speech_seq2seq":
+        if (
+            profile.inference_library != "transformers"
+            or profile.adapter != "speech_seq2seq"
+        ):
             raise ProfileError(
                 "TransformersSpeechSeq2SeqBackend requires a "
                 "transformers/speech_seq2seq profile"
@@ -283,7 +286,8 @@ class TransformersSpeechSeq2SeqBackend:
 
     def metadata(self) -> dict[str, Any]:
         return {
-            "framework": "transformers",
+            "inference_library": "transformers",
+            "framework": "transformers",  # Deprecated metadata alias.
             "adapter": "speech_seq2seq",
             "model_class": self._model_class,
             "processor_class": self._processor_class,

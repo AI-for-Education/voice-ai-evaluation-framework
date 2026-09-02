@@ -10,7 +10,7 @@ import numpy as np
 
 from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
-from inference.profile import ModelProfile, ProfileError
+from inference.profile import InferenceProfile, ProfileError
 
 
 SAMPLE_RATE = 16000
@@ -35,13 +35,16 @@ class SherpaOnnxOnlineTransducerBackend:
 
     def __init__(
         self,
-        profile: ModelProfile,
+        profile: InferenceProfile,
         model_path: str | Path,
         *,
         provider: str | None = None,
         num_threads: int = 2,
     ) -> None:
-        if profile.framework != "sherpa_onnx" or profile.adapter != "online_transducer":
+        if (
+            profile.inference_library != "sherpa_onnx"
+            or profile.adapter != "online_transducer"
+        ):
             raise ProfileError(
                 "SherpaOnnxOnlineTransducerBackend requires a "
                 "sherpa_onnx/online_transducer profile"
@@ -200,7 +203,8 @@ class SherpaOnnxOnlineTransducerBackend:
         except importlib.metadata.PackageNotFoundError:
             version = str(getattr(self._sherpa_onnx, "__version__", "unknown"))
         payload = {
-            "framework": "sherpa_onnx",
+            "inference_library": "sherpa_onnx",
+            "framework": "sherpa_onnx",  # Deprecated metadata alias.
             "adapter": "online_transducer",
             "device": "cuda:0" if self.provider == "cuda" else "cpu",
             "provider": self.provider,

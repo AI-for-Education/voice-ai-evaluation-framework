@@ -25,7 +25,7 @@ from transformers import (
 
 from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
-from inference.profile import CTCLMConfig, ModelProfile, ProfileError
+from inference.profile import CTCLMConfig, InferenceProfile, ProfileError
 
 
 _LM_REQUIRED_FILES = (
@@ -114,12 +114,12 @@ class TransformersCTCBackend:
 
     def __init__(
         self,
-        profile: ModelProfile,
+        profile: InferenceProfile,
         model_path: str | Path,
         *,
         device: torch.device | None = None,
     ) -> None:
-        if profile.framework != "transformers" or profile.adapter != "ctc":
+        if profile.inference_library != "transformers" or profile.adapter != "ctc":
             raise ProfileError(
                 "TransformersCTCBackend requires a transformers/ctc profile"
             )
@@ -367,7 +367,9 @@ class TransformersCTCBackend:
             )
 
     def _is_mms_profile(self) -> bool:
-        identity = f"{self.profile.id}/{self.profile.artifact}".lower()
+        identity = (
+            f"{self.profile.inference_setup_id}/{self.profile.artifact}"
+        ).lower()
         return "mms" in identity
 
     def _configure_language_adapter(self) -> None:
@@ -505,7 +507,8 @@ class TransformersCTCBackend:
 
     def metadata(self) -> dict[str, Any]:
         metadata = {
-            "framework": "transformers",
+            "inference_library": "transformers",
+            "framework": "transformers",  # Deprecated metadata alias.
             "adapter": "ctc",
             "strategy": self.profile.decoding.strategy,
             "decoder_call": self._decoder_call,

@@ -1,4 +1,4 @@
-"""Shared contracts for framework-specific ASR inference backends."""
+"""Shared contracts for inference-library adapters."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any, Protocol, Sequence, runtime_checkable
 
 @dataclass(frozen=True)
 class TranscriptionResult:
-    """One framework-neutral ASR result row."""
+    """One inference-library-neutral ASR result row."""
 
     audio_filepath: str
     duration: float
@@ -28,13 +28,13 @@ class TranscriptionResult:
 
 @runtime_checkable
 class ASRBackend(Protocol):
-    """Small interface implemented by every inference-family adapter."""
+    """Compatibility-named interface implemented by every inference adapter."""
 
     def transcribe_batch(self, audio_paths: Sequence[str]) -> list[TranscriptionResult]:
         """Transcribe paths in order and return exactly one result per path."""
 
     def metadata(self) -> dict[str, Any]:
-        """Return serializable runtime metadata for the current backend."""
+        """Return serializable adapter and execution metadata."""
 
     def close(self) -> None:
         """Release model resources held by the backend."""

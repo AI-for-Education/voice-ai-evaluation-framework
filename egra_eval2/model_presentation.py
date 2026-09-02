@@ -1,4 +1,4 @@
-"""Presentation-only model names, separate from stable inference identities."""
+"""Presentation-only model names keyed by stable inference-setup identities."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ from typing import Any, Mapping
 from egra_eval2.leaderboard_context import decoder_slug
 
 
-MODEL_PRESENTATION_SCHEMA_VERSION = 1
+INFERENCE_SETUP_PRESENTATION_SCHEMA_VERSION = 2
+# Deprecated public constant retained for import compatibility.
+MODEL_PRESENTATION_SCHEMA_VERSION = INFERENCE_SETUP_PRESENTATION_SCHEMA_VERSION
 MODEL_PRESENTATION_REGISTRY_PATH = Path(__file__).with_name(
     "model_presentation.json"
 )
@@ -20,6 +22,7 @@ _ARCHITECTURE_EVIDENCE_STATUSES = {
     "not_available",
 }
 MODEL_NAME_MAPPING_COLUMNS = [
+    "previous_inference_setup_id",
     "previous_model_id",
     "previous_presentation_name",
     "model_group",
@@ -31,6 +34,7 @@ MODEL_NAME_MAPPING_COLUMNS = [
     "architecture_evidence_status",
     "architecture_evidence_source",
     "decoder",
+    "execution_target",
     "platform",
     "leaderboard_status",
     "new_presentation_name",
@@ -43,44 +47,67 @@ def load_model_presentation_registry(
     """Load and validate the centralized stable-ID-to-presentation mapping."""
     registry_path = Path(path)
     payload = json.loads(registry_path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != MODEL_PRESENTATION_SCHEMA_VERSION:
+    schema_version = payload.get("schema_version")
+    if schema_version not in {1, INFERENCE_SETUP_PRESENTATION_SCHEMA_VERSION}:
         raise ValueError(f"Unsupported model presentation registry: {registry_path}")
     naming_format = payload.get("naming_format")
     if not isinstance(naming_format, str) or not naming_format.strip():
         raise ValueError(
             f"Model presentation registry has no naming format: {registry_path}"
         )
-    models = payload.get("models")
-    if not isinstance(models, dict):
-        raise ValueError(f"Model presentation registry has no models: {registry_path}")
-    for model_id, entry in models.items():
-        if not isinstance(model_id, str) or not model_id.strip():
-            raise ValueError("Model presentation registry contains an empty model ID")
+    inference_setups = payload.get("inference_setups")
+    deprecated_models = payload.get("models")
+    if inference_setups is not None and deprecated_models is not None:
+        if inference_setups != deprecated_models:
+            raise ValueError(
+                "Model presentation registry has conflicting inference_setups "
+                "and deprecated models fields"
+            )
+    if inference_setups is None:
+        inference_setups = deprecated_models
+    if not isinstance(inference_setups, dict):
+        raise ValueError(
+            f"Model presentation registry has no inference setups: {registry_path}"
+        )
+    for inference_setup_id, entry in inference_setups.items():
+        if not isinstance(inference_setup_id, str) or not inference_setup_id.strip():
+            raise ValueError(
+                "Model presentation registry contains an empty inference-setup ID"
+            )
         if not isinstance(entry, dict):
-            raise ValueError(f"Invalid presentation entry for {model_id}")
+            raise ValueError(f"Invalid presentation entry for {inference_setup_id}")
         for field in ("model_group", "model_name"):
             value = entry.get(field)
             if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"Invalid {field} for {model_id}")
+                raise ValueError(f"Invalid {field} for {inference_setup_id}")
         if not isinstance(entry.get("variant"), str):
-            raise ValueError(f"Invalid variant for {model_id}")
+            raise ValueError(f"Invalid variant for {inference_setup_id}")
         for field in ("official_model_url", "official_model_url_note"):
             value = entry.get(field)
             if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"Invalid {field} for {model_id}")
+                raise ValueError(f"Invalid {field} for {inference_setup_id}")
         architecture = entry.get("architecture")
         if not isinstance(architecture, dict):
-            raise ValueError(f"Invalid architecture for {model_id}")
+            raise ValueError(f"Invalid architecture for {inference_setup_id}")
         for field in ("label", "evidence_status", "source"):
             value = architecture.get(field)
             if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"Invalid architecture.{field} for {model_id}")
+                raise ValueError(
+                    f"Invalid architecture.{field} for {inference_setup_id}"
+                )
         if architecture["evidence_status"] not in _ARCHITECTURE_EVIDENCE_STATUSES:
             raise ValueError(
-                f"Invalid architecture evidence status for {model_id}: "
+                "Invalid architecture evidence status for "
+                f"{inference_setup_id}: "
                 f"{architecture['evidence_status']}"
             )
-    return payload
+    return {
+        **payload,
+        "schema_version": INFERENCE_SETUP_PRESENTATION_SCHEMA_VERSION,
+        "inference_setups": inference_setups,
+        # Deprecated normalized alias for existing Python consumers.
+        "models": inference_setups,
+    }
 
 
 @lru_cache(maxsize=1)
@@ -88,9 +115,9 @@ def default_model_presentation_registry() -> dict[str, Any]:
     return load_model_presentation_registry()
 
 
-def presentation_for_model(model_id: str) -> dict[str, Any]:
-    models = default_model_presentation_registry()["models"]
-    entry = models.get(model_id)
+def presentation_for_inference_setup(inference_setup_id: str) -> dict[str, Any]:
+    inference_setups = default_model_presentation_registry()["inference_setups"]
+    entry = inference_setups.get(inference_setup_id)
     if isinstance(entry, dict):
         return {
             **entry,
@@ -98,17 +125,25 @@ def presentation_for_model(model_id: str) -> dict[str, Any]:
         }
     return {
         "model_group": "Uncatalogued",
-        "model_name": model_id,
+        "model_name": inference_setup_id,
         "variant": "Unspecified",
         "official_model_url": "",
         "official_model_url_note": "No official model page is registered",
         "architecture": {
             "label": "not available",
             "evidence_status": "not_available",
-            "source": "No presentation registry entry exists for this model ID",
+            "source": (
+                "No presentation registry entry exists for this "
+                "inference-setup ID"
+            ),
         },
         "mapping_status": "fallback",
     }
+
+
+def presentation_for_model(model_id: str) -> dict[str, Any]:
+    """Deprecated alias for :func:`presentation_for_inference_setup`."""
+    return presentation_for_inference_setup(model_id)
 
 
 def structured_model_label(presentation: dict[str, Any], decoder: str) -> str:
@@ -129,31 +164,35 @@ def build_name_mapping_rows(
     profile-derived values fill the rows for registered models not yet evaluated.
     """
     registry = default_model_presentation_registry()
-    model_ids = sorted(
-        set(registry["models"]) | set(profile_context_by_id) | set(evaluated_by_id)
+    inference_setup_ids = sorted(
+        set(registry["inference_setups"])
+        | set(profile_context_by_id)
+        | set(evaluated_by_id)
     )
     rows: list[dict[str, str]] = []
-    for model_id in model_ids:
-        evaluated = evaluated_by_id.get(model_id)
+    for inference_setup_id in inference_setup_ids:
+        evaluated = evaluated_by_id.get(inference_setup_id)
         if evaluated is not None:
             decoder = str(evaluated.get("decoding") or "not recorded")
             platform = str(evaluated.get("platform") or "platform-not-recorded")
             leaderboard_status = "evaluated"
         else:
-            profile_context = profile_context_by_id.get(model_id, {})
+            profile_context = profile_context_by_id.get(inference_setup_id, {})
             decoder = str(profile_context.get("decoder") or "not recorded")
             platform = str(
                 profile_context.get("platform") or "platform-not-recorded"
             )
             leaderboard_status = "profile_only"
 
-        presentation = presentation_for_model(model_id)
+        presentation = presentation_for_inference_setup(inference_setup_id)
         architecture = presentation["architecture"]
         rows.append(
             {
-                "previous_model_id": model_id,
+                "previous_inference_setup_id": inference_setup_id,
+                # Deprecated v1 alias retained in the mapping CSV.
+                "previous_model_id": inference_setup_id,
                 "previous_presentation_name": (
-                    f"{platform} · {decoder_slug(decoder)} · {model_id}"
+                    f"{platform} · {decoder_slug(decoder)} · {inference_setup_id}"
                 ),
                 "model_group": presentation["model_group"],
                 "model_name": presentation["model_name"],
@@ -164,6 +203,8 @@ def build_name_mapping_rows(
                 "architecture_evidence_status": architecture["evidence_status"],
                 "architecture_evidence_source": architecture["source"],
                 "decoder": decoder,
+                "execution_target": platform,
+                # Deprecated v1 alias retained in the mapping CSV.
                 "platform": platform,
                 "leaderboard_status": leaderboard_status,
                 "new_presentation_name": structured_model_label(

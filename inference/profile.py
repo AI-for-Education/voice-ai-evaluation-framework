@@ -1,4 +1,4 @@
-"""Strict, portable YAML model profiles for offline inference."""
+"""Strict, portable YAML inference profiles for offline inference."""
 
 from __future__ import annotations
 
@@ -15,6 +15,10 @@ except ImportError:  # pragma: no cover - exercised only in incomplete environme
 
 
 _TOP_LEVEL_KEYS = {
+    "profile_schema_version",
+    "inference_setup_id",
+    "inference_library",
+    # Deprecated v1 aliases accepted only for compatibility.
     "id",
     "framework",
     "adapter",
@@ -96,18 +100,28 @@ _PARAMETER_EVIDENCE_LEVELS = {
     "project",
     "unvalidated",
 }
-_PIPELINE_CONTRACT_KEYS = {
+_PIPELINE_CONTRACT_V1_KEYS = {
     "schema_version",
     "audio_preparation",
     "inference",
     "evaluation",
     "runtime_resolution",
 }
-_PIPELINE_INFERENCE_KEYS = {
+_PIPELINE_INFERENCE_V1_KEYS = {
     "artifact",
     "frontend",
     "runtime",
     "chunking",
+}
+_PIPELINE_CONTRACT_V2_KEYS = {
+    "schema_version",
+    "audio_preparation",
+    "model_artifact",
+    "input_processing",
+    "execution_stack",
+    "chunking",
+    "evaluation",
+    "observation_policy",
 }
 _ADAPTERS = {
     "multimodal": {"gemma4_audio", "phi4_audio", "qwen_omni_audio"},
@@ -119,7 +133,7 @@ _ADAPTERS = {
 
 
 class ProfileError(ValueError):
-    """Raised when a model profile is invalid."""
+    """Raised when an inference profile is invalid."""
 
 
 @dataclass(frozen=True)
@@ -147,7 +161,7 @@ class TransducerSearchConfig:
     max_active_paths: int
 
 
-# No post-decoding mutation config is exposed by model profiles.
+# No post-decoding mutation config is exposed by inference profiles.
 
 
 @dataclass(frozen=True)
@@ -192,26 +206,21 @@ class ParameterEvidence:
 
 
 @dataclass(frozen=True)
-class InferencePipelineContract:
-    artifact: str
-    frontend: str
-    runtime: str
-    chunking: str
-
-
-@dataclass(frozen=True)
 class PipelineContract:
     schema_version: int
     audio_preparation: str
-    inference: InferencePipelineContract
+    model_artifact: str
+    input_processing: str
+    execution_stack: str
+    chunking: str
     evaluation: str
-    runtime_resolution: str
+    observation_policy: str
 
 
 @dataclass(frozen=True)
-class ModelProfile:
-    id: str
-    framework: str
+class InferenceProfile:
+    inference_setup_id: str
+    inference_library: str
     adapter: str
     artifact: str
     language: str | None
@@ -228,8 +237,19 @@ class ModelProfile:
     pipeline_contract: PipelineContract | None = None
     parameter_evidence: tuple[ParameterEvidence, ...] = ()
 
+    @property
+    def id(self) -> str:
+        """Deprecated v1 alias for ``inference_setup_id``."""
+        return self.inference_setup_id
+
+    @property
+    def framework(self) -> str:
+        """Deprecated v1 alias for ``inference_library``."""
+        return self.inference_library
+
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload = {"profile_schema_version": 2, **payload}
         if payload["loader"]["attention_implementation"] is None:
             # Profiles created before parameter provenance was introduced keep
             # their existing serialized shape and effective adapter defaults.
@@ -267,6 +287,10 @@ class ModelProfile:
         if payload["decoding"]["long_form"] is None:
             del payload["decoding"]["long_form"]
         return payload
+
+
+# Import compatibility for callers that still use the v1 type name.
+ModelProfile = InferenceProfile
 
 
 def _unknown_keys(data: dict[str, Any], allowed: set[str], section: str) -> None:
@@ -439,55 +463,62 @@ def _build_pipeline_contract(value: Any) -> PipelineContract | None:
     if value is None:
         return None
     data = _require_mapping(value, "pipeline_contract")
-    _unknown_keys(data, _PIPELINE_CONTRACT_KEYS, "pipeline_contract")
-    missing = sorted(_PIPELINE_CONTRACT_KEYS - set(data))
-    if missing:
-        raise ProfileError(
-            "pipeline_contract is missing required key(s): " + ", ".join(missing)
+    schema_version = data.get("schema_version")
+    if schema_version == 1:
+        _unknown_keys(data, _PIPELINE_CONTRACT_V1_KEYS, "pipeline_contract")
+        missing = sorted(_PIPELINE_CONTRACT_V1_KEYS - set(data))
+        if missing:
+            raise ProfileError(
+                "pipeline_contract is missing required key(s): " + ", ".join(missing)
+            )
+        inference_data = _require_mapping(
+            data["inference"], "pipeline_contract.inference"
         )
-    if data["schema_version"] != 1:
-        raise ProfileError("pipeline_contract.schema_version must be 1")
-
-    audio_preparation = data["audio_preparation"]
-    evaluation = data["evaluation"]
-    runtime_resolution = data["runtime_resolution"]
-    for path, item in (
-        ("pipeline_contract.audio_preparation", audio_preparation),
-        ("pipeline_contract.evaluation", evaluation),
-        ("pipeline_contract.runtime_resolution", runtime_resolution),
-    ):
-        if not isinstance(item, str) or not item.strip():
-            raise ProfileError(f"{path} must be a non-empty contract reference")
-
-    inference_data = _require_mapping(
-        data["inference"], "pipeline_contract.inference"
-    )
-    _unknown_keys(
-        inference_data,
-        _PIPELINE_INFERENCE_KEYS,
-        "pipeline_contract.inference",
-    )
-    missing = sorted(_PIPELINE_INFERENCE_KEYS - set(inference_data))
-    if missing:
-        raise ProfileError(
-            "pipeline_contract.inference is missing required key(s): "
-            + ", ".join(missing)
+        _unknown_keys(
+            inference_data,
+            _PIPELINE_INFERENCE_V1_KEYS,
+            "pipeline_contract.inference",
         )
-    normalized: dict[str, str] = {}
-    for key in sorted(_PIPELINE_INFERENCE_KEYS):
-        item = inference_data[key]
+        missing = sorted(_PIPELINE_INFERENCE_V1_KEYS - set(inference_data))
+        if missing:
+            raise ProfileError(
+                "pipeline_contract.inference is missing required key(s): "
+                + ", ".join(missing)
+            )
+        normalized: dict[str, Any] = {
+            "schema_version": 2,
+            "audio_preparation": data["audio_preparation"],
+            "model_artifact": inference_data["artifact"],
+            "input_processing": inference_data["frontend"],
+            "execution_stack": inference_data["runtime"],
+            "chunking": inference_data["chunking"],
+            "evaluation": data["evaluation"],
+            "observation_policy": (
+                "observed_effective_values_v2"
+                if data["runtime_resolution"] == "observed_effective_values_v1"
+                else data["runtime_resolution"]
+            ),
+        }
+    elif schema_version == 2:
+        _unknown_keys(data, _PIPELINE_CONTRACT_V2_KEYS, "pipeline_contract")
+        missing = sorted(_PIPELINE_CONTRACT_V2_KEYS - set(data))
+        if missing:
+            raise ProfileError(
+                "pipeline_contract is missing required key(s): " + ", ".join(missing)
+            )
+        normalized = dict(data)
+    else:
+        raise ProfileError("pipeline_contract.schema_version must be 1 or 2")
+
+    for key in sorted(_PIPELINE_CONTRACT_V2_KEYS - {"schema_version"}):
+        item = normalized[key]
         if not isinstance(item, str) or not item.strip():
             raise ProfileError(
-                f"pipeline_contract.inference.{key} must be a non-empty "
-                "contract reference"
+                f"pipeline_contract.{key} must be a non-empty contract reference"
             )
         normalized[key] = item.strip()
     contract = PipelineContract(
-        schema_version=1,
-        audio_preparation=audio_preparation.strip(),
-        inference=InferencePipelineContract(**normalized),
-        evaluation=evaluation.strip(),
-        runtime_resolution=runtime_resolution.strip(),
+        **normalized,
     )
     # Keep profile references fail-closed against the tracked registry while
     # leaving the registry definitions out of each compact model YAML.
@@ -495,15 +526,14 @@ def _build_pipeline_contract(value: Any) -> PipelineContract | None:
 
     resolved = resolve_contract_references(asdict(contract))
 
-    resolved_inference = resolved["inference"]
     resolved_sections = [
         resolved["audio_preparation"],
-        resolved_inference["artifact"],
-        resolved_inference["frontend"],
-        resolved_inference["runtime"],
-        resolved_inference["chunking"],
+        resolved["model_artifact"],
+        resolved["input_processing"],
+        resolved["execution_stack"],
+        resolved["chunking"],
         resolved["evaluation"],
-        resolved["runtime_resolution"],
+        resolved["observation_policy"],
     ]
     if any(
         isinstance(section, dict) and section.get("status") == "not_available"
@@ -750,7 +780,7 @@ def _build_hardware(data: dict[str, Any]) -> HardwareConfig:
 
 
 def _build_decoding(
-    data: dict[str, Any], framework: str, adapter: str
+    data: dict[str, Any], inference_library: str, adapter: str
 ) -> DecodingConfig:
     _unknown_keys(data, _DECODING_KEYS, "decoding")
     if "strategy" not in data:
@@ -796,10 +826,11 @@ def _build_decoding(
             "modified_beam_search",
         },
         ("nemo", "nemo"): {"ctc", "rnnt"},
-    }[(framework, adapter)]
+    }[(inference_library, adapter)]
     if strategy not in expected:
         raise ProfileError(
-            f"decoding.strategy '{strategy}' is invalid for {framework}/{adapter}; "
+            "decoding.strategy "
+            f"'{strategy}' is invalid for {inference_library}/{adapter}; "
             f"expected one of: {', '.join(sorted(expected))}"
         )
     if (
@@ -833,9 +864,9 @@ def _build_decoding(
             "decoding.transducer_search_kwargs is only valid for "
             "modified_beam_search decoding"
         )
-    # Decoder output is returned directly for every framework.
+    # Decoder output is returned directly for every inference library.
     if long_form is not None and (
-        framework,
+        inference_library,
         adapter,
     ) != ("transformers", "speech_seq2seq"):
         raise ProfileError(
@@ -855,23 +886,56 @@ def _build_decoding(
     )
 
 
-def parse_profile(data: Any) -> ModelProfile:
-    """Validate parsed YAML and return an immutable model profile."""
+def _canonical_profile_value(
+    data: dict[str, Any], canonical: str, deprecated: str
+) -> Any:
+    """Return one schema value and reject conflicting v1/v2 aliases."""
+    canonical_value = data.get(canonical)
+    deprecated_value = data.get(deprecated)
+    if (
+        canonical in data
+        and deprecated in data
+        and canonical_value != deprecated_value
+    ):
+        raise ProfileError(
+            f"Conflicting profile fields: {canonical} and deprecated {deprecated}"
+        )
+    return canonical_value if canonical in data else deprecated_value
+
+
+def parse_profile(data: Any) -> InferenceProfile:
+    """Validate parsed YAML and return an immutable inference profile."""
     if not isinstance(data, dict):
-        raise ProfileError("Model profile must contain a YAML mapping")
+        raise ProfileError("Inference profile must contain a YAML mapping")
     _unknown_keys(data, _TOP_LEVEL_KEYS, "profile")
 
-    for key in ("id", "framework", "adapter", "artifact"):
-        if not isinstance(data.get(key), str) or not data[key].strip():
+    profile_schema_version = data.get("profile_schema_version", 1)
+    if profile_schema_version not in {1, 2}:
+        raise ProfileError("profile_schema_version must be 1 or 2")
+    inference_setup_id = _canonical_profile_value(
+        data, "inference_setup_id", "id"
+    )
+    inference_library = _canonical_profile_value(
+        data, "inference_library", "framework"
+    )
+    required_values = {
+        "inference_setup_id": inference_setup_id,
+        "inference_library": inference_library,
+        "adapter": data.get("adapter"),
+        "artifact": data.get("artifact"),
+    }
+    for key, value in required_values.items():
+        if not isinstance(value, str) or not value.strip():
             raise ProfileError(f"{key} is required")
 
-    framework = data["framework"].strip()
+    inference_library = inference_library.strip()
     adapter = data["adapter"].strip()
-    if framework not in _ADAPTERS:
-        raise ProfileError(f"Unsupported framework: {framework}")
-    if adapter not in _ADAPTERS[framework]:
+    if inference_library not in _ADAPTERS:
+        raise ProfileError(f"Unsupported inference library: {inference_library}")
+    if adapter not in _ADAPTERS[inference_library]:
         raise ProfileError(
-            f"Unsupported adapter '{adapter}' for framework '{framework}'"
+            f"Unsupported adapter '{adapter}' for inference library "
+            f"'{inference_library}'"
         )
 
     task_value = data.get("task", "transcribe")
@@ -902,22 +966,23 @@ def parse_profile(data: Any) -> ModelProfile:
 
     loader = _build_loader(
         _require_mapping(data.get("loader"), "loader"),
-        allow_trusted_local_code=(framework, adapter) == ("multimodal", "phi4_audio"),
+        allow_trusted_local_code=(inference_library, adapter)
+        == ("multimodal", "phi4_audio"),
     )
     if loader.processor_mode in {"wav2vec2_plain", "wav2vec2_with_lm"} and (
-        framework,
+        inference_library,
         adapter,
     ) != ("transformers", "ctc"):
         raise ProfileError(
             f"loader.processor_mode '{loader.processor_mode}' is only valid for "
             "transformers/ctc"
         )
-    if framework == "nemo" and loader.torch_dtype != "auto":
+    if inference_library == "nemo" and loader.torch_dtype != "auto":
         raise ProfileError("loader.torch_dtype must be auto for the NeMo backend")
 
     prompt_value = data.get("prompt")
     audio_value = data.get("audio")
-    if framework == "multimodal":
+    if inference_library == "multimodal":
         if not isinstance(prompt_value, str) or not prompt_value.strip():
             raise ProfileError("multimodal profiles require a non-empty prompt")
         prompt = prompt_value.strip()
@@ -937,7 +1002,10 @@ def parse_profile(data: Any) -> ModelProfile:
             raise ProfileError("prompt is only valid for multimodal profiles")
         prompt = None
         if audio_value is not None:
-            if (framework, adapter) != ("transformers", "speech_seq2seq"):
+            if (inference_library, adapter) != (
+                "transformers",
+                "speech_seq2seq",
+            ):
                 raise ProfileError(
                     "audio is only valid for multimodal profiles or "
                     "transformers/speech_seq2seq"
@@ -951,7 +1019,7 @@ def parse_profile(data: Any) -> ModelProfile:
         if hardware_value is not None
         else None
     )
-    if hardware is not None and framework != "multimodal":
+    if hardware is not None and inference_library != "multimodal":
         raise ProfileError("hardware is only valid for multimodal profiles")
     if adapter == "phi4_audio":
         if hardware is None or hardware.memory_strategy != "cpu_disk_offload":
@@ -973,7 +1041,9 @@ def parse_profile(data: Any) -> ModelProfile:
             "hardware is only used by phi4_audio and qwen_omni_audio profiles"
         )
     decoding = _build_decoding(
-        _require_mapping(data.get("decoding"), "decoding"), framework, adapter
+        _require_mapping(data.get("decoding"), "decoding"),
+        inference_library,
+        adapter,
     )
     if audio is not None and decoding.long_form is not None:
         raise ProfileError(
@@ -1003,9 +1073,9 @@ def parse_profile(data: Any) -> ModelProfile:
     )
     pipeline_contract = _build_pipeline_contract(data.get("pipeline_contract"))
 
-    return ModelProfile(
-        id=data["id"].strip(),
-        framework=framework,
+    return InferenceProfile(
+        inference_setup_id=inference_setup_id.strip(),
+        inference_library=inference_library,
         adapter=adapter,
         artifact=_validate_artifact(data["artifact"]),
         language=(language_value.strip() if language_value else None),
@@ -1024,47 +1094,60 @@ def parse_profile(data: Any) -> ModelProfile:
 
 
 def load_profile(
-    path: str | Path, *, expected_framework: str | None = None
-) -> ModelProfile:
-    """Load and validate one tracked YAML model profile."""
+    path: str | Path,
+    *,
+    expected_inference_library: str | None = None,
+    expected_framework: str | None = None,
+) -> InferenceProfile:
+    """Load and validate one tracked YAML inference profile."""
     if yaml is None:
-        raise ProfileError("PyYAML is required to load --model_config profiles")
+        raise ProfileError("PyYAML is required to load inference profiles")
+    if (
+        expected_inference_library
+        and expected_framework
+        and expected_inference_library != expected_framework
+    ):
+        raise ProfileError(
+            "Conflicting expected_inference_library and expected_framework"
+        )
     profile_path = Path(path)
     if not profile_path.is_file():
-        raise ProfileError(f"Model profile not found: {profile_path}")
+        raise ProfileError(f"Inference profile not found: {profile_path}")
     try:
         data = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise ProfileError(f"Invalid YAML in {profile_path}: {exc}") from exc
     profile = parse_profile(data)
-    if expected_framework and profile.framework != expected_framework:
+    expected = expected_inference_library or expected_framework
+    if expected and profile.inference_library != expected:
         raise ProfileError(
-            f"Profile framework is '{profile.framework}', expected '{expected_framework}'"
+            "Profile inference library is "
+            f"'{profile.inference_library}', expected '{expected}'"
         )
     return profile
 
 
-def default_model_root(framework: str) -> Path:
-    """Return a framework-local model root, overridable inside containers."""
+def default_model_root(inference_library: str) -> Path:
+    """Return an inference-library model root, overridable in containers."""
     override = os.environ.get("ASR_MODEL_ROOT", "").strip()
     if override:
         return Path(override)
-    if framework not in _ADAPTERS:
-        raise ProfileError(f"Unsupported framework: {framework}")
-    return Path(__file__).resolve().parent / framework / "models"
+    if inference_library not in _ADAPTERS:
+        raise ProfileError(f"Unsupported inference library: {inference_library}")
+    return Path(__file__).resolve().parent / inference_library / "models"
 
 
 def resolve_model_path(
-    profile: ModelProfile,
+    profile: InferenceProfile,
     *,
     model_root: str | Path | None = None,
     require_exists: bool = True,
 ) -> Path:
-    """Resolve a profile artifact below its framework model root."""
+    """Resolve a model artifact below its inference-library model root."""
     root = (
         Path(model_root)
         if model_root is not None
-        else default_model_root(profile.framework)
+        else default_model_root(profile.inference_library)
     )
     root = root.resolve()
     candidate = (root / profile.artifact).resolve()
@@ -1076,6 +1159,7 @@ def resolve_model_path(
         ) from exc
     if require_exists and not candidate.exists():
         raise ProfileError(
-            f"Model artifact not found for profile '{profile.id}': {candidate}"
+            "Model artifact not found for inference setup "
+            f"'{profile.inference_setup_id}': {candidate}"
         )
     return candidate

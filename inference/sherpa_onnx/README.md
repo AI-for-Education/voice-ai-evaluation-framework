@@ -1,14 +1,17 @@
 # Sherpa-ONNX inference
 
 This package runs the BookBot streaming Zipformer model through Sherpa-ONNX.
-It uses the same profile, input manifest, progress display, timestamped output,
+It uses the same inference profile, input manifest, progress display, timestamped output,
 and `transcriptions.jsonl` contract as the NeMo and Transformers launchers.
 
 ## Why this has its own folder
 
 Hugging Face hosts the model files, but the files are ONNX encoder, decoder,
-and joiner graphs. Hugging Face Transformers cannot load that model. The
-runtime is therefore represented honestly as a third framework:
+and joiner graphs. Hugging Face Transformers cannot load that model. This is a
+separate inference route: Zipformer runs through Sherpa-ONNX using ONNX
+Runtime. Sherpa-ONNX is the inference library; ONNX Runtime is the inference
+engine installed in the container. Neither one is bundled inside the model
+files.
 
 ```text
 inference/sherpa_onnx/
@@ -40,7 +43,7 @@ models/sherpa-onnx-zipformer-streaming-robust-sw-v4/
 
 ```bash
 ./run_sherpa_onnx_inference.sh \
-  --model_config inference/sherpa_onnx/profiles/zipformer-streaming-robust-sw-v4.yaml \
+  --inference_profile inference/sherpa_onnx/profiles/zipformer-streaming-robust-sw-v4.yaml \
   --audio_manifest input_output_data/output/experiments/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
   --batch_size 8
 ```
@@ -48,17 +51,18 @@ models/sherpa-onnx-zipformer-streaming-robust-sw-v4/
 The completed modified-beam baseline uses the identical manifest input and
 `transcriptions.jsonl` output schema as greedy. Its unique profile ID keeps its
 timestamped transcript and evaluation directories separate, and the evidence
-record identifies four active paths as the Sherpa runtime default.
+record identifies four active paths as the documented Sherpa-ONNX search
+default.
 
 Add `--smoke_test` when using a small test manifest. Normal and smoke-test
-outputs follow the same paths as the other frameworks:
+outputs follow the same paths as the other inference routes:
 
 ```text
-input_output_data/output/transcripts/<profile-id>_<timestamp>/
-input_output_data/output/smoke_tests/transcripts/<profile-id>_<timestamp>/
+input_output_data/output/transcripts/<inference-setup-id>_<timestamp>/
+input_output_data/output/smoke_tests/transcripts/<inference-setup-id>_<timestamp>/
 ```
 
-The Compose service reserves the GPU by default. The backend chooses Sherpa's
+The Compose service reserves the GPU by default. The inference adapter chooses Sherpa's
 CUDA provider from the CUDA package installed by `docker/Dockerfile`; the
 resolved provider, decoding method, and (for modified beam)
 `max_active_paths` are recorded in `run_metadata.json`.

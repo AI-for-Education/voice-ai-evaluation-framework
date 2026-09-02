@@ -123,7 +123,12 @@ def test_builds_separate_wer_and_per_leaderboards(tmp_path: Path) -> None:
     frames, skipped = build_leaderboards(evaluations_root)
 
     orthographic = frames["orthographic"]
-    assert orthographic["model_id"].tolist() == ["orthographic-model"]
+    assert orthographic["inference_setup_id"].tolist() == [
+        "orthographic-model"
+    ]
+    assert orthographic["model_id"].tolist() == orthographic[
+        "inference_setup_id"
+    ].tolist()
     assert orthographic["model_group"].tolist() == ["Uncatalogued"]
     assert orthographic["model_name"].tolist() == ["orthographic-model"]
     assert orthographic["model_variant"].tolist() == ["Unspecified"]
@@ -143,9 +148,12 @@ def test_builds_separate_wer_and_per_leaderboards(tmp_path: Path) -> None:
     assert orthographic["preprocessing_context"].tolist() == [
         "shared SoundFile/librosa 16 kHz audio; canonical Transformers frontend; no chunking"
     ]
-    assert orthographic["runtime_context"].tolist() == [
-        "shared ASR image / Transformers runtime"
+    assert orthographic["execution_stack"].tolist() == [
+        "Transformers → PyTorch → shared ASR container"
     ]
+    assert orthographic["runtime_context"].tolist() == orthographic[
+        "execution_stack"
+    ].tolist()
     assert orthographic["context_evidence"].tolist() == [
         "profile-derived contract fallback"
     ]
@@ -322,22 +330,27 @@ def test_writes_two_csvs_and_generation_metadata(tmp_path: Path) -> None:
     assert "model_label" in orthographic_csv.splitlines()[0]
     assert "0.9123" in orthographic_csv
     metadata = json.loads(paths["metadata"].read_text(encoding="utf-8"))
-    assert metadata["schema_version"] == 4
+    assert metadata["schema_version"] == 5
     assert metadata["presentation_naming"]["format"] == (
         "model_group · official_model_name [· variant] (decoder)"
     )
     assert metadata["presentation_naming"]["stable_identity_renamed"] is False
     assert metadata["presentation_naming"]["old_to_new_mapping"]["rows"] == 22
-    assert metadata["presentation_naming"]["registered_models"] == 21
+    assert metadata["presentation_naming"]["registered_inference_setups"] == 21
+    assert metadata["presentation_naming"]["registered_models"] == (
+        metadata["presentation_naming"]["registered_inference_setups"]
+    )
     mapping = paths["name_mapping"].read_text(encoding="utf-8")
+    assert "previous_inference_setup_id" in mapping.splitlines()[0]
     assert "previous_model_id" in mapping.splitlines()[0]
+    assert "execution_target" in mapping.splitlines()[0]
     assert "new_presentation_name" in mapping.splitlines()[0]
     assert "architecture_evidence_status" in mapping.splitlines()[0]
     assert "official_model_url" in mapping.splitlines()[0]
     assert metadata["comparison_factors"]["order"] == [
-        "artifact_context",
-        "preprocessing_context",
-        "runtime_context",
+        "model_artifact",
+        "inference_setup",
+        "execution_stack",
     ]
     assert metadata["leaderboards"]["orthographic"]["ranking_metric"] == "wer"
     assert metadata["leaderboards"]["ipa"]["ranking_metric"] == "per"
@@ -510,18 +523,21 @@ def test_controlled_onnx_comparison_keeps_three_factors_separate(
     assert controlled.loc["controlled-110", "preprocessing_context"] == (
         "Android PCM16/linear 16 kHz audio; Android deployment-parity frontend; no chunking"
     )
-    assert controlled.loc["controlled-100", "runtime_context"] == (
-        "shared ASR image / ONNX Runtime (ONNX Runtime 1.23.2 observed)"
+    assert controlled.loc["controlled-100", "execution_stack"] == (
+        "onnx-asr → ONNX Runtime → shared ASR container on PC "
+        "(ONNX Runtime 1.23.2 observed)"
     )
     assert controlled.loc["controlled-100", "platform"] == "onnxruntime-desktop"
-    assert controlled.loc["controlled-110", "runtime_context"] == (
-        "shared ASR image / ONNX Runtime (ONNX Runtime 1.23.2 observed)"
+    assert controlled.loc["controlled-110", "execution_stack"] == (
+        "Android-parity adapter → ONNX Runtime → shared ASR container on PC "
+        "(ONNX Runtime 1.23.2 observed)"
     )
     assert controlled.loc["controlled-110", "context_evidence"] == (
-        "pipeline contract (retrospective recovery); runtime package/backend observed"
+        "pipeline contract (retrospective recovery); inference engine observed"
     )
-    assert controlled.loc["controlled-111", "runtime_context"] == (
-        "dedicated Android-parity runtime (PC proxy) (ONNX Runtime 1.22.0 required)"
+    assert controlled.loc["controlled-111", "execution_stack"] == (
+        "Android-parity adapter → ONNX Runtime → dedicated Android-parity "
+        "container on PC (ONNX Runtime 1.22.0 required)"
     )
     assert controlled.loc["controlled-111", "platform"] == (
         "onnxruntime-android-proxy"
@@ -534,13 +550,14 @@ def test_controlled_onnx_comparison_keeps_three_factors_separate(
 def test_presentation_registry_covers_profiles_and_groups_all_bookbot_models() -> None:
     repository = Path(__file__).resolve().parents[1]
     registry = load_model_presentation_registry()
-    registered = set(registry["models"])
+    registered = set(registry["inference_setups"])
     profile_ids = {
-        load_profile(path).id
+        load_profile(path).inference_setup_id
         for path in (repository / "inference").glob("*/profiles/*.yaml")
     }
 
     assert registered == profile_ids
+    assert registry["models"] == registry["inference_setups"]
     bookbot_ids = {
         "bookbot-orthographic-ctc",
         "bookbot-orthographic-ctc-5gram",
@@ -549,15 +566,18 @@ def test_presentation_registry_covers_profiles_and_groups_all_bookbot_models() -
         "zipformer-streaming-robust-sw-v4-modified-beam4",
     }
     assert {
-        registry["models"][model_id]["model_group"] for model_id in bookbot_ids
+        registry["inference_setups"][model_id]["model_group"]
+        for model_id in bookbot_ids
     } == {"Bookbot"}
     assert all(
-        registry["models"][model_id]["architecture"]["evidence_status"]
+        registry["inference_setups"][model_id]["architecture"]["evidence_status"]
         in {"artifact_verified", "owner_documented"}
         for model_id in registered
     )
     assert all(
-        registry["models"][model_id]["official_model_url"].startswith("https://")
+        registry["inference_setups"][model_id]["official_model_url"].startswith(
+            "https://"
+        )
         for model_id in registered
     )
 
@@ -570,4 +590,50 @@ def test_presentation_registry_requires_a_naming_format(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="has no naming format"):
+        load_model_presentation_registry(registry_path)
+
+
+def test_presentation_registry_v1_alias_normalizes_and_conflicts_fail(
+    tmp_path: Path,
+) -> None:
+    entry = {
+        "model_group": "Example",
+        "model_name": "example-model",
+        "variant": "",
+        "official_model_url": "https://example.com/model",
+        "official_model_url_note": "Example source",
+        "architecture": {
+            "label": "Example encoder",
+            "evidence_status": "owner_documented",
+            "source": "https://example.com/model",
+        },
+    }
+    registry_path = tmp_path / "model_presentation.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "naming_format": "model_group · model_name",
+                "models": {"example-greedy": entry},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    normalized = load_model_presentation_registry(registry_path)
+    assert normalized["schema_version"] == 2
+    assert normalized["inference_setups"] == normalized["models"]
+
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "naming_format": "model_group · model_name",
+                "inference_setups": {"example-greedy": entry},
+                "models": {"different-greedy": entry},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="conflicting inference_setups"):
         load_model_presentation_registry(registry_path)

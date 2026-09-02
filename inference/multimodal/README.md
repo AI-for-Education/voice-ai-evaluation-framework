@@ -1,7 +1,7 @@
 # Multimodal audio inference
 
 This package gives prompt-driven multimodal models a separate inference flow
-while preserving the framework's shared input and output contracts. It does not
+while preserving the repository's shared input and output contracts. It does not
 change the Transformers CTC/Whisper adapters, NeMo, Sherpa-ONNX, transcript
 manifest shape, or evaluation commands.
 
@@ -9,7 +9,7 @@ The name *multimodal* describes the model interface rather than the result
 format. Gemma 4 E2B can accept several kinds of input—text, audio, images, and
 video—through one chat-style generation model. This profile uses only two of
 those inputs: a fixed text instruction and audio. Its output is ordinary text,
-so evaluation still reads the same `pred_text` field as every ASR backend.
+so evaluation still reads the same `pred_text` field as every ASR route.
 
 ## Local model storage
 
@@ -28,7 +28,7 @@ All three snapshots now have model-family profiles and adapters. Gemma and Paza 
 
 ```bash
 ./run_multimodal_inference.sh \
-  --model_config inference/multimodal/profiles/gemma-4-E2B-sw.yaml \
+  --inference_profile inference/multimodal/profiles/gemma-4-E2B-sw.yaml \
   --audio_manifest input_output_data/output/experiments/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
   --batch_size 1
 ```
@@ -51,7 +51,7 @@ the required dependencies. The Compose service reuses that image and mounts
 download is required for Gemma 4 E2B.
 
 
-## Runtime and image separation
+## Inference setup and execution environment
 
 The source folder is organized by inference workflow, while Docker images are
 organized by dependency compatibility. All three models accept prompt-plus-audio
@@ -86,7 +86,7 @@ Run a one-file smoke test before a full evaluation:
 
 ```bash
 ./run_phi4_multimodal_inference.sh \
-  --model_config inference/multimodal/profiles/paza-phi4-multimodal-sw.yaml \
+  --inference_profile inference/multimodal/profiles/paza-phi4-multimodal-sw.yaml \
   --audio_manifest <one-row-manifest.jsonl> \
   --batch_size 1 \
   --smoke_test
@@ -128,7 +128,7 @@ The run command is for a future suitable GPU host:
 
 ```bash
 ./run_qwen_omni_inference.sh \
-  --model_config inference/multimodal/profiles/qwen2.5-omni-7b-sw-text.yaml \
+  --inference_profile inference/multimodal/profiles/qwen2.5-omni-7b-sw-text.yaml \
   --audio_manifest <segment-manifest.jsonl> \
   --batch_size 1
 ```

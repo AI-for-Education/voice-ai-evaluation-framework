@@ -19,7 +19,7 @@ from inference.onnxruntime.artifacts import (
     ArtifactError,
     verify_artifact,
 )
-from inference.profile import ModelProfile, ProfileError
+from inference.profile import InferenceProfile, ProfileError
 
 SAMPLE_RATE = 16000
 
@@ -38,13 +38,13 @@ class OnnxRuntimeCtcBackend:
 
     def __init__(
         self,
-        profile: ModelProfile,
+        profile: InferenceProfile,
         model_path: str | Path,
         *,
         num_threads: int = 2,
         verify_hashes: bool = True,
     ) -> None:
-        if profile.framework != "onnxruntime" or profile.adapter != "ctc":
+        if profile.inference_library != "onnxruntime" or profile.adapter != "ctc":
             raise ProfileError(
                 "OnnxRuntimeCtcBackend requires an onnxruntime/ctc profile"
             )
@@ -215,7 +215,8 @@ class OnnxRuntimeCtcBackend:
 
     def metadata(self) -> dict[str, Any]:
         return {
-            "framework": "onnxruntime",
+            "inference_library": "onnxruntime",
+            "framework": "onnxruntime",  # Deprecated metadata alias.
             "adapter": "ctc",
             "device": "cpu",
             "provider": "CPUExecutionProvider",
@@ -230,7 +231,7 @@ class OnnxRuntimeCtcBackend:
             "vocab_size_including_ctc_blank": self.vocab_size,
             "num_threads": self.num_threads,
             "model_load_call": self._model_load_call,
-            "segmentation": "reuses supplied framework audio paths; no re-segmentation",
+            "segmentation": "reuses supplied input audio paths; no re-segmentation",
             "onnx_asr_version": _distribution_version("onnx-asr"),
             "onnxruntime_version": _distribution_version(
                 "onnxruntime-gpu", "onnxruntime"

@@ -19,7 +19,7 @@ import numpy as np
 import soundfile as sf
 
 from inference.contracts import TranscriptionResult
-from inference.profile import ModelProfile, ProfileError
+from inference.profile import InferenceProfile, ProfileError
 
 SAMPLE_RATE = 16_000
 FEATURE_DIM = 80
@@ -456,20 +456,23 @@ class AndroidParityCtcBackend:
 
     def __init__(
         self,
-        profile: ModelProfile,
+        profile: InferenceProfile,
         model_path: str | Path,
         *,
         num_threads: int = 1,
         expected_ort_version: str | None = EXPECTED_ORT_VERSION,
     ) -> None:
-        if profile.framework != "onnxruntime" or profile.adapter != "android_ctc":
+        if (
+            profile.inference_library != "onnxruntime"
+            or profile.adapter != "android_ctc"
+        ):
             raise ProfileError(
                 "AndroidParityCtcBackend requires an onnxruntime/android_ctc profile"
             )
         if profile.decoding.strategy != "greedy":
             raise ProfileError("Android parity requires greedy CTC decoding")
         if num_threads != 1:
-            raise ProfileError("Android parity requires exactly one runtime thread")
+            raise ProfileError("Android parity requires exactly one inference-engine thread")
 
         self.profile = profile
         self.model_path = Path(model_path)
@@ -559,7 +562,8 @@ class AndroidParityCtcBackend:
         )
         controlled_frontend = expected_ort_version is None
         metadata = {
-            "framework": "onnxruntime",
+            "inference_library": "onnxruntime",
+            "framework": "onnxruntime",  # Deprecated metadata alias.
             "adapter": "android_ctc",
             "device": "cpu",
             "provider": "CPUExecutionProvider",

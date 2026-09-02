@@ -12,7 +12,7 @@ import soundfile as sf
 
 from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
-from inference.profile import ModelProfile
+from inference.profile import InferenceProfile
 from inference.provenance import json_safe
 
 try:  # Keep CLI help and profile validation usable outside the NeMo image.
@@ -168,16 +168,16 @@ class NemoBackend:
     def __init__(
         self,
         *,
-        profile: ModelProfile,
+        profile: InferenceProfile,
         model_path: str | Path,
         batch_size: int,
         cpu_workers: int = 0,
         tmp_dir: str | Path = DEFAULT_TMP,
         debug: bool = False,
     ) -> None:
-        if profile.framework != "nemo" or profile.adapter != "nemo":
+        if profile.inference_library != "nemo" or profile.adapter != "nemo":
             raise ValueError(
-                "NemoBackend requires a profile with framework=nemo and adapter=nemo"
+                "NemoBackend requires inference_library=nemo and adapter=nemo"
             )
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
@@ -326,7 +326,8 @@ class NemoBackend:
 
     def metadata(self) -> dict[str, Any]:
         return {
-            "framework": "nemo",
+            "inference_library": "nemo",
+            "framework": "nemo",  # Deprecated metadata alias.
             "adapter": "nemo",
             "model_class": self._model_class,
             "device": self.device,

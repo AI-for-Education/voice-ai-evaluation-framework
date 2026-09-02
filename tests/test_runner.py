@@ -157,8 +157,18 @@ def test_runner_preserves_schema_order_writes_metadata_and_reports_progress(
         (output.parent / "run_metadata.json").read_text(encoding="utf-8")
     )
     assert metadata["status"] == "completed"
-    assert metadata["provenance_schema_version"] == 1
+    assert metadata["metadata_schema_version"] == 2
+    assert metadata["provenance_schema_version"] == 2
+    assert metadata["inference_setup_id"] == "runner-test"
+    assert metadata["run_id"] == output.parent.name
+    assert metadata["inference_profile"]["inference_setup_id"] == "runner-test"
+    assert metadata["profile"]["id"] == "runner-test"
+    assert metadata["profile"]["framework"] == "transformers"
+    assert metadata["execution_stack"] == metadata["runtime"]
+    assert metadata["inference_adapter"] == metadata["backend"]
     assert metadata["pipeline_provenance"]["recording"]["mode"] == "run_time"
+    assert "inference_setup" in metadata["pipeline_provenance"]
+    assert "execution_stack" in metadata["pipeline_provenance"]
     assert set(metadata["pipeline_provenance"]["stages"]) == {
         "audio_preparation",
         "inference",

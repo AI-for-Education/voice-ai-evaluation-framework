@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from inference.contracts import ASRBackend
-from inference.profile import ModelProfile, ProfileError
+from inference.profile import InferenceProfile, ProfileError
 
 
-def create_backend(profile: ModelProfile, model_path: str | Path) -> ASRBackend:
+def create_backend(profile: InferenceProfile, model_path: str | Path) -> ASRBackend:
     """Import only the adapter supported by the selected runtime image."""
     try:
         if profile.adapter == "gemma4_audio":

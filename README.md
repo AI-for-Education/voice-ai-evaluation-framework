@@ -2,22 +2,30 @@
 
 The purpose of this project is to evaluate locally deployed ASR models on the task of early grade reading assessments (EGRA) for Kiswahili child speech. Inference is currently supported through NVIDIA NeMo, Hugging Face Transformers, ONNX Runtime, Sherpa-ONNX, and a dedicated multimodal generation flow.
 
+The repository uses five primary terms: **model**, **inference setup**,
+**execution stack**, **run**, and **evaluation**. A **benchmark** is a
+standardized evaluation procedure, not another name for a model or setup. See
+the authoritative [vocabulary bank](docs/vocabulary.md) before adding new
+workflow terminology.
+
 **Input (you need to provide)**
 
-- A local ASR model artifact and its tracked model profile. A first NeMo model is [provided here](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-), and the broader candidate list is documented in the [ASR benchmark candidate-model spreadsheet](https://www.dropbox.com/scl/fi/t4f76nnj14n7gog2zm6du/ASR_benchmark_candidate_models.xlsx?rlkey=62h00z8ks4aan9k70vv03cp7u&st=u2zd2pnu&dl=0).
+- A local ASR model artifact and its tracked inference profile. A first NeMo model is [provided here](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-), and the broader candidate list is documented in the [ASR benchmark candidate-model spreadsheet](https://www.dropbox.com/scl/fi/t4f76nnj14n7gog2zm6du/ASR_benchmark_candidate_models.xlsx?rlkey=62h00z8ks4aan9k70vv03cp7u&st=u2zd2pnu&dl=0).
 
 - Dataset of Kiswahili child speech comprising:
   - audio files, 
-  - cannonical texts, i.e. what the child should have uttered and 
+  - canonical texts, i.e. what the child should have uttered and
   - reference text, i.e. what the child actually uttered
 
 **Output**
 
 Given the above, evaluation will be performed, producing a final `egra_eval_summary.txt` report.
 
-## Inference backends
+## Inference routes
 
-Inference is organized under `inference/` by model framework while sharing the same audio, manifest, result, and evaluation contracts:
+Inference is organized under `inference/` by inference library or model-family
+adapter while sharing the same audio, manifest, result, and evaluation
+contracts:
 
 - `inference/nemo/` contains NVIDIA NeMo inference and its profiles.
 - `inference/transformers/` contains offline Hugging Face CTC and speech-seq2seq inference.
@@ -26,38 +34,47 @@ Inference is organized under `inference/` by model framework while sharing the s
 - `inference/multimodal/` contains prompt-driven audio-to-text generation for multimodal models, beginning with Gemma 4 E2B.
 - `inference/common.py`, `inference/contracts.py`, and `inference/runner.py` provide the shared input, audio, result, and output behaviour.
 
-Segment audio once with `run_segment.sh`, then pass the same segment manifest to any backend. All write unchanged `transcriptions.jsonl` rows with `audio_filepath`, `duration`, and `pred_text`, plus `run_metadata.json` describing the effective profile and runtime. Use `run_nemo_inference.sh`, `run_transformers_inference.sh`, `run_onnxruntime_inference.sh`, `run_onnxruntime_android_inference.sh`, `run_sherpa_onnx_inference.sh`, or `run_multimodal_inference.sh` for new runs; root `infer.py` is the only legacy NeMo `--model` API. See the README in each framework directory for model-specific details.
+Segment audio once with `run_segment.sh`, then pass the same segment manifest
+to any inference route. All routes write unchanged `transcriptions.jsonl` rows
+with `audio_filepath`, `duration`, and `pred_text`, plus `run_metadata.json`
+describing the inference setup and execution stack. Use
+`run_nemo_inference.sh`, `run_transformers_inference.sh`,
+`run_onnxruntime_inference.sh`, `run_onnxruntime_android_inference.sh`,
+`run_sherpa_onnx_inference.sh`, or `run_multimodal_inference.sh` for new runs;
+root `infer.py` is the only legacy NeMo `--model` API. See the README in each
+inference-library directory for model-specific details.
 
-`run_metadata.json` records the normalized profile and canonical hash, pinned
-model source plus available artifact checksums, completed backend state, exact
-decoder/generation call arguments, runtime and library versions, command-line
+`run_metadata.json` records the normalized inference profile and canonical
+hash, pinned model source plus available artifact checksums, completed adapter
+state, exact decoder/generation call arguments, execution-stack versions,
+command-line
 invocation, Python warnings from initialization and transcription, and
-Git/source-tree identity. Generative backends separate
+Git/source-tree identity. Generative adapters separate
 profile-requested values, packaged model defaults, actual call arguments, and
 their effective merged configuration.
-Profiles also reference the tracked three-stage policies in
-`inference/pipeline_contracts.json`. New run and evaluation metadata embed the
-resolved audio-preparation, inference, and evaluation contracts alongside the
-values observed only at execution time. Historical recovery uses an explicit
+Profiles also reference the tracked pipeline definitions in
+`inference/pipeline_contracts.json`. New metadata resolves them into four
+readable evidence groups: model artifact, inference setup, execution stack,
+and evaluation. Historical recovery uses an explicit
 `not_available` value with a reason instead of guessing; see
-`docs/pipeline-provenance.md`.
-New inference runs score the direct backend hypothesis in `pred_text`; no
+the local development note `docs/pipeline-provenance.md` (not versioned).
+New inference runs score the direct adapter hypothesis in `pred_text`; no
 duration or repetition rule truncates model output after decoding. Historical
 rows containing `raw_pred_text` and historical metadata containing
 `postprocessing` remain readable for audit compatibility.
 
 ### Standard output layout
 
-New profile-driven runs use one model/timestamp name throughout the pipeline:
+New profile-driven runs use one inference-setup/timestamp name throughout the pipeline:
 
 ```text
 input_output_data/output/
 ├─ transcripts/
-│  └─ <model>_<YYYY_MM_DD_HH_MM_SS_UTC>/
+│  └─ <inference-setup-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/
 │     ├─ transcriptions.jsonl
 │     └─ run_metadata.json
 ├─ evaluations/
-│  └─ <model>_<YYYY_MM_DD_HH_MM_SS_UTC>/
+│  └─ <inference-setup-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/
 │     ├─ manifests/
 │     ├─ orthographic/             # Valid orthographic WER result
 │     │  ├─ egra_eval_detailed.csv
@@ -70,12 +87,12 @@ input_output_data/output/
 │     └─ orthographic_legacy/      # Optional historical mismatch only
 └─ smoke_tests/
    ├─ transcripts/
-   │  └─ <model>_<YYYY_MM_DD_HH_MM_SS_UTC>/
+   │  └─ <inference-setup-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/
    └─ evaluations/
-      └─ <model>_<YYYY_MM_DD_HH_MM_SS_UTC>/
+      └─ <inference-setup-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/
 ```
 
-Inference creates the model/UTC-timestamp name automatically. `run_manifest.sh`
+Inference creates the inference-setup/UTC-timestamp run ID automatically. `run_manifest.sh`
 derives the matching evaluation directory from the standard
 `--prediction_manifest` path. `run_eval2.sh` writes each scoring representation into
 its own child directory, so WER and PER results cannot replace one another.
@@ -91,7 +108,7 @@ Use `--smoke_test` on either inference launcher for the smoke-test branch.
 `--output_root` remains available when a different output base or an explicit
 evaluation destination is required.
 
-All inference backends print model-loading milestones and a shared file
+All inference routes print model-loading milestones and a shared file
 progress bar. The bar advances after each completed batch and ends with result
 and error counts; the exact output path is also printed.
 
@@ -106,7 +123,7 @@ and error counts; the exact output path is also printed.
 | Evaluation input | `--manifest_in` | Cleaned manifest containing references and predictions | — |
 
 Use the preferred names for every new command. Compatibility names remain only
-so existing commands continue to work; use the framework-neutral preferred names
+so existing commands continue to work; use the library-neutral preferred names
 for all new manifest merge calls.
 
 Run the same merge and evaluation steps once per model output. Report each
@@ -120,7 +137,8 @@ performed on 12-13 August 2026. The shared
 `voice-ai-evaluation-framework-asr:latest` image has been rebuilt from the
 tracked CUDA 12.8 Dockerfile. It includes `pyctcdecode==0.5.0` and
 `kenlm==0.3.0` for BookBot CTC beam search and a CUDA-enabled Sherpa-ONNX
-runtime for BookBot Zipformer; no separate BookBot image is required.
+Sherpa-ONNX and ONNX Runtime packages for BookBot Zipformer; no separate
+BookBot image is required.
 
 ### Runnable with the current image
 
@@ -144,13 +162,13 @@ NeMo, post-processing, or evaluation selection. The current Compose inference
 services reserve an NVIDIA GPU (`gpus: all`). A CPU-only deployment requires a
 CPU image build plus removal or override of that Compose GPU reservation.
 
-### Runnable in the current framework after preparation
+### Runnable through a current inference route after preparation
 
 | Model | Required preparation |
 |---|---|
 | HuBERT large-ls960-ft | Download the missing pinned snapshot. The existing CTC adapter and `hubert-large-ls960-ft-en.yaml` profile can then run it in the current image. This is English-only. |
 
-### Requires a separate runtime image or additional model artifacts
+### Requires another execution environment or additional model artifacts
 
 | Model | What is still required |
 |---|---|
@@ -161,7 +179,7 @@ CPU image build plus removal or override of that Compose GPU reservation.
 
 
 
-## Straight forward steps
+## Straightforward steps
 
 1. **Build the Docker image** (optional):
 
@@ -182,8 +200,8 @@ CPU image build plus removal or override of that Compose GPU reservation.
 2. **Prepare dataset + model**
    - Copy dataset files (`0_Audio/`, `2_TextGrid/`, `Student_Full_Canonical_EGRA_*.csv`, `Student_MetaData_EGRA_*.csv`) under `input_output_data/input/<dataset_name>/`.
    - Place passages CSV at `input_output_data/input/oral_passages.csv`.
-   - Place model artifacts under the `models/` directory owned by their runtime: `inference/nemo/`, `inference/transformers/`, `inference/sherpa_onnx/`, or `inference/multimodal/`.
-   - Select a tracked YAML profile from the corresponding framework's `profiles/` directory. Profiles use relative artifact paths; inference never downloads models.
+   - Place model artifacts under the `models/` directory for their inference library: `inference/nemo/`, `inference/transformers/`, `inference/sherpa_onnx/`, or `inference/multimodal/`.
+   - Select a tracked YAML inference profile from the corresponding `profiles/` directory. Profiles use relative artifact paths; inference never downloads models.
 
 3. **Build base full manifest (input for segmentation)**
 
@@ -225,43 +243,43 @@ CPU image build plus removal or override of that Compose GPU reservation.
 
 5. **Run ASR inference on segmented audio**
 
-   Run either or both backends from the same segmented manifest. Each launcher
-   creates and prints its own `<model>_<timestamp>` run name.
+   Run either or both inference routes from the same segmented manifest. Each launcher
+   creates and prints its own `<inference_setup_id>_<timestamp>` run ID.
 
    NeMo:
    ```bash
    ./run_nemo_inference.sh \
-     --model_config inference/nemo/profiles/swahili-exp41-ctc.yaml \
+     --inference_profile inference/nemo/profiles/swahili-exp41-ctc.yaml \
      --audio_manifest input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl
    ```
 
    Transformers (BookBot CTC):
    ```bash
    ./run_transformers_inference.sh \
-     --model_config inference/transformers/profiles/bookbot-orthographic-ctc.yaml \
+     --inference_profile inference/transformers/profiles/bookbot-orthographic-ctc.yaml \
      --audio_manifest input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl \
      --batch_size 8
    ```
 
    For Whisper-family generation, use the same Transformers command with
    `inference/transformers/profiles/paza-whisper-large-v3-turbo-sw.yaml`.
-   Both launchers require `--model_config` and write the same `transcriptions.jsonl`
+   Both launchers require `--inference_profile` and write the same `transcriptions.jsonl`
    schema plus `run_metadata.json`.
 
 6. **Build final segment-level manifest (attach `pred_text` from ASR) + clean**
 
    Generic:
    ```bash
-   RUN_NAME=<model>_<timestamp>   # copy the value printed by inference
+   RUN_ID=<inference-setup-id>_<timestamp>   # copy the value printed by inference
    ./run_manifest.sh \
      --dataset_root input_output_data/input/<dataset_name> \
      --audio_manifest input_output_data/output/experiments/<dataset_name>/manifests/ref_manifest.raw_segments.jsonl \
-     --prediction_manifest input_output_data/output/transcripts/$RUN_NAME/transcriptions.jsonl
+     --prediction_manifest input_output_data/output/transcripts/$RUN_ID/transcriptions.jsonl
    ```
 
    This generates:
-   - `input_output_data/output/evaluations/$RUN_NAME/manifests/ref_manifest.raw.jsonl`
-   - `input_output_data/output/evaluations/$RUN_NAME/manifests/ref_manifest.clean.jsonl`
+   - `input_output_data/output/evaluations/$RUN_ID/manifests/ref_manifest.raw.jsonl`
+   - `input_output_data/output/evaluations/$RUN_ID/manifests/ref_manifest.clean.jsonl`
 
    When `--prediction_manifest` is supplied, its hypotheses are authoritative: existing
    `pred_text` values in the base manifest are not retained. Manifest building and
@@ -269,8 +287,8 @@ CPU image build plus removal or override of that Compose GPU reservation.
    replacement/mojibake marker. This check does not reject valid IPA Unicode or
    alter model-produced `pred_text`.
 
-   Run this step once for each model run. Smoke-test transcript paths are mapped
-   to the parallel `smoke_tests/evaluations/$RUN_NAME/` directory automatically.
+   Run this step once for each inference run. Smoke-test transcript paths are mapped
+   to the parallel `smoke_tests/evaluations/$RUN_ID/` directory automatically.
 
 7. **Run evaluation from cleaned segment manifest**
 
@@ -278,23 +296,23 @@ CPU image build plus removal or override of that Compose GPU reservation.
    ```bash
    ./run_eval2.sh \
      --dataset_root input_output_data/input/<dataset_name> \
-     --manifest_in input_output_data/output/evaluations/$RUN_NAME/manifests/ref_manifest.clean.jsonl
+     --manifest_in input_output_data/output/evaluations/$RUN_ID/manifests/ref_manifest.clean.jsonl
    ```
 
    Optional IPA comparison for any model:
    ```bash
    ./run_eval2.sh \
      --dataset_root input_output_data/input/<dataset_name> \
-     --manifest_in input_output_data/output/evaluations/$RUN_NAME/manifests/ref_manifest.clean.jsonl \
+     --manifest_in input_output_data/output/evaluations/$RUN_ID/manifests/ref_manifest.clean.jsonl \
      --scoring_representation ipa
    ```
 
    Native IPA hypotheses use their reviewed inventory adapter. Orthographic
    hypotheses are converted with the same pinned Africa G2P language and IPA
    inventory as CAN/REF. This writes a separate PER view under
-   `input_output_data/output/evaluations/$RUN_NAME/ipa/`; it does not replace WER.
+   `input_output_data/output/evaluations/$RUN_ID/ipa/`; it does not replace WER.
 
-8. **Inspect the outputs** under `input_output_data/output/evaluations/$RUN_NAME/`:
+8. **Inspect the outputs** under `input_output_data/output/evaluations/$RUN_ID/`:
    - `orthographic/egra_eval_detailed.csv` and
      `orthographic/egra_eval_summary.txt` for valid WER scoring.
    - `ipa/egra_eval_detailed.csv` and `ipa/egra_eval_summary.txt` for valid PER
@@ -308,7 +326,7 @@ CPU image build plus removal or override of that Compose GPU reservation.
    - Dependencies: `pip install streamlit pandas numpy` (preferably inside a virtualenv).  
      - Specific example: `python3 -m venv .venv_streamlit && . .venv_streamlit/bin/activate && pip install --upgrade pip setuptools wheel && pip install streamlit pandas numpy`
    - Run: `streamlit run egra_dashboard2.py -- --csv <path/to/egra_eval_detailed.csv>`  
-     - Specific example: ` . .venv_streamlit/bin/activate && streamlit run egra_dashboard2.py -- --csv input_output_data/output/evaluations/$RUN_NAME/orthographic/egra_eval_detailed.csv`
+     - Specific example: ` . .venv_streamlit/bin/activate && streamlit run egra_dashboard2.py -- --csv input_output_data/output/evaluations/$RUN_ID/orthographic/egra_eval_detailed.csv`
    - Open the browser tab (Streamlit serves on `http://localhost:8501` by default) to sort, group and aggregate metrics.
 
 Everything runs in Docker setup (CPU-only or GPU-enabled).
@@ -336,22 +354,22 @@ All the steps above can then be performed in sequence:
         --segments_out_root input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/audio_segments
 
     ./run_nemo_inference.sh \
-        --model_config inference/nemo/profiles/swahili-exp41-ctc.yaml \
+        --inference_profile inference/nemo/profiles/swahili-exp41-ctc.yaml \
         --audio_manifest input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl
 
     # Copy the exact value printed by "[INFO] Model run:".
-    RUN_NAME=swahili-exp41-ctc_<timestamp>
+    RUN_ID=swahili-exp41-ctc_<timestamp>
 
     ./run_manifest.sh \
         --dataset_root input_output_data/input/heldout_combined_fixed_20260525 \
         --audio_manifest input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl \
-        --prediction_manifest input_output_data/output/transcripts/$RUN_NAME/transcriptions.jsonl
+        --prediction_manifest input_output_data/output/transcripts/$RUN_ID/transcriptions.jsonl
 
     ./run_eval2.sh \
         --dataset_root input_output_data/input/heldout_combined_fixed_20260525 \
-        --manifest_in input_output_data/output/evaluations/$RUN_NAME/manifests/ref_manifest.clean.jsonl
+        --manifest_in input_output_data/output/evaluations/$RUN_ID/manifests/ref_manifest.clean.jsonl
 
-    . .venv_streamlit/bin/activate && streamlit run egra_dashboard2.py -- --csv input_output_data/output/evaluations/$RUN_NAME/orthographic/egra_eval_detailed.csv
+    . .venv_streamlit/bin/activate && streamlit run egra_dashboard2.py -- --csv input_output_data/output/evaluations/$RUN_ID/orthographic/egra_eval_detailed.csv
 
 ---
 
@@ -359,7 +377,7 @@ All the steps above can then be performed in sequence:
 
 - Segment-only flow is the default documented flow:
 - `run_segment.sh`: creates segment audio + segment manifest.
-- `run_nemo_inference.sh`, `run_transformers_inference.sh`, `run_sherpa_onnx_inference.sh`, or `run_multimodal_inference.sh`: transcribes segment audio using a required model profile.
+- `run_nemo_inference.sh`, `run_transformers_inference.sh`, `run_sherpa_onnx_inference.sh`, or `run_multimodal_inference.sh`: transcribes segment audio using a required inference profile.
 - `run_manifest.sh`: builds/cleans the final segment-level manifest from `--audio_manifest` and optionally attaches `--prediction_manifest`.
 - `run_eval2.sh`: scores only from an existing cleaned segment manifest (`--manifest_in`).
 
@@ -367,7 +385,7 @@ All the steps above can then be performed in sequence:
 
 ## Contents
 
-- [Straight forward steps](#straight-forward-steps)
+- [Straightforward steps](#straightforward-steps)
 - [Working Modes](#working-modes)
 - [Contents](#contents)
 - [Project structure](#project-structure)
@@ -412,24 +430,24 @@ All the steps above can then be performed in sequence:
 ├── run_segment.sh                # Wrapper script for standalone manifest/audio segmentation
 ├── inference/
 │   ├── common.py                 # Shared audio discovery, loading, duration, and resampling
-│   ├── contracts.py              # Shared backend and transcription-result contracts
+│   ├── contracts.py              # Shared adapter and transcription-result contracts
 │   ├── profile.py                # Strict portable YAML profile loading and validation
 │   ├── runner.py                 # Shared ordered inference and output writing
 │   ├── nemo/
-│   │   ├── infer.py              # NeMo framework entrypoint
-│   │   ├── backend.py            # NeMo CTC/RNNT/hybrid backend
-│   │   ├── profiles/             # Tracked NeMo model profiles
+│   │   ├── infer.py              # NeMo inference entrypoint
+│   │   ├── backend.py            # NeMo CTC/RNNT/hybrid adapter
+│   │   ├── profiles/             # Tracked NeMo inference profiles
 │   │   ├── models/               # Local NeMo artifacts (ignored, mounted read-only)
 │   │   └── tmp/                  # Temporary NeMo segments
 │   ├── transformers/
-│   │   ├── infer.py              # Transformers framework entrypoint
+│   │   ├── infer.py              # Transformers inference entrypoint
 │   │   ├── factory.py            # Adapter selection
 │   │   ├── adapters/             # CTC and speech-seq2seq adapters
-│   │   ├── profiles/             # Tracked Transformers model profiles
+│   │   ├── profiles/             # Tracked Transformers inference profiles
 │   │   ├── models/               # Local Hugging Face artifacts (ignored, mounted read-only)
 │   │   └── tmp/                  # Temporary Transformers files
 │   └── sherpa_onnx/
-│       ├── infer.py              # Sherpa-ONNX framework entrypoint
+│       ├── infer.py              # Sherpa-ONNX inference entrypoint
 │       ├── backend.py            # Streaming transducer adapter
 │       ├── profiles/             # Tracked Sherpa-ONNX profiles
 │       └── models/               # Local ONNX artifacts (ignored, mounted read-only)
@@ -437,7 +455,7 @@ All the steps above can then be performed in sequence:
 │   ├── dataset_layout.py         # Discover dataset audio, TextGrid, and metadata paths
 │   ├── manifest_builder.py       # Build reference manifests
 │   ├── manifest_cleaner.py       # Normalize and clean manifest text
-│   ├── nemo_manifest.py          # Load framework-neutral ASR JSONL outputs
+│   ├── nemo_manifest.py          # Load library-neutral ASR JSONL outputs
 │   ├── run_eval.py               # Core CAN/REF/HYP scoring
 │   ├── scoring.py                # WER counts and accuracy metrics
 │   ├── segmenter.py              # TextGrid-driven segmentation helpers
@@ -455,9 +473,9 @@ All the steps above can then be performed in sequence:
 ## What the pipeline does
 
 **Inference (`inference/`)**
-- Loads a required, framework-specific YAML profile and resolves its artifact from the matching `models/` directory.
+- Loads a required inference profile and resolves its artifact from the matching `models/` directory.
 - Reads exact segments from `--audio_manifest` or recursively discovers `.wav` files under `--root_audio_dir`; the NeMo legacy API also retains dataset discovery and optional TextGrid-driven segmentation.
-- Resamples audio to the model's required sample rate, then dispatches to the selected NeMo, Transformers CTC, or Transformers speech-seq2seq backend.
+- Resamples audio to the model's required sample rate, then dispatches to the selected NeMo or Transformers inference adapter.
 - Emits the unchanged `transcriptions.jsonl` schema and a separate `run_metadata.json` record.
 
 **Manifest build (`manifest_pipeline.py`)**
@@ -513,23 +531,23 @@ requests before running the ASR services.
 
 ### 2) Run inference (ASR)
 
-Use the framework launcher for the selected profile. Each launcher requires
-`--model_config`, accepts either `--audio_manifest` or `--root_audio_dir`, and
-writes to `input_output_data/output/transcripts/<model>_<timestamp>/` by default.
+Use the matching launcher for the selected inference profile. Each launcher
+requires `--inference_profile`, accepts either `--audio_manifest` or `--root_audio_dir`, and
+writes to `input_output_data/output/transcripts/<inference_setup_id>_<timestamp>/` by default.
 The scripts run `docker compose run` with your current `uid:gid`, so generated
 files inside `input_output_data` are owned by the host user.
 
 NeMo example:
 ```bash
 ./run_nemo_inference.sh \
-  --model_config inference/nemo/profiles/swahili-exp41-ctc.yaml \
+  --inference_profile inference/nemo/profiles/swahili-exp41-ctc.yaml \
   --root_audio_dir input_output_data/input/<dataset>/0_Audio
 ```
 
 Transformers speech-seq2seq example:
 ```bash
 ./run_transformers_inference.sh \
-  --model_config inference/transformers/profiles/paza-whisper-large-v3-turbo-sw.yaml \
+  --inference_profile inference/transformers/profiles/paza-whisper-large-v3-turbo-sw.yaml \
   --audio_manifest input_output_data/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
   --batch_size 8
 ```
@@ -567,18 +585,18 @@ Example:
 
 ### 4) Run inference on segments
 
-Pass the segment manifest to either framework launcher. This preserves manifest
+Pass the segment manifest to either inference launcher. This preserves manifest
 ordering and avoids rediscovering files:
 
 ```bash
 ./run_nemo_inference.sh \
-  --model_config inference/nemo/profiles/swahili-exp41-ctc.yaml \
+  --inference_profile inference/nemo/profiles/swahili-exp41-ctc.yaml \
   --audio_manifest input_output_data/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl
 ```
 
 ```bash
 ./run_transformers_inference.sh \
-  --model_config inference/transformers/profiles/bookbot-orthographic-ctc.yaml \
+  --inference_profile inference/transformers/profiles/bookbot-orthographic-ctc.yaml \
   --audio_manifest input_output_data/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
   --batch_size 8
 ```
@@ -588,7 +606,7 @@ ordering and avoids rediscovering files:
 We provide `run_manifest.sh`. It will:
 - Load the segmented audio manifest from `--audio_manifest` (preserve segment granularity).
 - Attach ASR hypotheses from `--prediction_manifest`.
-- Derive `evaluations/<model>_<timestamp>/` from a standard transcript path.
+- Derive `evaluations/<inference_setup_id>_<timestamp>/` from a standard transcript path.
 - Write raw and cleaned segment manifests under that run's `manifests/` folder.
 
 Usage:
@@ -596,7 +614,7 @@ Usage:
 ./run_manifest.sh \
   --dataset_root /io/input/<dataset> \
   --audio_manifest /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
-  --prediction_manifest /io/output/transcripts/<model>_<timestamp>/transcriptions.jsonl
+  --prediction_manifest /io/output/transcripts/<inference_setup_id>_<timestamp>/transcriptions.jsonl
 ```
 
 ### 6) Run evaluation
@@ -611,7 +629,7 @@ Usage:
 ```bash
 ./run_eval2.sh \
   --dataset_root /io/input/<dataset> \
-  --manifest_in /io/output/evaluations/<model>_<timestamp>/manifests/ref_manifest.clean.jsonl
+  --manifest_in /io/output/evaluations/<inference_setup_id>_<timestamp>/manifests/ref_manifest.clean.jsonl
 ```
 
 
@@ -638,7 +656,7 @@ directory and enriches them with per-sample NeMo WER scores. Pass either `--outp
 ## Outputs & how to interpret them
 
 By default, all evaluation outputs land in
-`input_output_data/output/evaluations/<model>_<timestamp>/` (or the parallel
+`input_output_data/output/evaluations/<inference_setup_id>_<timestamp>/` (or the parallel
 `smoke_tests/evaluations/` path). Each run folder contains:
 
 1. **`egra_eval_detailed.csv`** — One row per EGRA item with:
@@ -740,12 +758,12 @@ If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC) a
 
 ### Inference profiles and launchers
 
-- **Model profile**: `--model_config <profile.yaml>` is required by all framework launchers. Profiles define `framework`, `adapter`, relative `artifact`, language/task, loader settings, decoding strategy, and structured parameter evidence. Images supply compatible dependencies but do not choose model-specific inference behavior; local choices are documented in each tracked backend README.
+- **Inference profile**: use `--inference_profile <profile.yaml>` with every inference launcher. The deprecated `--model_config` spelling remains accepted. Schema v2 profiles define `inference_setup_id`, `inference_library`, adapter, relative model artifact, language/task, loading settings, decoding, and structured parameter evidence. Container images supply compatible dependencies but do not select model-specific behavior.
 - **Invocation controls**: batch size, thread/worker counts, input selection, and output roots remain launcher arguments and are recorded in run metadata rather than being hidden in an image or treated as model hyperparameters.
-- **Model storage**: place artifacts below the owning framework's `models/` directory. `ASR_MODEL_ROOT` overrides that default root; Compose sets it to the read-only `/models` mount.
+- **Model storage**: place artifacts below the owning inference library's `models/` directory. `ASR_MODEL_ROOT` overrides that default root; Compose sets it to the read-only `/models` mount.
 - **Input**: provide exactly one of `--audio_manifest <segments.jsonl>` or `--root_audio_dir <audio-directory>`. NeMo retains `--dataset_root` and `--dataset_annotator` for legacy dataset discovery and optional TextGrid segmentation.
-- **Output base**: inference defaults to `input_output_data/output`; `--output_root <directory>` changes that base. The runner creates `transcripts/<model>_<UTC timestamp>/` below it, or `smoke_tests/transcripts/...` with `--smoke_test`.
-- **Runtime controls**: NeMo retains its CPU worker, temporary-segment, decoder, and debug controls; Transformers retains `--batch_size`; Sherpa-ONNX adds `--num_threads`. Sources, evidence strength, hardware assumptions, and historical gaps are recorded beside the relevant launcher and in each tracked backend README.
+- **Output base**: inference defaults to `input_output_data/output`; `--output_root <directory>` changes that base. The runner creates `transcripts/<inference_setup_id>_<UTC timestamp>/` below it, or `smoke_tests/transcripts/...` with `--smoke_test`.
+- **Execution controls**: NeMo retains its CPU worker, temporary-segment, decoder, and debug controls; Transformers retains `--batch_size`; Sherpa-ONNX adds `--num_threads`. Sources, evidence strength, hardware assumptions, and historical gaps are recorded beside the relevant launcher and in the local development note `docs/inference-execution-parameter-provenance.md` (not versioned).
 - **Offline operation**: profiles require local artifacts and `local_files_only: true`; downloading a model is a separate preparation step.
 
 Root `infer.py` is the only legacy NeMo API and continues to accept `--model`
@@ -759,14 +777,14 @@ derived from a standard transcript path unless you override it.
 Run `python3 manifest_pipeline.py --help` to see available options. Highlights:
 - `--dataset_root /io/input/<dataset>` — required; automatically discovers the `Student_*` CSVs plus `0_Audio/` and `2_TextGrid/`.
 - `--audio_manifest /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl` — required in segment-only flow; defines and preserves the exact audio segment rows used for inference. `--manifest_base_in` remains an alias.
-- `--output_root /io/output/evaluations/<model>_<timestamp>` — optional exact destination; otherwise derived from `--prediction_manifest` by replacing `transcripts` with `evaluations`.
-- `--prediction_manifest /path/to/transcriptions.jsonl` — optional; if provided, `pred_text` is attached from any backend. `--asr_manifest` and `--nemo_manifest` remain aliases.
+- `--output_root /io/output/evaluations/<inference_setup_id>_<timestamp>` — optional exact destination; otherwise derived from `--prediction_manifest` by replacing `transcripts` with `evaluations`.
+- `--prediction_manifest /path/to/transcriptions.jsonl` — optional; if provided, `pred_text` is attached from any inference route. `--asr_manifest` and `--nemo_manifest` remain aliases.
 
 ### Evaluation (`eval_pipeline2.py`)
 Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - `--dataset_root /io/input/<dataset>` — required.
 - `--manifest_in /io/output/<experiment>/manifests/ref_manifest.segment.clean.jsonl` — required.
-- `--output_root /io/output/evaluations/<model>_<timestamp>` — optional run
+- `--output_root /io/output/evaluations/<inference_setup_id>_<timestamp>` — optional run
   destination; otherwise the owning evaluation run is derived from
   `--manifest_in`. The evaluator appends `orthographic/`, `ipa/`, or
   `orthographic_legacy/`. Custom CSV and summary paths are rejected if they
@@ -782,16 +800,16 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - **Segment ASR not attached**: Check that `--prediction_manifest` in `run_manifest.sh` points to segmented ASR output and that `--match_on` is appropriate.
 - **Segmentation not applied in inference**: Ensure matching `.TextGrid` files exist under `2_TextGrid/` and names align with audio stems; segmentation follows all parsed intervals from TextGrid.
 - **Unexpected full rows in segment manifest**: re-run `run_segment.sh`; strict mode drops non-segmentable rows and writes only `*_segmentN.wav` entries.
-- **Profile rejected before loading**: Check for unknown keys, an invalid framework/adapter/decoding combination, an absolute or escaping artifact path, or a missing local artifact.
+- **Profile rejected before loading**: Check for unknown keys, an invalid inference-library/adapter/decoding combination, an absolute or escaping artifact path, or a missing local artifact.
 - **Wrong Transformers decoding path**: CTC profiles must use the `ctc` adapter with greedy decoding; Whisper-family profiles must use `speech_seq2seq` with `generate`.
-- **Permissions**: The repo root and `input_output_data` are mounted read-write. Each inference service mounts its own framework's `models/` directory read-only at `/models`.
+- **Permissions**: The repo root and `input_output_data` are mounted read-write. Each inference service mounts its own model-artifact directory read-only at `/models`.
 
 ---
 
 ## Source files
 
 - **`inference/common.py`, `inference/contracts.py`, `inference/profile.py`, `inference/runner.py`**
-  Define common audio handling, backend/result contracts, strict portable model profiles, ordered inference, and the shared `transcriptions.jsonl` plus `run_metadata.json` outputs.
+  Define common audio handling, adapter/result contracts, strict portable inference profiles, ordered inference, and the shared `transcriptions.jsonl` plus `run_metadata.json` outputs.
 
 - **`inference/nemo/`**
   Implements profile-driven NeMo CTC/RNNT/hybrid inference while retaining existing dataset discovery and optional TextGrid behaviour.
@@ -854,9 +872,9 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
   - `phi4-multimodal-asr`: run Paza Phi-4 with bounded automatic GPU/CPU/disk placement.
   - `qwen-omni-asr`: run Qwen text-only inference on a GPU with at least 40 GiB VRAM.
   - `egra-eval`: run manifest build/evaluation (`manifest_pipeline.py`, `eval_pipeline2.py`).
-  Mounts the repo as `/work`, data as `/io`, and each inference framework's models read-only as `/models`.
+  Mounts the repo as `/work`, data as `/io`, and each inference library's model artifacts read-only as `/models`.
 
 - **`run_nemo_inference.sh` / `run_transformers_inference.sh` / `run_sherpa_onnx_inference.sh` / `run_multimodal_inference.sh` / `run_phi4_multimodal_inference.sh` / `run_qwen_omni_inference.sh` / `run_segment.sh` / `run_manifest.sh` / `run_eval2.sh`**
-  Thin wrappers that run the appropriate Compose service and command. Every inference wrapper requires `--model_config`.
+  Thin wrappers that run the appropriate Compose service and command. Every inference wrapper requires `--inference_profile`; `--model_config` remains a deprecated alias.
 - **`run_nemo_offline_eval.sh`**  
   Generates normalized REF/CAN manifests and runs NVIDIA NeMo’s own `speech_to_text_eval.py` script for REF↔HYP and CAN↔HYP scoring. Handy for cross-checking the internal metrics against the official NeMo implementation.

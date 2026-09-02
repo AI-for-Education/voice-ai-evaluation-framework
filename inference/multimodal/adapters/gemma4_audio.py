@@ -17,7 +17,7 @@ from transformers import AutoModelForMultimodalLM, AutoProcessor
 from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
 from inference.multimodal.adapters.common import torch_dtype_from_profile
-from inference.profile import ModelProfile, ProfileError
+from inference.profile import InferenceProfile, ProfileError
 from inference.provenance import generation_provenance
 
 
@@ -66,12 +66,12 @@ class Gemma4AudioBackend:
 
     def __init__(
         self,
-        profile: ModelProfile,
+        profile: InferenceProfile,
         model_path: str | Path,
         *,
         device: torch.device | None = None,
     ) -> None:
-        if profile.framework != "multimodal" or profile.adapter != "gemma4_audio":
+        if profile.inference_library != "multimodal" or profile.adapter != "gemma4_audio":
             raise ProfileError(
                 "Gemma4AudioBackend requires a multimodal/gemma4_audio profile"
             )
@@ -151,7 +151,8 @@ class Gemma4AudioBackend:
         self._model_class = type(self.model).__name__
         self._processor_class = type(self.processor).__name__
         self._metadata: dict[str, Any] = {
-            "framework": "multimodal",
+            "inference_library": "multimodal",
+            "framework": "multimodal",  # Deprecated metadata alias.
             "adapter": "gemma4_audio",
             "model_class": self._model_class,
             "processor_class": self._processor_class,

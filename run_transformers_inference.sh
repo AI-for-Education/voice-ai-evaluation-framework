@@ -3,8 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-source "$SCRIPT_DIR/inference/runtime_identity.sh"
-pipeline_runtime_docker_args \
+source "$SCRIPT_DIR/inference/execution_environment_identity.sh"
+pipeline_execution_environment_docker_args \
   "transformers-asr" \
   "voice-ai-evaluation-framework-asr:latest" \
   "run_transformers_inference.sh"
@@ -18,7 +18,7 @@ fi
 
 exec docker compose run --rm \
   "${USER_FLAG[@]}" \
-  "${PIPELINE_RUNTIME_DOCKER_ARGS[@]}" \
+  "${PIPELINE_EXECUTION_ENVIRONMENT_DOCKER_ARGS[@]}" \
   --env HOME=/tmp \
   --entrypoint "" \
   transformers-asr \

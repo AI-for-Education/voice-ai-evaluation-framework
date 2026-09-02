@@ -5,14 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from inference.contracts import ASRBackend
-from inference.profile import ModelProfile, ProfileError
+from inference.profile import InferenceProfile, ProfileError
 
 
-def create_backend(profile: ModelProfile, model_path: str | Path) -> ASRBackend:
+def create_backend(profile: InferenceProfile, model_path: str | Path) -> ASRBackend:
     """Construct the adapter selected by a validated Transformers profile."""
-    if profile.framework != "transformers":
+    if profile.inference_library != "transformers":
         raise ProfileError(
-            f"Transformers backend cannot load framework '{profile.framework}'"
+            "Transformers adapter cannot load inference library "
+            f"'{profile.inference_library}'"
         )
 
     if profile.adapter == "ctc":

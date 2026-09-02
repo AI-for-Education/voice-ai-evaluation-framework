@@ -5,8 +5,8 @@ set -euo pipefail
 # >=40 GiB VRAM. The adapter will reject the present 16 GiB GPU before loading.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-source "$SCRIPT_DIR/inference/runtime_identity.sh"
-pipeline_runtime_docker_args \
+source "$SCRIPT_DIR/inference/execution_environment_identity.sh"
+pipeline_execution_environment_docker_args \
   "qwen-omni-asr" \
   "voice-ai-evaluation-framework-qwen-omni:latest" \
   "run_qwen_omni_inference.sh"
@@ -20,7 +20,7 @@ fi
 
 exec docker compose --profile large-gpu run --rm \
   "${USER_FLAG[@]}" \
-  "${PIPELINE_RUNTIME_DOCKER_ARGS[@]}" \
+  "${PIPELINE_EXECUTION_ENVIRONMENT_DOCKER_ARGS[@]}" \
   --env HOME=/tmp \
   --entrypoint "" \
   qwen-omni-asr \

@@ -1,8 +1,9 @@
 # Source: https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4
 # Decoder basis: https://k2-fsa.github.io/sherpa/onnx/c-api/html/structsherpa__onnx_1_1cxx_1_1OnlineRecognizerConfig.html
 # Sherpa documents modified_beam_search and max_active_paths=4 for streaming ASR.
-id: zipformer-streaming-robust-sw-v4-modified-beam4
-framework: sherpa_onnx
+profile_schema_version: 2
+inference_setup_id: zipformer-streaming-robust-sw-v4-modified-beam4
+inference_library: sherpa_onnx
 adapter: online_transducer
 artifact: sherpa-onnx-zipformer-streaming-robust-sw-v4
 language: sw
@@ -11,15 +12,14 @@ output_units: phoneme
 output_notation: ipa
 output_inventory: bookbot_gruut_sw_v1
 pipeline_contract:
-  schema_version: 1
+  schema_version: 2
   audio_preparation: shared_soundfile_librosa_16khz
-  inference:
-    artifact: canonical_checkpoint
-    frontend: canonical_sherpa_online_frontend
-    runtime: sherpa_onnx_image
-    chunking: none
+  model_artifact: canonical_checkpoint
+  input_processing: canonical_sherpa_online_frontend
+  execution_stack: sherpa_onnx_image
+  chunking: none
   evaluation: direct_pred_text_by_output_units
-  runtime_resolution: observed_effective_values_v1
+  observation_policy: observed_effective_values_v2
 loader:
   processor_mode: auto
   local_files_only: true

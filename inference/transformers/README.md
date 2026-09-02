@@ -1,14 +1,14 @@
 # Transformers inference
 
-This framework package runs local Hugging Face speech-recognition checkpoints
+This package runs local Hugging Face speech-recognition checkpoints
 without network access. It preserves the shared `transcriptions.jsonl` handoff
 used by NeMo and the evaluation pipeline.
 
-This directory is for models loaded by the Hugging Face **Transformers
-runtime**. A model being downloaded from the Hugging Face Hub does not by
-itself make it a Transformers model. The BookBot Zipformer artifact uses
-Sherpa-ONNX, so it now lives under `inference/sherpa_onnx/` and has a parallel
-profile-driven launcher there.
+This directory is for models loaded through the Hugging Face **Transformers
+inference library**, using PyTorch as the inference engine. A model being
+downloaded from the Hugging Face Hub does not by itself make it a Transformers
+model. The BookBot Zipformer artifact uses Sherpa-ONNX and ONNX Runtime, so it
+lives under `inference/sherpa_onnx/` with its matching launcher.
 
 Two inference families are available:
 
@@ -58,7 +58,7 @@ the Hub client to download weights.
 
 ```bash
 ./run_transformers_inference.sh \
-  --model_config inference/transformers/profiles/paza-whisper-large-v3-turbo-sw.yaml \
+  --inference_profile inference/transformers/profiles/paza-whisper-large-v3-turbo-sw.yaml \
   --audio_manifest input_output_data/output/experiments/<experiment>/manifests/ref_manifest.raw_segments.jsonl \
   --batch_size 8
 ```
@@ -68,7 +68,8 @@ The Paza owner requires caller-managed segmentation above the checkpoint's
 profiles therefore freeze a project policy of deterministic 30-second chunks
 with zero overlap. Segmentation happens only in memory, chunk transcripts are
 joined in source order, and the original file still emits one result row. This
-benchmark has 44 of 7,617 clips above 30 seconds; the duration is a reproducible
+evaluation input set has 44 of 7,617 clips above 30 seconds; the duration is a
+reproducible
 local choice, not an owner recommendation.
 
 BookBot's greedy and packaged-LM runs are separate profile instances. Both use
@@ -78,13 +79,13 @@ other:
 ```bash
 # Existing plain-processor greedy CTC
 ./run_transformers_inference.sh \
-  --model_config inference/transformers/profiles/bookbot-orthographic-ctc.yaml \
+  --inference_profile inference/transformers/profiles/bookbot-orthographic-ctc.yaml \
   --audio_manifest input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl \
   --batch_size 8
 
 # Packaged 5-gram KenLM beam search
 ./run_transformers_inference.sh \
-  --model_config inference/transformers/profiles/bookbot-orthographic-ctc-5gram.yaml \
+  --inference_profile inference/transformers/profiles/bookbot-orthographic-ctc-5gram.yaml \
   --audio_manifest input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl \
   --batch_size 8
 ```
@@ -99,9 +100,9 @@ parser and `tests/test_profile.py` validate field coverage and source paths.
 
 ### Paired greedy and non-greedy profiles
 
-Decoder comparisons use the BookBot pattern: one frozen profile ID per decoder,
+Decoder comparisons use the BookBot pattern: one frozen inference setup ID per decoder,
 with no change to the input manifest contract or the emitted
-`transcriptions.jsonl` schema. Because the runner includes the profile ID in
+`transcriptions.jsonl` schema. Because the runner includes the inference setup ID in
 each timestamped transcript directory, greedy and non-greedy outputs cannot
 overwrite or mix with one another.
 
@@ -128,7 +129,7 @@ and [Microsoft Paza model card](https://huggingface.co/microsoft/paza-whisper-la
 
 All variants retain the same model-specific input/output contract and long-audio
 routing as their baseline. Completed greedy and beam runs remain separately
-identified by profile ID and timestamp in the output tree.
+identified by inference setup ID and timestamp in the output tree.
 
 MMS and W2V-BERT remain greedy-only in the tracked structure. A fair CTC
 non-greedy profile requires a compatible decoder vocabulary and language-model
@@ -154,9 +155,9 @@ held-out data.
 Use `--audio_manifest` with the fixed segment manifest so every comparison keeps
 the same input set and order. Reserve `--root_audio_dir` for ad hoc discovery
 when no ordered manifest exists. The default output is
-`input_output_data/output/transcripts/<profile-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/`. Pass
+`input_output_data/output/transcripts/<inference-setup-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/`. Pass
 `--smoke_test` to use
-`input_output_data/output/smoke_tests/transcripts/<profile-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/`.
+`input_output_data/output/smoke_tests/transcripts/<inference-setup-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/`.
 During inference the CLI shows a file progress bar and prints the resolved
 device, batch size, output directory, final result count and error count.
 
@@ -186,14 +187,14 @@ profiles select the differences that affect model input or decoding:
 
 Every active value is stored in the YAML profile and copied to
 `run_metadata.json`, together with the effective generation configuration and
-the defaults supplied by the model or runtime.
+the defaults supplied by the model or inference library.
 
 ## Profiles
 
 | Profile | Source checkpoint | Notes |
 | --- | --- | --- |
 | `bookbot-orthographic-ctc.yaml` | `bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm` | Orthographic; explicit plain processor preserves greedy no-KenLM behaviour. |
-| `bookbot-orthographic-ctc-5gram.yaml` | `bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm` | Orthographic; packaged 5-gram KenLM beam search. Explicit beam width 100 and one-best output match the installed decoder defaults; one persistent worker is the deterministic project runtime choice. Requires `pyctcdecode==0.5.0` and `kenlm==0.3.0` from the current Dockerfile. |
+| `bookbot-orthographic-ctc-5gram.yaml` | `bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm` | Orthographic; packaged 5-gram KenLM beam search. Explicit beam width 100 and one-best output match the installed decoder defaults; one persistent worker is the deterministic project execution choice. Requires `pyctcdecode==0.5.0` and `kenlm==0.3.0` from the current Dockerfile. |
 | `bookbot-phoneme-ctc.yaml` | `bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot` | Phoneme output; do not score directly as orthographic WER. |
 | `mms-1b-all-swh.yaml` | `facebook/mms-1b-all` | Selects and loads the `swh` language adapter. |
 | `w2v-bert-2.0-swahili-asr.yaml` | `badrex/w2v-bert-2.0-swahili-asr` | Automatic Wav2Vec2-BERT processor. |
