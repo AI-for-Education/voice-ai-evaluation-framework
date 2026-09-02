@@ -46,8 +46,8 @@ def render_leaderboard(
         "order: overall, passage, syllables, non-words, and letters; configuration "
         "and provenance details follow. Passage/grid tasks report correct-count "
         "Pearson correlation; isolated tasks report accuracy. Post-processing "
-        "columns identify any adjusted hypotheses used for scoring. Artifact, "
-        "preprocessing/frontend, and runtime are separate columns in that "
+        "columns identify any adjusted hypotheses used for scoring. Model "
+        "artifact, inference setup, and execution stack appear in that "
         "comparison order; Android proxy results are not physical-phone "
         "performance measurements."
     )
@@ -70,8 +70,8 @@ def render_leaderboard(
                 st.code(reason)
 
 
-st.set_page_config(page_title="EGRA Model Leaderboards", layout="wide")
-st.title("EGRA Model Leaderboards")
+st.set_page_config(page_title="EGRA ASR Leaderboards", layout="wide")
+st.title("EGRA ASR Leaderboards")
 st.write(
     "Orthographic word scoring and IPA phoneme scoring are ranked separately. "
     "Archived and representation-incompatible evaluations are never included."
@@ -80,7 +80,10 @@ st.write(
 args = parse_args()
 default_root = os.environ.get("EGRA_EVALUATIONS_ROOT", args.evaluations_root)
 evaluations_root = st.text_input("Evaluations root", default_root)
-latest_only = st.toggle("Show only the newest completed run per model", value=True)
+latest_only = st.toggle(
+    "Show only the newest completed run per inference setup",
+    value=True,
+)
 
 try:
     frames, skipped_runs = load_leaderboards(evaluations_root, latest_only)

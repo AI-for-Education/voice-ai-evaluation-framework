@@ -30,6 +30,7 @@ contracts:
 - `inference/nemo/` contains NVIDIA NeMo inference and its profiles.
 - `inference/transformers/` contains offline Hugging Face CTC and speech-seq2seq inference.
 - `inference/sherpa_onnx/` contains offline Sherpa-ONNX streaming-transducer inference.
+- `inference/torch/` contains native TorchScript streaming-transducer inference.
 - `inference/onnxruntime/` contains PC CPU validation of FP32 and INT8 exports plus a separate, controlled Android-parity accuracy proxy for the packaged mobile artifact.
 - `inference/multimodal/` contains prompt-driven audio-to-text generation for multimodal models, beginning with Gemma 4 E2B.
 - `inference/common.py`, `inference/contracts.py`, and `inference/runner.py` provide the shared input, audio, result, and output behaviour.
@@ -40,7 +41,8 @@ with `audio_filepath`, `duration`, and `pred_text`, plus `run_metadata.json`
 describing the inference setup and execution stack. Use
 `run_nemo_inference.sh`, `run_transformers_inference.sh`,
 `run_onnxruntime_inference.sh`, `run_onnxruntime_android_inference.sh`,
-`run_sherpa_onnx_inference.sh`, or `run_multimodal_inference.sh` for new runs;
+`run_sherpa_onnx_inference.sh`, `run_torch_inference.sh`, or
+`run_multimodal_inference.sh` for new runs;
 root `infer.py` is the only legacy NeMo `--model` API. See the README in each
 inference-library directory for model-specific details.
 
@@ -55,13 +57,11 @@ their effective merged configuration.
 Profiles also reference the tracked pipeline definitions in
 `inference/pipeline_contracts.json`. New metadata resolves them into four
 readable evidence groups: model artifact, inference setup, execution stack,
-and evaluation. Historical recovery uses an explicit
-`not_available` value with a reason instead of guessing; see
-the local development note `docs/pipeline-provenance.md` (not versioned).
+and evaluation. Unavailable observations use an explicit `not_available`
+value with a reason instead of guessing; see
+`docs/pipeline-provenance.md`.
 New inference runs score the direct adapter hypothesis in `pred_text`; no
-duration or repetition rule truncates model output after decoding. Historical
-rows containing `raw_pred_text` and historical metadata containing
-`postprocessing` remain readable for audit compatibility.
+duration or repetition rule truncates model output after decoding.
 
 ### Standard output layout
 
@@ -84,7 +84,6 @@ input_output_data/output/
 │     │  ├─ egra_eval_detailed.csv
 │     │  ├─ egra_eval_summary.txt
 │     │  └─ evaluation_metadata.json
-│     └─ orthographic_legacy/      # Optional historical mismatch only
 └─ smoke_tests/
    ├─ transcripts/
    │  └─ <inference-setup-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/
@@ -92,19 +91,18 @@ input_output_data/output/
       └─ <inference-setup-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/
 ```
 
-Inference creates the inference-setup/UTC-timestamp run ID automatically. `run_manifest.sh`
+Inference creates the inference-setup/UTC-timestamp run ID automatically. Runs
+are written to a dot-prefixed staging directory and published only after the
+transcript and metadata are complete. If the same inference setup starts more
+than once in the same second, later runs receive `__2`, `__3`, and so on instead
+of reusing an existing directory. `run_manifest.sh`
 derives the matching evaluation directory from the standard
 `--prediction_manifest` path. `run_eval2.sh` writes each scoring representation into
 its own child directory, so WER and PER results cannot replace one another.
 `auto` writes orthographic models under `orthographic/` and native phoneme
-models under `ipa/`. The explicit `legacy_orthographic` mode exists only to
-restore earlier phoneme-vs-orthography diagnostics under
-`orthographic_legacy/`; those WER values are not representation-compatible
-quality measurements.
-For faithful archive recovery, that explicit legacy mode also preserves known
-pre-fix reference corruption instead of applying the modern integrity gate;
-`evaluation_metadata.json` records that the gate was disabled.
-Use `--smoke_test` on either inference launcher for the smoke-test branch.
+models under `ipa/`. Cross-representation phoneme-vs-orthography WER is not a
+valid evaluation route and is rejected.
+Use `--smoke_test` on any current inference launcher for the smoke-test branch.
 `--output_root` remains available when a different output base or an explicit
 evaluation destination is required.
 
@@ -112,32 +110,28 @@ All inference routes print model-loading milestones and a shared file
 progress bar. The bar advances after each completed batch and ends with result
 and error counts; the exact output path is also printed.
 
-| Stage | Preferred argument | File role | Compatibility name |
-|---|---|---|---|
-| NeMo inference input | `--audio_manifest` | Exact audio segments to transcribe | `--manifest_in` (legacy NeMo calls only) |
-| Transformers inference input | `--audio_manifest` | Exact audio segments to transcribe | — |
-| Sherpa-ONNX inference input | `--audio_manifest` | Exact audio segments to transcribe | — |
-| Multimodal inference input | `--audio_manifest` | Exact audio segments to transcribe | N/A |
-| Manifest merge audio input | `--audio_manifest` | Exact audio rows used for inference | `--manifest_base_in` |
-| Manifest merge predictions | `--prediction_manifest` | Backend predictions in `transcriptions.jsonl` | `--asr_manifest`, `--nemo_manifest` |
-| Evaluation input | `--manifest_in` | Cleaned manifest containing references and predictions | — |
+| Stage | Argument | File role |
+|---|---|---|
+| Current inference routes | `--audio_manifest` | Exact audio segments to transcribe |
+| Manifest merge audio input | `--audio_manifest` | Exact audio rows used for inference |
+| Manifest merge predictions | `--prediction_manifest` | Adapter predictions in `transcriptions.jsonl` |
+| Evaluation input | `--manifest_in` | Cleaned manifest containing references and predictions |
 
-Use the preferred names for every new command. Compatibility names remain only
-so existing commands continue to work; use the library-neutral preferred names
-for all new manifest merge calls.
+The root/original NeMo command is the sole compatibility exception and also
+accepts its established `--manifest_in` spelling.
 
-Run the same merge and evaluation steps once per model output. Report each
-model's metrics separately; phoneme-model WER/MER is not directly comparable
-with orthographic-model WER/MER because the scored units are different.
+Run the same merge and evaluation steps once per inference run. Report each
+run's metrics separately; phoneme-output WER/MER is not directly comparable
+with orthographic-output WER/MER because the scored units are different.
 
-## Model generalisation readiness
+## Inference setup readiness
 
 The status below records local artifact checks and one-file inference smoke tests
 performed on 12-13 August 2026. The shared
 `voice-ai-evaluation-framework-asr:latest` image has been rebuilt from the
 tracked CUDA 12.8 Dockerfile. It includes `pyctcdecode==0.5.0` and
-`kenlm==0.3.0` for BookBot CTC beam search and a CUDA-enabled Sherpa-ONNX
-Sherpa-ONNX and ONNX Runtime packages for BookBot Zipformer; no separate
+`kenlm==0.3.0` for BookBot CTC beam search and CUDA-enabled Sherpa-ONNX and
+ONNX Runtime packages for BookBot Zipformer; no separate
 BookBot image is required.
 
 ### Runnable with the current image
@@ -153,7 +147,7 @@ BookBot image is required.
 | Whisper large-v2 | `run_transformers_inference.sh` + `whisper-large-v2-sw.yaml` | Complete snapshot; inference passed. Inputs above 30 seconds use Hugging Face's untruncated timestamp-based long-form path without modifying source audio. |
 | MMS-1B Swahili | `run_transformers_inference.sh` + `mms-1b-all-swh.yaml` | Complete Swahili package; inference and `swh` adapter loading passed. |
 | BookBot Zipformer streaming RNN-T | `run_sherpa_onnx_inference.sh` + `zipformer-streaming-robust-sw-v4.yaml` | Moved out of the Transformers model root because it is a Sherpa-ONNX artifact. The shared CUDA image now includes Sherpa-ONNX; one-file GPU inference passed. Output is phonemic. |
-| NeMo Exp41 | `run_nemo_inference.sh` + `swahili-exp41-ctc.yaml` | `model_exp41_avg.nemo` restored and inference passed. |
+| NeMo Exp41 / [AI-for-Education `sw-tz-child-egra-fastconformer-ctc-110m`](https://huggingface.co/AI-for-Education/sw-tz-child-egra-fastconformer-ctc-110m) | `run_nemo_inference.sh` + `swahili-exp41-ctc.yaml` | The complete public `model_exp41_avg.nemo` artifact is present locally. Its 463,144,960-byte size and SHA-256 `6450926bc1338827ab201b2d9f8f94bcb7a5bd06b6f72690f60ead14a067a7b0` match the model owner's published identity. Restore/inference passed, including a 7,617-segment run with zero inference errors. |
 | Gemma 4 E2B | `run_multimodal_inference.sh` + `gemma-4-E2B-sw.yaml` | Uses the complete local BF16 snapshot through a separate prompt-driven audio adapter. Audio longer than Gemma's 30-second limit is decoded as ordered, non-overlapping 30-second chunks and rejoined into one shared output row. The existing image already has the required Transformers, Torch, Accelerate, and audio packages; no image rebuild or additional download is required. |
 
 The decoder dependencies are additive and are imported only by a CTC profile
@@ -166,6 +160,7 @@ CPU image build plus removal or override of that Compose GPU reservation.
 
 | Model | Required preparation |
 |---|---|
+| BookBot Zipformer six-row matrix | Use `bash ./run_bookbot_zipformer_matrix.sh`. It validates the pinned native/INT8 ONNX/INT8 ORT artifacts by SHA-256, rebuilds the shared ASR image, and then runs rows 30–35 in order. See `docs/bookbot-zipformer-runbook.md`. Actual model execution is intentionally deferred. |
 | HuBERT large-ls960-ft | Download the missing pinned snapshot. The existing CTC adapter and `hubert-large-ls960-ft-en.yaml` profile can then run it in the current image. This is English-only. |
 
 ### Requires another execution environment or additional model artifacts
@@ -175,7 +170,7 @@ CPU image build plus removal or override of that Compose GPU reservation.
 | Paza Phi-4 multimodal | Runnable now in its dedicated image on the current hardware. Image build and one-file BF16 GPU inference passed with zero errors; the five-shard load took about 127 seconds and the 4.096-second file took about 16 seconds. The bounded auto-placement/offload path remains available if memory pressure changes. No model download is required. |
 | Qwen2.5-Omni-7B | The dedicated text-only adapter/profile/image structure is implemented: the talker is disabled and `return_audio=False`. Its profile requires at least 40 GiB VRAM and deliberately rejects this 16 GiB host before loading weights. Build/run it only on suitable hardware; no model download is required. |
 | Kaldi | Obtain the exact trained acoustic model, feature configuration, lexicon, language model, symbol tables, and decoding graph, then build a Kaldi service/adapter. The toolkit source alone is not a runnable ASR model. |
-| `Swahili_exp1_100epochs` and `sw-tz-child-egra-fastconformer-ctc-110m` | Obtain complete NeMo weights or a `.nemo` artifact. The currently present tokenizer/configuration or documentation files are insufficient. |
+| `Swahili_exp1_100epochs` | Obtain complete NeMo weights or a `.nemo` artifact. The currently present tokenizer/configuration files are insufficient. |
 
 
 
@@ -200,7 +195,7 @@ CPU image build plus removal or override of that Compose GPU reservation.
 2. **Prepare dataset + model**
    - Copy dataset files (`0_Audio/`, `2_TextGrid/`, `Student_Full_Canonical_EGRA_*.csv`, `Student_MetaData_EGRA_*.csv`) under `input_output_data/input/<dataset_name>/`.
    - Place passages CSV at `input_output_data/input/oral_passages.csv`.
-   - Place model artifacts under the `models/` directory for their inference library: `inference/nemo/`, `inference/transformers/`, `inference/sherpa_onnx/`, or `inference/multimodal/`.
+   - Place model artifacts under the `models/` directory for their inference library: `inference/nemo/`, `inference/transformers/`, `inference/sherpa_onnx/`, `inference/torch/`, or `inference/multimodal/`.
    - Select a tracked YAML inference profile from the corresponding `profiles/` directory. Profiles use relative artifact paths; inference never downloads models.
 
 3. **Build base full manifest (input for segmentation)**
@@ -318,10 +313,7 @@ CPU image build plus removal or override of that Compose GPU reservation.
    - `ipa/egra_eval_detailed.csv` and `ipa/egra_eval_summary.txt` for valid PER
      scoring.
    - `evaluation_metadata.json` inside each completed representation directory,
-     recording its source manifest and compatibility status.
-   - `orthographic_legacy/`, when explicitly requested, is retained for audit
-     history only and must not be compared as a valid phoneme-model WER.
-   - Summary folders inside each representation: `can_ref/`, `can_hyp/`, `ref_hyp/`.
+     recording its source manifest and representation status.
 9. **Explore results interactively**  
    - Dependencies: `pip install streamlit pandas numpy` (preferably inside a virtualenv).  
      - Specific example: `python3 -m venv .venv_streamlit && . .venv_streamlit/bin/activate && pip install --upgrade pip setuptools wheel && pip install streamlit pandas numpy`
@@ -337,7 +329,7 @@ Everything runs in Docker setup (CPU-only or GPU-enabled).
 The example assumes that data and models have been placed in:
 
 - Data: `input_output_data/input/heldout_combined_fixed_20260525`
-- Model profile: `inference/nemo/profiles/swahili-exp41-ctc.yaml`
+- Inference profile: `inference/nemo/profiles/swahili-exp41-ctc.yaml`
 - Model artifact: `inference/nemo/models/model_exp41_avg.nemo`
 
 All the steps above can then be performed in sequence:
@@ -357,7 +349,7 @@ All the steps above can then be performed in sequence:
         --inference_profile inference/nemo/profiles/swahili-exp41-ctc.yaml \
         --audio_manifest input_output_data/output/experiments/heldout_combined_fixed_20260525_exp41/manifests/ref_manifest.raw_segments.jsonl
 
-    # Copy the exact value printed by "[INFO] Model run:".
+    # Copy the exact value printed by "[INFO] Inference run:".
     RUN_ID=swahili-exp41-ctc_<timestamp>
 
     ./run_manifest.sh \
@@ -417,14 +409,12 @@ All the steps above can then be performed in sequence:
 .
 ├── docker/
 │   └── Dockerfile                # Shared CUDA/CPU image for NeMo, Transformers, and Sherpa-ONNX
-├── docker-compose.yml            # Three inference services plus egra-eval
+├── docker-compose.yml            # Inference, evaluation, and dashboard services
 ├── manifest_pipeline.py          # Build+clean manifest entrypoint (used by run_manifest.sh)
 ├── eval_pipeline2.py             # Evaluation entrypoint from existing manifest (used by run_eval2.sh)
-├── evaluation.py                 # Shared evaluation utilities and legacy combined entrypoint
 ├── infer.py                      # Legacy NeMo --model entrypoint
-├── run_nemo_inference.sh         # Profile-driven NeMo launcher
-├── run_transformers_inference.sh # Profile-driven Transformers launcher
-├── run_sherpa_onnx_inference.sh  # Profile-driven Sherpa-ONNX launcher
+├── run_*_inference.sh            # Profile-driven launchers for every inference route
+├── run_onnxruntime_prepare.sh    # Explicit ONNX artifact preparation
 ├── run_eval2.sh                  # Wrapper script for evaluation (supports --manifest_in)
 ├── run_manifest.sh               # Wrapper script to build+clean manifest only (no scoring)
 ├── run_segment.sh                # Wrapper script for standalone manifest/audio segmentation
@@ -446,21 +436,22 @@ All the steps above can then be performed in sequence:
 │   │   ├── profiles/             # Tracked Transformers inference profiles
 │   │   ├── models/               # Local Hugging Face artifacts (ignored, mounted read-only)
 │   │   └── tmp/                  # Temporary Transformers files
-│   └── sherpa_onnx/
-│       ├── infer.py              # Sherpa-ONNX inference entrypoint
-│       ├── backend.py            # Streaming transducer adapter
-│       ├── profiles/             # Tracked Sherpa-ONNX profiles
-│       └── models/               # Local ONNX artifacts (ignored, mounted read-only)
+│   ├── sherpa_onnx/              # Streaming transducer route
+│   ├── onnxruntime/              # Desktop and Android-parity ONNX routes
+│   └── multimodal/               # Gemma, Phi-4, and Qwen audio routes
 ├── egra_eval2/                   # Evaluation, manifest, dataset-layout, and segmentation modules
 │   ├── dataset_layout.py         # Discover dataset audio, TextGrid, and metadata paths
 │   ├── manifest_builder.py       # Build reference manifests
 │   ├── manifest_cleaner.py       # Normalize and clean manifest text
-│   ├── nemo_manifest.py          # Load library-neutral ASR JSONL outputs
-│   ├── run_eval.py               # Core CAN/REF/HYP scoring
-│   ├── scoring.py                # WER counts and accuracy metrics
+│   ├── prediction_manifest.py    # Load library-neutral prediction JSONL outputs
+│   ├── evaluate.py               # Current row-level and aggregate scoring
+│   ├── metrics.py                # WER, MER, and fine-grained error metrics
+│   ├── reporting_candidates.py   # Inactive reporting logic awaiting migration
+│   ├── reporting_candidate_support.py # Inactive support for those candidates
 │   ├── segmenter.py              # TextGrid-driven segmentation helpers
-│   └── summarize.py              # Overall, macro, and per-learner summaries
-├── tools/                        # Helper scripts (NeMo manifest prep, comparisons, etc.)
+│   └── scoring_text.py           # Orthographic/IPA scoring-view selection
+├── tools/                        # Helper scripts (manifest prep, comparisons, etc.)
+│   ├── migrations/               # Explicit one-off migration utilities
 │   ├── make_ref_manifest.py      # Standalone reference manifest builder
 │   └── ...
 └── input_output_data/
@@ -475,18 +466,18 @@ All the steps above can then be performed in sequence:
 **Inference (`inference/`)**
 - Loads a required inference profile and resolves its artifact from the matching `models/` directory.
 - Reads exact segments from `--audio_manifest` or recursively discovers `.wav` files under `--root_audio_dir`; the NeMo legacy API also retains dataset discovery and optional TextGrid-driven segmentation.
-- Resamples audio to the model's required sample rate, then dispatches to the selected NeMo or Transformers inference adapter.
+- Resamples audio to the model's required sample rate, then dispatches to the selected inference adapter.
 - Emits the unchanged `transcriptions.jsonl` schema and a separate `run_metadata.json` record.
 
 **Manifest build (`manifest_pipeline.py`)**
 - In segment-only flow, loads the exact segmented audio rows from `--audio_manifest`.
-- Attaches ASR hypotheses from `--prediction_manifest` (optional; `--asr_manifest` and `--nemo_manifest` are legacy aliases).
+- Attaches ASR hypotheses from `--prediction_manifest` when supplied.
 - Writes cleaned segment manifests (for example `ref_manifest.segment.raw.jsonl` and `ref_manifest.segment.clean.jsonl`).
 
 **Evaluation (`eval_pipeline2.py`)**
 - Loads the cleaned manifest via `--manifest_in` and attaches `REF/CAN/HYP` by audio key.
-- Computes CAN/REF, CAN/HYP, REF/HYP metrics and advanced summaries.
-- Produces a **detailed CSV**, text summary, and per-alignment summary folders (`can_ref/`, `can_hyp/`, `ref_hyp/`).
+- Computes REF/HYP error rates, CAN-relative agreement metrics, and task-level summaries.
+- Produces a **detailed CSV**, a text summary, representation metadata, and optional scatter plots.
 
 ---
 
@@ -657,99 +648,77 @@ directory and enriches them with per-sample NeMo WER scores. Pass either `--outp
 
 By default, all evaluation outputs land in
 `input_output_data/output/evaluations/<inference_setup_id>_<timestamp>/` (or the parallel
-`smoke_tests/evaluations/` path). Each run folder contains:
+`smoke_tests/evaluations/` path). Each representation is written separately
+under `orthographic/` or `ipa/` and contains:
 
-1. **`egra_eval_detailed.csv`** — One row per EGRA item with:
-   - Keys: `learner_id`, `audio_type`, `audio_file`.
-   - Texts: `CAN` (canonical), `REF` (annotator), `HYP` (ASR).
-   - **CAN vs REF** metrics: `WER_can_ref`, `ACC_can_ref (EGRA_ACC)` plus counts `S_can_ref`, `D_can_ref`, `I_can_ref`, `C_can_ref (EGRA_COR)`, `N_can_ref`.
-   - **CAN vs HYP** metrics: `WER_can_hyp`, `ACC_can_hyp (ASR_EGRA_ACC)` plus counts `S_can_hyp`, `D_can_hyp`, `I_can_hyp`, `C_can_hyp (ASR_EGRA_COR)`, `N_can_hyp`.
-   - **REF vs HYP** metrics: `WER_ref_hyp`, `ACC_ref_hyp` plus counts `S_ref_hyp`, `D_ref_hyp`, `I_ref_hyp`, `C_ref_hyp`, `N_ref_hyp`.
-   - Per-row aggregates: `EGRA-COR`, `EGRA-ACC`, `ASR-EGRA-COR`, `ASR-EGRA-ACC`, `MAE_EGRA_COR`, `ASR_WER`.
-   - Column names that include aliases (e.g., `ACC_can_ref (EGRA_ACC)`) expose both the base metric and the specific EGRA naming.
-   - WER and ACC values are percentages (0–100); the raw counts are absolute integers.
-   - **Agreement**: `MAE_EGRA_COR = |EGRA_COR − ASR_EGRA_COR|` which represents the absolute difference in number of correct tokens between annotator-based and ASR-based evaluations.
-   - All learner metadata merged in (e.g., `gender`, `age`).
+1. **`egra_eval_detailed.csv`** — one row per merged EGRA item. It contains
+   `learner_id`, `audio_type`, `audio_file`, normalized `CAN`/`REF`/`HYP`,
+   learner metadata, REF/HYP alignment counts (`S_ref_hyp`, `D_ref_hyp`,
+   `I_ref_hyp`, `C_ref_hyp`, `N_ref_hyp`), CAN-relative correct counts
+   (`C_can_ref`, `C_can_hyp`), mistake-alignment counts (`S_mer`, `D_mer`,
+   `I_mer`, `C_mer`, `N_mer`), and fine-grained substitution/deletion/insertion
+   classification counts.
 
-2. **`egra_eval_summary.txt`** — Six-line global snapshot with the metrics `EGRA-COR`, `EGRA-ACC`, `ASR-EGRA-COR`, `ASR-EGRA-ACC`, `MAE_EGRA_COR`, and `ASR_WER` (averages where applicable), rounded to two decimals.
+2. **`egra_eval_summary.txt`** — global and per-task aggregate WER or PER,
+   mistake error rate (MER), and the task-specific agreement metrics supported
+   by the evaluator. Error rates are percentages. Passing `--detailed` also
+   writes the supported scatter plots into the same representation directory.
 
-3. **Pair-specific summary folders** — within the same experiment directory you will find three
-   subfolders:
+3. **`evaluation_metadata.json`** — the scoring representation, source
+   manifest, reference-view identity, and evaluation provenance.
 
-   | Folder | Alignment pair | Files inside |
-   |--|--|--|
-   | `can_ref/` | Canonical vs Reference (annotator EGRA) | `egra_eval_summary_per_speaker_global.csv`, `egra_eval_summary_per_speaker_macro.csv`, `egra_eval_summary_per_speaker_subcat.csv` |
-   | `can_hyp/` | Canonical vs ASR hypothesis (automated EGRA) | same filenames as above |
-   | `ref_hyp/` | Reference vs ASR hypothesis (ASR quality) | same filenames as above |
-
-   Each summary file reports **micro-averages** derived from the raw counts:
-   - `*_per_speaker_global.csv` — one row per `learner_id` plus a leading `__GLOBAL__` row aggregating every sample.
-   - `*_per_speaker_macro.csv` — per learner × macro category (letters / syllables / nonwords / passage).
-   - `*_per_speaker_subcat.csv` — per learner × macro category × subcategory (e.g., `letters` + `isolated`).
-
-   The columns mirror the metric block in the detailed CSV (WER, ACC, counts). Use them to compare annotator vs ASR EGRA scores or inspect performance by task type.
-
-Use these artifacts to track:
-- Human annotator performance (`can_ref`).
-- Automated EGRA performance (`can_hyp`).
-- ASR quality with respect to the human reference (`ref_hyp`).
-- Agreement between automated and human EGRA via `MAE_EGRA_COR` (closer to 0 is better).
+The richer per-speaker and pair-specific reports from the former evaluator are
+not produced by the active workflow. Their source is isolated as migration
+material in `egra_eval2/reporting_candidates.py`.
 
 ---
 
 ## Metrics & definitions
 
-All metrics are computed after **text normalization** (`normalize/textnorm.py`): NFC Unicode, lowercase, punctuation removed, whitespace collapsed.
+All metrics are computed after text normalization in
+`egra_eval2/eval_utils.py`: NFC Unicode, lowercase, punctuation removed, and
+whitespace collapsed.
 
-We compute standard ASR alignment counts via `jiwer`:
+We compute standard REF/HYP alignment counts via `jiwer`:
 - **S** — substitutions  
 - **D** — deletions  
 - **I** — insertions  
 - **C** — correct matches 
-- **N** — number of total reference tokens (groundtruth)
+- **N** — number of reference tokens
 
 From those we derive:
 
-- **WER** = (S + D + I) / N → reported in the CSVs as a **percentage** (value × 100).
-- **ACC** = C / N → also reported as a **percentage** in the detailed and summary files.
-
-We apply the same counts to derive **EGRA-style** KPIs:
-
-- **EGRA (Annotator-based)** from **ANN/REF as truth vs CAN as hypothesis**  
-  - `C_can_ref (EGRA_COR) = N_ann − S_can_ref − D_can_ref`
-  - `ACC_can_ref (EGRA_ACC) = EGRA_COR / N_ann`
-  - In segment mode, `REF`/`HYP` are concatenated per original audio item before CAN-side scoring.
-
-- **ASR-based EGRA** from **CAN vs HYP**  
-  - `C_can_hyp (ASR_EGRA_COR) = N_can − S_can_hyp − D_can_hyp`
-  - `ACC_can_hyp (ASR_EGRA_ACC) = ASR_EGRA_COR / N_can`
-
-- **Agreement** between annotator- and ASR-based correctness  
-  - `MAE_EGRA_COR = |EGRA_COR − ASR_EGRA_COR|`
-
-- **ASR quality snapshot**  
-  - `ASR_WER = WER_ref_hyp` (same computation exposed for convenience in the detailed CSV and summary text).
-
-- **ASR quality vs human** from **REF vs HYP**  
-  - `WER_ref_hyp`, `ACC_ref_hyp` and the count fields `S_ref_hyp`, `D_ref_hyp`, `I_ref_hyp`, `C_ref_hyp`, `N_ref_hyp`.
+- **WER/PER** = `(S + D + I) / N × 100`. Orthographic evaluation reports
+  WER; IPA evaluation reports PER.
+- **MER** compares the CAN-relative error sequence of REF with the corresponding
+  sequence for HYP, then applies the same aggregate error-rate formula.
+- `C_can_ref` and `C_can_hyp` are the correct-token counts from CAN→REF and
+  CAN→HYP alignments. For passage and grid tasks, their correlation measures
+  whether the model preserves learner-level variation in correct responses.
+- Fine-grained substitution, deletion, and insertion precision/recall/F1 are
+  calculated for the supported passage and grid task summaries.
+- Isolated-letter, isolated-syllable, and isolated-nonword summaries treat a
+  CAN-relative error as the positive class and report classification accuracy.
 
 ---
 
 ### Metric ranges & units
 
-WER and ACC values are emitted as **percentages** (0.0–100.0). Count-based columns (`S/D/I/C/N`) remain raw integers.
+Aggregate error rates and summary precision/recall/F1 values are emitted as
+percentages. Count columns remain raw integers.
 
 | Metric | Description | Typical Range / Unit | Interpretation |
 |:--|:--|:--|:--|
-| **WER_can_ref**, **WER_can_hyp**, **WER_ref_hyp** | Word Error Rate (substitutions + deletions + insertions) / N | 0.0–100.0 (%); can exceed 100 with many insertions | Lower is better |
-| **ACC_can_ref (EGRA_ACC)**, **ACC_can_hyp (ASR_EGRA_ACC)**, **ACC_ref_hyp** | Accuracy = C / N | 0.0–100.0 (%) | Higher is better |
-| **C_can_ref (EGRA_COR)**, **C_can_hyp (ASR_EGRA_COR)** | Correctness count = N − S − D | Integer ≥ 0 | Count of correct tokens |
-| **S_\***, **D_\***, **I_\***, **C_\***, **N_\*** | Alignment counts (Substitutions, Deletions, Insertions, Correct, Total) | Integers ≥ 0 | Raw counts |
-| **MAE_EGRA_COR** | Absolute difference between EGRA_COR and ASR_EGRA_COR per row | Integer ≥ 0 | Lower indicates better agreement |
-| **ASR_WER** | Word error rate from REF vs HYP (duplicate of `WER_ref_hyp`) | 0.0–100.0 (%) | Lower is better |
+| **WER/PER** | REF/HYP substitutions + deletions + insertions, divided by reference-token count | Percentage; can exceed 100 with many insertions | Lower is better |
+| **MER** | Error rate between the human and model CAN-relative error sequences | Percentage | Lower is better |
+| **Correlation** | Pearson correlation between `C_can_ref` and `C_can_hyp` for passage/grid tasks | −1 to 1, or undefined when variance is zero | Higher is better |
+| **Fine-grained F1** | Agreement on substitution, deletion, or insertion events | 0–100% | Higher is better |
+| **Isolated-task accuracy** | Agreement on whether an isolated response contains a CAN-relative error | 0–100% | Higher is better |
+| **S/D/I/C/N fields** | Raw alignment counts used by the corresponding aggregate metric | Integer counts | Diagnostic evidence |
 
 **Note:**  
-If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC) are undefined and will appear as `NaN` in the output CSVs.
+If an aggregate reference-token count is zero, its error rate is undefined and
+appears as `NaN` in the summary.
 
 ---
 
@@ -758,12 +727,12 @@ If the canonical or reference text has `N = 0`, ratio-based metrics (WER, ACC) a
 
 ### Inference profiles and launchers
 
-- **Inference profile**: use `--inference_profile <profile.yaml>` with every inference launcher. The deprecated `--model_config` spelling remains accepted. Schema v2 profiles define `inference_setup_id`, `inference_library`, adapter, relative model artifact, language/task, loading settings, decoding, and structured parameter evidence. Container images supply compatible dependencies but do not select model-specific behavior.
+- **Inference profile**: use `--inference_profile <profile.yaml>` with every current inference launcher. Schema v2 profiles define `inference_setup_id`, `inference_library`, adapter, relative model artifact, language/task, loading settings, decoding, and structured parameter evidence. Container images supply compatible dependencies but do not select model-specific behavior.
 - **Invocation controls**: batch size, thread/worker counts, input selection, and output roots remain launcher arguments and are recorded in run metadata rather than being hidden in an image or treated as model hyperparameters.
 - **Model storage**: place artifacts below the owning inference library's `models/` directory. `ASR_MODEL_ROOT` overrides that default root; Compose sets it to the read-only `/models` mount.
 - **Input**: provide exactly one of `--audio_manifest <segments.jsonl>` or `--root_audio_dir <audio-directory>`. NeMo retains `--dataset_root` and `--dataset_annotator` for legacy dataset discovery and optional TextGrid segmentation.
 - **Output base**: inference defaults to `input_output_data/output`; `--output_root <directory>` changes that base. The runner creates `transcripts/<inference_setup_id>_<UTC timestamp>/` below it, or `smoke_tests/transcripts/...` with `--smoke_test`.
-- **Execution controls**: NeMo retains its CPU worker, temporary-segment, decoder, and debug controls; Transformers retains `--batch_size`; Sherpa-ONNX adds `--num_threads`. Sources, evidence strength, hardware assumptions, and historical gaps are recorded beside the relevant launcher and in the local development note `docs/inference-execution-parameter-provenance.md` (not versioned).
+- **Execution controls**: NeMo retains its CPU worker, temporary-segment, decoder, and debug controls; Transformers retains `--batch_size`; Sherpa-ONNX adds `--num_threads`. Sources, evidence strength, hardware assumptions, and historical gaps are recorded beside the relevant launcher and in [inference execution-parameter provenance](docs/inference-execution-parameter-provenance.md).
 - **Offline operation**: profiles require local artifacts and `local_files_only: true`; downloading a model is a separate preparation step.
 
 Root `infer.py` is the only legacy NeMo API and continues to accept `--model`
@@ -776,9 +745,9 @@ derived from a standard transcript path unless you override it.
 
 Run `python3 manifest_pipeline.py --help` to see available options. Highlights:
 - `--dataset_root /io/input/<dataset>` — required; automatically discovers the `Student_*` CSVs plus `0_Audio/` and `2_TextGrid/`.
-- `--audio_manifest /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl` — required in segment-only flow; defines and preserves the exact audio segment rows used for inference. `--manifest_base_in` remains an alias.
+- `--audio_manifest /io/output/<experiment>/manifests/ref_manifest.raw_segments.jsonl` — required in segment-only flow; defines and preserves the exact audio segment rows used for inference.
 - `--output_root /io/output/evaluations/<inference_setup_id>_<timestamp>` — optional exact destination; otherwise derived from `--prediction_manifest` by replacing `transcripts` with `evaluations`.
-- `--prediction_manifest /path/to/transcriptions.jsonl` — optional; if provided, `pred_text` is attached from any inference route. `--asr_manifest` and `--nemo_manifest` remain aliases.
+- `--prediction_manifest /path/to/transcriptions.jsonl` — optional; if provided, `pred_text` is attached from any inference route. Repeat the argument to merge multiple prediction files.
 
 ### Evaluation (`eval_pipeline2.py`)
 Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
@@ -786,9 +755,8 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - `--manifest_in /io/output/<experiment>/manifests/ref_manifest.segment.clean.jsonl` — required.
 - `--output_root /io/output/evaluations/<inference_setup_id>_<timestamp>` — optional run
   destination; otherwise the owning evaluation run is derived from
-  `--manifest_in`. The evaluator appends `orthographic/`, `ipa/`, or
-  `orthographic_legacy/`. Custom CSV and summary paths are rejected if they
-  escape that representation directory.
+  `--manifest_in`. The evaluator appends `orthographic/` or `ipa/`. A custom
+  `--out_csv` path is rejected if it escapes that representation directory.
 
 ---
 
@@ -829,8 +797,9 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - **`eval_pipeline2.py`**
   Runs scoring and report generation using only a cleaned manifest (`--manifest_in`) plus dataset metadata CSVs.
 
-- **`egra_eval2/scoring.py`**
-  Wraps `jiwer` to produce counts (**S, D, I, C, N**), **WER** and **ACC** (all expressed as percentages in downstream outputs). Uses `egra_eval2/textnorm.py` for simple text normalization.
+- **`egra_eval2/evaluate.py` and `egra_eval2/metrics.py`**
+  Produce row-level and aggregate counts (**S, D, I, C, N**), WER/PER, MER,
+  agreement metrics, and fine-grained substitution/deletion/insertion scores.
 
 - **`egra_eval2/textgrid_io.py`**
   Finds the requested tier case-insensitively (default `child`), gathers labeled intervals, strips filler tags (`<unk>`, `<noise>`, etc.), and concatenates labels to form **REF** per item while searching recursively across annotator folders.
@@ -838,8 +807,8 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - **`egra_eval2/linking.py`**
   Builds join keys from the EGRA CSV (`audio_name`, `audio_stem`) and attaches ASR HYPs by the chosen key (`stem` by default).
 
-- **`egra_eval2/nemo_manifest.py`**
-  Loads one or many NeMo manifests (JSONL), extracting `audio_path`, `audio_name`, `audio_stem` and `hyp_text`.
+- **`egra_eval2/prediction_manifest.py`**
+  Loads one or many prediction manifests (JSONL), extracting `audio_path`, `audio_name`, `audio_stem` and `hyp_text`.
 
 - **`egra_eval2/dataset_layout.py`**
   Utility helpers that discover dataset packages containing `0_Audio/`, `2_TextGrid/` and the `Student_*` CSVs.
@@ -847,15 +816,12 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - **`egra_eval2/passage_merge.py`**
   Parses the passages CSV (various encodings handled), extracts `passage_num` and fills missing `canonical_text` for `passage_numX` rows.
 
-- **`egra_eval2/summarize.py`**
-  Builds micro-averaged summaries for each alignment pair:
-  - `summary_for_pair(df, prefix, by=None)` — aggregates metrics for one of `can_ref`, `can_hyp`, or `ref_hyp` (optionally grouped by columns).
-  - `summary_per_speaker(df, prefix)` — per learner.
-  - `summary_per_speaker_macro(df, prefix)` — per learner × macro category.
-  - `summary_per_speaker_subcategory(df, prefix)` — per learner × macro category × subcategory.
-
 - **`egra_eval2/eval_utils.py`**
-  Shared evaluation helpers for letter canonical normalization and advanced metrics (MER + fine-grained P/R/F1 via `dp_align`).
+  Shared text normalization, aggregation, and letter-canonical helpers.
+
+- **`egra_eval2/reporting_candidates.py`**
+  Inactive migration material for richer historical reports. The supported
+  evaluator does not import it; see `docs/legacy-code-migration.md`.
 
 - **`egra_eval2/segmenter.py`**
   Shared TextGrid segmentation module used by inference; parses interval blocks and cuts audio without label/tier filtering.
@@ -863,18 +829,14 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - **`docker/Dockerfile`**  
   Debian 12 base with PyTorch (CPU or CUDA), NeMo ASR 2.3, Transformers, Sherpa-ONNX, and pinned inference dependencies.
 
-- **`docker-compose.yml`**  
-  Seven services:
-  - `nemo-asr`: run profile-driven NeMo inference.
-  - `transformers-asr`: run profile-driven CTC or speech-seq2seq inference.
-  - `sherpa-onnx-asr`: run profile-driven streaming ONNX transducer inference.
-  - `multimodal-asr`: run profile-driven multimodal audio-to-text generation.
-  - `phi4-multimodal-asr`: run Paza Phi-4 with bounded automatic GPU/CPU/disk placement.
-  - `qwen-omni-asr`: run Qwen text-only inference on a GPU with at least 40 GiB VRAM.
-  - `egra-eval`: run manifest build/evaluation (`manifest_pipeline.py`, `eval_pipeline2.py`).
-  Mounts the repo as `/work`, data as `/io`, and each inference library's model artifacts read-only as `/models`.
+- **`docker-compose.yml`**
+  Defines the NeMo, Transformers, Sherpa-ONNX, desktop ONNX, Android-parity
+  ONNX, Gemma, Phi-4, and Qwen inference services, plus ONNX preparation,
+  evaluation, and the isolated leaderboard dashboard. Inference services mount
+  the repository at `/work`, data at `/io`, and the matching model-artifact
+  directory read-only at `/models`.
 
 - **`run_nemo_inference.sh` / `run_transformers_inference.sh` / `run_sherpa_onnx_inference.sh` / `run_multimodal_inference.sh` / `run_phi4_multimodal_inference.sh` / `run_qwen_omni_inference.sh` / `run_segment.sh` / `run_manifest.sh` / `run_eval2.sh`**
-  Thin wrappers that run the appropriate Compose service and command. Every inference wrapper requires `--inference_profile`; `--model_config` remains a deprecated alias.
+  Thin wrappers that run the appropriate Compose service and command. Every current inference wrapper requires `--inference_profile`.
 - **`run_nemo_offline_eval.sh`**  
   Generates normalized REF/CAN manifests and runs NVIDIA NeMo’s own `speech_to_text_eval.py` script for REF↔HYP and CAN↔HYP scoring. Handy for cross-checking the internal metrics against the official NeMo implementation.

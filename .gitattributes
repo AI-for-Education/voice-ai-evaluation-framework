@@ -1,0 +1,4 @@
+/run_bookbot_zipformer_matrix.sh text eol=lf
+/run_torch_inference.sh text eol=lf
+/download_bookbot_zipformer_models.sh text eol=lf
+/inference/bookbot_zipformer_artifacts.sha256 text eol=lf

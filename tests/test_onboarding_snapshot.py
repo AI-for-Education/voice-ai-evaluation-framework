@@ -21,11 +21,13 @@ def _write_csv(path: Path, fields: list[str], rows: list[dict[str, str]]) -> Non
         writer.writerows(rows)
 
 
-def _leaderboard_row(rank: int, model_id: str, metric: str) -> dict[str, str]:
+def _leaderboard_row(
+    rank: int, inference_setup_id: str, metric: str
+) -> dict[str, str]:
     return {
         "rank": str(rank),
-        "model_id": model_id,
-        "model_label": f"Group · {model_id} · variant (greedy)",
+        "inference_setup_id": inference_setup_id,
+        "model_label": f"Group · {inference_setup_id} · variant (greedy)",
         f"global_{metric}": "12.3400",
         "global_mer": "8.9000",
         "hypothesis_route": "native orthographic",
@@ -42,39 +44,45 @@ def _fixture(
     orthographic_rows = orthographic_rows or []
     ipa_rows = ipa_rows or []
     skipped = skipped or []
-    common = ["rank", "model_id", "model_label", "global_mer", "hypothesis_route"]
+    common = [
+        "rank",
+        "inference_setup_id",
+        "model_label",
+        "global_mer",
+        "hypothesis_route",
+    ]
     _write_csv(
         root / "leaderboard_orthographic.csv",
         common + ["global_wer"],
         orthographic_rows,
     )
     _write_csv(root / "leaderboard_ipa.csv", common + ["global_per"], ipa_rows)
-    mapping = [
+    presentation = [
         {
-            "previous_model_id": "evaluated-model",
-            "new_presentation_name": "Group · evaluated model · variant (greedy)",
+            "inference_setup_id": "evaluated-model",
+            "presentation_name": "Group · evaluated model · variant (greedy)",
             "leaderboard_status": "evaluated",
         },
         {
-            "previous_model_id": "future-model",
-            "new_presentation_name": "Group · future model · variant (greedy)",
+            "inference_setup_id": "future-model",
+            "presentation_name": "Group · future model · variant (greedy)",
             "leaderboard_status": "profile_only",
         },
     ]
     _write_csv(
-        root / "leaderboard_model_name_mapping.csv",
-        ["previous_model_id", "new_presentation_name", "leaderboard_status"],
-        mapping,
+        root / "leaderboard_model_presentation.csv",
+        ["inference_setup_id", "presentation_name", "leaderboard_status"],
+        presentation,
     )
     metadata = {
         "schema_version": 4,
         "generated_at": "2026-08-19T10:37:58+00:00",
-        "latest_completed_run_per_model": True,
+        "latest_completed_run_per_inference_setup": True,
         "presentation_naming": {
             "registry": {
                 "path": "D:\\private\\repo\\egra_eval2\\model_presentation.json"
             },
-            "old_to_new_mapping": {"rows": len(mapping)},
+            "presentation_table": {"rows": len(presentation)},
         },
         "leaderboards": {
             "orthographic": {
@@ -103,8 +111,8 @@ def test_build_snapshot_writes_portable_status_and_exact_csvs(tmp_path: Path) ->
 
     result = build_snapshot(source, package)
 
-    assert result["registered_profiles"] == 2
-    assert result["evaluated_profiles"] == 1
+    assert result["registered_inference_setups"] == 2
+    assert result["evaluated_inference_setups"] == 1
     status = (package / "05-current-leaderboard-status.md").read_text(encoding="utf-8")
     assert "Eligible orthographic/WER rows | 1" in status
     assert "Group · future model · variant (greedy)" in status
@@ -112,7 +120,7 @@ def test_build_snapshot_writes_portable_status_and_exact_csvs(tmp_path: Path) ->
     for filename in (
         "leaderboard_orthographic.csv",
         "leaderboard_ipa.csv",
-        "leaderboard_model_name_mapping.csv",
+        "leaderboard_model_presentation.csv",
     ):
         assert (package / "data" / filename).read_bytes() == (
             source / filename
@@ -196,9 +204,10 @@ def test_invalid_inputs_do_not_replace_existing_status(
     assert status.read_text(encoding="utf-8") == "existing snapshot"
 
 
-def test_checked_in_onboarding_package_is_self_contained() -> None:
+def test_local_onboarding_package_is_self_contained_when_present() -> None:
     package = Path("docs/shared-onboarding")
-    assert package.is_dir()
+    if not package.is_dir():
+        pytest.skip("The generated local onboarding package is not present")
     link_pattern = re.compile(r"\[[^]]+\]\(([^)]+)\)")
     absolute_pattern = re.compile(r"(?<![A-Za-z])(?:[A-Za-z]:[\\/]|/d/data/|/work/)")
 

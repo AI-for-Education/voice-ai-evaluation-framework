@@ -1,4 +1,4 @@
-"""Build representation-compatible model leaderboards from evaluation outputs."""
+"""Build representation-compatible ASR leaderboards from evaluation outputs."""
 
 from __future__ import annotations
 
@@ -13,19 +13,19 @@ from typing import Any, Sequence
 import pandas as pd
 
 from egra_eval2.leaderboard_context import (
-    artifact_context as _artifact_context,
+    model_artifact_label,
     contract_references as _contract_references,
     decoding_label as _decoding_label,
     execution_stack_context as _execution_stack_context,
     execution_target_label as _execution_target_label,
     inference_engine_version as _inference_engine_version,
     nonnegative_int as _nonnegative_int,
-    preprocessing_context as _preprocessing_context,
+    input_processing_label,
 )
 from egra_eval2.model_presentation import (
-    MODEL_NAME_MAPPING_COLUMNS,
+    MODEL_PRESENTATION_COLUMNS,
     MODEL_PRESENTATION_REGISTRY_PATH,
-    build_name_mapping_rows,
+    build_presentation_rows,
     default_model_presentation_registry,
     presentation_for_inference_setup,
     structured_model_label,
@@ -69,10 +69,9 @@ REPRESENTATIONS = {
     },
 }
 
-# These retired configurations remain in the inference registry so historical run
-# metadata stays reproducible, but they must not appear in active leaderboards or
-# stakeholder-report packages.
-RETIRED_LEADERBOARD_MODEL_IDS = frozenset(
+# These retired inference setups remain documented but do not appear in active
+# leaderboards or stakeholder-report packages.
+RETIRED_LEADERBOARD_INFERENCE_SETUP_IDS = frozenset(
     {
         "bookbot-orthographic-ctc",
         "bookbot-orthographic-ctc-5gram",
@@ -130,93 +129,12 @@ def parse_summary(path: str | Path) -> dict[str, dict[str, float]]:
 
 def _run_metadata_for_run(
     evaluations_root: Path,
-    run_name: str,
+    run_id: str,
 ) -> dict[str, Any]:
     transcript_metadata = (
-        evaluations_root.parent / "transcripts" / run_name / "run_metadata.json"
+        evaluations_root.parent / "transcripts" / run_id / "run_metadata.json"
     )
     return _load_json_object(transcript_metadata, "ASR run metadata")
-
-
-def _postprocessing_for_run(
-    evaluations_root: Path,
-    run_name: str,
-    run_metadata: dict[str, Any],
-) -> dict[str, Any]:
-    summary = run_metadata.get("postprocessing")
-    adjusted = 0
-    removed = 0
-    method = "none"
-    source = "none"
-    total_results = _nonnegative_int(
-        (run_metadata.get("output") or {}).get("results")
-        if isinstance(run_metadata.get("output"), dict)
-        else 0
-    )
-
-    if isinstance(summary, dict):
-        configured_method = summary.get("method")
-        method = (
-            configured_method.strip()
-            if isinstance(configured_method, str) and configured_method.strip()
-            else "unspecified"
-        )
-        adjusted = _nonnegative_int(summary.get("adjusted_results"))
-        removed = _nonnegative_int(summary.get("total_words_removed"))
-        source = "run_metadata"
-    else:
-        backend = run_metadata.get("backend")
-        guard_configured = (
-            isinstance(backend, dict)
-            and backend.get("hallucination_guard") is not None
-        )
-        if guard_configured:
-            method = "hallucination_guard"
-            transcript_path = (
-                evaluations_root.parent
-                / "transcripts"
-                / run_name
-                / "transcriptions.jsonl"
-            )
-            counted_rows = 0
-            try:
-                with transcript_path.open("r", encoding="utf-8") as stream:
-                    for line in stream:
-                        if not line.strip():
-                            continue
-                        counted_rows += 1
-                        try:
-                            row = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        raw = row.get("raw_pred_text")
-                        if not isinstance(raw, str):
-                            continue
-                        pred = row.get("pred_text")
-                        pred = pred if isinstance(pred, str) else ""
-                        adjusted += 1
-                        removed += max(0, len(raw.split()) - len(pred.split()))
-                source = "raw_pred_text fallback"
-                if not total_results:
-                    total_results = counted_rows
-            except OSError:
-                source = "legacy metadata only"
-
-    rate = 100.0 * adjusted / total_results if total_results else 0.0
-    if adjusted:
-        scored_hypothesis = "pred_text (post-processed)"
-    elif method != "none":
-        scored_hypothesis = "pred_text (guard enabled; no changes)"
-    else:
-        scored_hypothesis = "pred_text"
-    return {
-        "scored_hypothesis": scored_hypothesis,
-        "postprocessing_method": method,
-        "postprocessed_rows": adjusted,
-        "postprocessed_rows_pct": rate,
-        "postprocessing_words_removed": removed,
-        "postprocessing_audit_source": source,
-    }
 
 
 def _hypothesis_route(namespace: str, native_output_units: str) -> str:
@@ -294,7 +212,7 @@ def _candidate_row(
         )
 
     run_metadata = _run_metadata_for_run(evaluations_root, run_dir.name)
-    profile = run_metadata.get("inference_profile", run_metadata.get("profile"))
+    profile = run_metadata.get("inference_profile")
     if not isinstance(profile, dict):
         metadata_path = (
             evaluations_root.parent
@@ -303,9 +221,7 @@ def _candidate_row(
             / "run_metadata.json"
         )
         raise LeaderboardError(f"ASR run metadata has no profile: {metadata_path}")
-    inference_setup_id = profile.get(
-        "inference_setup_id", profile.get("id")
-    )
+    inference_setup_id = profile.get("inference_setup_id")
     native_output_units = profile.get("output_units")
     if not isinstance(inference_setup_id, str) or not inference_setup_id.strip():
         raise LeaderboardError(
@@ -335,9 +251,7 @@ def _candidate_row(
     execution_stack, stack_launch_observed = _execution_stack_context(
         profile, run_metadata, references
     )
-    inference_library = profile.get(
-        "inference_library", profile.get("framework")
-    )
+    inference_library = profile.get("inference_library")
     if stack_launch_observed:
         context_evidence += "; execution environment observed"
     elif inference_library in {"onnxruntime", "sherpa_onnx"} and (
@@ -348,8 +262,8 @@ def _candidate_row(
     execution_target = _execution_target_label(profile, run_metadata, references)
     presentation = presentation_for_inference_setup(inference_setup_id.strip())
     architecture = presentation["architecture"]
-    model_artifact = _artifact_context(profile, run_metadata, references)
-    input_processing = _preprocessing_context(references)
+    model_artifact = model_artifact_label(profile, run_metadata, references)
+    input_processing = input_processing_label(references)
     inference_setup = f"{input_processing}; {decoding} decoding"
     row: dict[str, Any] = {
         "inference_setup_id": inference_setup_id.strip(),
@@ -373,18 +287,8 @@ def _candidate_row(
         "hypothesis_route": _hypothesis_route(namespace, native_output_units),
         "completed_at": completed_at,
         "summary_path": str(summary_path),
-        # Deprecated v1 aliases retained for downstream CSV readers.
-        "model_id": inference_setup_id.strip(),
-        "run_name": run_dir.name,
-        "platform": execution_target,
-        "artifact_context": model_artifact,
-        "preprocessing_context": input_processing,
-        "runtime_context": execution_stack,
     }
     row["model_label"] = structured_model_label(presentation, decoding)
-    row.update(
-        _postprocessing_for_run(evaluations_root, run_dir.name, run_metadata)
-    )
     row.update(_flatten_summary(summary, error_metric))
     return row
 
@@ -408,23 +312,10 @@ def _columns_for(namespace: str) -> list[str]:
         "model_artifact",
         "inference_setup",
         "execution_stack",
-        # Deprecated v1 aliases are written after their canonical fields.
-        "model_id",
-        "run_name",
-        "platform",
         "decoding",
-        "artifact_context",
-        "preprocessing_context",
-        "runtime_context",
         "context_evidence",
         "native_output_units",
         "hypothesis_route",
-        "scored_hypothesis",
-        "postprocessing_method",
-        "postprocessed_rows",
-        "postprocessed_rows_pct",
-        "postprocessing_words_removed",
-        "postprocessing_audit_source",
         f"global_{metric}",
         "global_mer",
     ]
@@ -459,7 +350,7 @@ def build_leaderboard(
             continue
         try:
             row = _candidate_row(root, run_dir, namespace)
-            if str(row["inference_setup_id"]) in RETIRED_LEADERBOARD_MODEL_IDS:
+            if str(row["inference_setup_id"]) in RETIRED_LEADERBOARD_INFERENCE_SETUP_IDS:
                 continue
             rows.append(row)
         except LeaderboardError as exc:
@@ -524,7 +415,7 @@ def _latest_evaluated_rows(
 
 
 def _profile_presentation_contexts() -> dict[str, dict[str, str]]:
-    """Recover decoder/platform labels for registered but unevaluated profiles."""
+    """Resolve decoder and execution-target labels for registered profiles."""
     from inference.profile import load_profile
 
     repository = Path(__file__).resolve().parents[1]
@@ -533,12 +424,12 @@ def _profile_presentation_contexts() -> dict[str, dict[str, str]]:
     for path in profile_paths:
         profile = load_profile(path).to_dict()
         setup_id = str(profile["inference_setup_id"])
-        if setup_id in RETIRED_LEADERBOARD_MODEL_IDS:
+        if setup_id in RETIRED_LEADERBOARD_INFERENCE_SETUP_IDS:
             continue
         references, _ = _contract_references(profile, {})
         contexts[setup_id] = {
             "decoder": _decoding_label(profile),
-            "platform": _execution_target_label(profile, {}, references),
+            "execution_target": _execution_target_label(profile, {}, references),
         }
     return contexts
 
@@ -567,63 +458,40 @@ def write_leaderboards(
         paths[namespace] = path
 
     registry = default_model_presentation_registry()
-    mapping_rows = build_name_mapping_rows(
+    presentation_rows = build_presentation_rows(
         _latest_evaluated_rows(frames),
         _profile_presentation_contexts(),
     )
-    mapping_rows = [
+    presentation_rows = [
         row
-        for row in mapping_rows
-        if str(row["previous_inference_setup_id"])
-        not in RETIRED_LEADERBOARD_MODEL_IDS
+        for row in presentation_rows
+        if str(row["inference_setup_id"])
+        not in RETIRED_LEADERBOARD_INFERENCE_SETUP_IDS
     ]
-    mapping = pd.DataFrame(mapping_rows, columns=MODEL_NAME_MAPPING_COLUMNS)
-    mapping_path = destination / "leaderboard_model_name_mapping.csv"
-    temporary = mapping_path.with_name(f".{mapping_path.name}.tmp")
-    mapping.to_csv(temporary, index=False)
-    temporary.replace(mapping_path)
-    paths["name_mapping"] = mapping_path
+    presentation_table = pd.DataFrame(
+        presentation_rows, columns=MODEL_PRESENTATION_COLUMNS
+    )
+    presentation_path = destination / "leaderboard_model_presentation.csv"
+    temporary = presentation_path.with_name(f".{presentation_path.name}.tmp")
+    presentation_table.to_csv(temporary, index=False)
+    temporary.replace(presentation_path)
+    paths["presentation"] = presentation_path
 
     metadata = {
         "schema_version": 5,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "evaluations_root": str(Path(evaluations_root)),
         "latest_completed_run_per_inference_setup": latest_only,
-        "latest_completed_run_per_model": latest_only,
-        "deprecated_aliases": {
-            "latest_completed_run_per_model": (
-                "latest_completed_run_per_inference_setup"
-            ),
-            "columns": {
-                "model_id": "inference_setup_id",
-                "run_name": "run_id",
-                "platform": "execution_target",
-                "artifact_context": "model_artifact",
-                "preprocessing_context": "inference_setup",
-                "runtime_context": "execution_stack",
-            },
-        },
         "presentation_naming": {
             "format": registry["naming_format"],
             "registry": file_identity(MODEL_PRESENTATION_REGISTRY_PATH),
             "registered_inference_setups": len(
                 set(registry["inference_setups"])
-                - RETIRED_LEADERBOARD_MODEL_IDS
+                - RETIRED_LEADERBOARD_INFERENCE_SETUP_IDS
             ),
-            "registered_models": len(
-                set(registry["inference_setups"])
-                - RETIRED_LEADERBOARD_MODEL_IDS
-            ),
-            "deprecated_aliases": {
-                "registered_models": "registered_inference_setups",
-                "mapping_columns.previous_model_id": (
-                    "mapping_columns.previous_inference_setup_id"
-                ),
-                "mapping_columns.platform": "mapping_columns.execution_target",
-            },
-            "old_to_new_mapping": {
-                "path": str(mapping_path),
-                "rows": len(mapping),
+            "presentation_table": {
+                "path": str(presentation_path),
+                "rows": len(presentation_table),
             },
             "decoder_source": "embedded completed-run profile",
             "model_source": (
@@ -646,7 +514,7 @@ def write_leaderboards(
                 "observed completed-run environment and inference-adapter metadata",
                 "pipeline contract embedded in completed run metadata",
                 "contract recoverable from the embedded completed-run profile",
-                "legacy profile/adapter fallback with unavailable facts stated explicitly",
+                "explicit not-available values when current metadata lacks a fact",
             ],
         },
         "leaderboards": {
@@ -689,7 +557,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--all_runs",
         "--all-runs",
         action="store_true",
-        help="Include every completed run instead of only the newest per model id.",
+        help=(
+            "Include every completed run instead of only the newest per "
+            "inference setup ID."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -705,7 +576,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{namespace}: {paths[namespace]}")
         for reason in skipped[namespace]:
             print(f"[SKIP] {reason}")
-    print(f"name mapping: {paths['name_mapping']}")
+    print(f"model presentation: {paths['presentation']}")
     print(f"metadata: {paths['metadata']}")
     return 0
 

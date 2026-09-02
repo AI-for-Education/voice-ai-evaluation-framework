@@ -21,22 +21,35 @@ inference/sherpa_onnx/
 └── profiles/        # Tracked model configuration
 ```
 
-The paired decoder profiles are:
+The profile matrix is:
 
-- `profiles/zipformer-streaming-robust-sw-v4.yaml`: frozen
-  `greedy_search` baseline.
-- `profiles/zipformer-streaming-robust-sw-v4-modified-beam4.yaml`:
-  `modified_beam_search` with `max_active_paths: 4`.
+- FP32 ONNX: `zipformer-streaming-robust-sw-v4.yaml` and its
+  `-modified-beam4` pair.
+- INT8 ONNX: `zipformer-streaming-robust-sw-v4-onnx-int8.yaml` and its
+  `-modified-beam4` pair.
+- INT8 ORT: `zipformer-streaming-robust-sw-v4-ort-int8.yaml` and its
+  `-modified-beam4` pair.
+
+Every quantized profile owns both `loader.artifact_format` and
+`loader.artifact_precision`. The backend therefore fails closed if the selected
+encoder, decoder, and joiner triplet is missing or ambiguous; it never chooses
+INT8 merely because those files happen to share a directory with FP32 graphs.
 
 Sherpa-ONNX's official streaming recognizer configuration documents both
 `greedy_search` and `modified_beam_search`, and defines 4 as the default
 maximum number of active paths for beam-style decoding. See the
 [official OnlineRecognizerConfig reference](https://k2-fsa.github.io/sherpa/onnx/c-api/html/structsherpa__onnx_1_1cxx_1_1OnlineRecognizerConfig.html).
 
-Both expect the same local folder:
+FP32 and INT8 ONNX expect:
 
 ```text
 models/sherpa-onnx-zipformer-streaming-robust-sw-v4/
+```
+
+INT8 ORT expects:
+
+```text
+models/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4/
 ```
 
 ## Run
@@ -63,8 +76,9 @@ input_output_data/output/smoke_tests/transcripts/<inference-setup-id>_<timestamp
 ```
 
 The Compose service reserves the GPU by default. The inference adapter chooses Sherpa's
-CUDA provider from the CUDA package installed by `docker/Dockerfile`; the
-resolved provider, decoding method, and (for modified beam)
+CUDA provider from the CUDA package installed by `docker/Dockerfile`; use
+`--provider cpu` for the BookBot ORT artifacts, which crash in the pinned CUDA runtime.
+The resolved provider, decoding method, and (for modified beam)
 `max_active_paths` are recorded in `run_metadata.json`.
 
 The model outputs **phonemes**, not written Swahili words. Keep its transcript

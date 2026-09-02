@@ -7,12 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
-from egra_eval2.leaderboard_context import decoder_slug
-
-
-INFERENCE_SETUP_PRESENTATION_SCHEMA_VERSION = 2
-# Deprecated public constant retained for import compatibility.
-MODEL_PRESENTATION_SCHEMA_VERSION = INFERENCE_SETUP_PRESENTATION_SCHEMA_VERSION
+MODEL_PRESENTATION_SCHEMA_VERSION = 2
 MODEL_PRESENTATION_REGISTRY_PATH = Path(__file__).with_name(
     "model_presentation.json"
 )
@@ -21,10 +16,8 @@ _ARCHITECTURE_EVIDENCE_STATUSES = {
     "owner_documented",
     "not_available",
 }
-MODEL_NAME_MAPPING_COLUMNS = [
-    "previous_inference_setup_id",
-    "previous_model_id",
-    "previous_presentation_name",
+MODEL_PRESENTATION_COLUMNS = [
+    "inference_setup_id",
     "model_group",
     "model_name",
     "model_variant",
@@ -35,9 +28,8 @@ MODEL_NAME_MAPPING_COLUMNS = [
     "architecture_evidence_source",
     "decoder",
     "execution_target",
-    "platform",
     "leaderboard_status",
-    "new_presentation_name",
+    "presentation_name",
 ]
 
 
@@ -47,24 +39,17 @@ def load_model_presentation_registry(
     """Load and validate the centralized stable-ID-to-presentation mapping."""
     registry_path = Path(path)
     payload = json.loads(registry_path.read_text(encoding="utf-8"))
-    schema_version = payload.get("schema_version")
-    if schema_version not in {1, INFERENCE_SETUP_PRESENTATION_SCHEMA_VERSION}:
-        raise ValueError(f"Unsupported model presentation registry: {registry_path}")
+    if payload.get("schema_version") != MODEL_PRESENTATION_SCHEMA_VERSION:
+        raise ValueError(
+            "Model presentation registry schema_version must be "
+            f"{MODEL_PRESENTATION_SCHEMA_VERSION}: {registry_path}"
+        )
     naming_format = payload.get("naming_format")
     if not isinstance(naming_format, str) or not naming_format.strip():
         raise ValueError(
             f"Model presentation registry has no naming format: {registry_path}"
         )
     inference_setups = payload.get("inference_setups")
-    deprecated_models = payload.get("models")
-    if inference_setups is not None and deprecated_models is not None:
-        if inference_setups != deprecated_models:
-            raise ValueError(
-                "Model presentation registry has conflicting inference_setups "
-                "and deprecated models fields"
-            )
-    if inference_setups is None:
-        inference_setups = deprecated_models
     if not isinstance(inference_setups, dict):
         raise ValueError(
             f"Model presentation registry has no inference setups: {registry_path}"
@@ -101,13 +86,7 @@ def load_model_presentation_registry(
                 f"{inference_setup_id}: "
                 f"{architecture['evidence_status']}"
             )
-    return {
-        **payload,
-        "schema_version": INFERENCE_SETUP_PRESENTATION_SCHEMA_VERSION,
-        "inference_setups": inference_setups,
-        # Deprecated normalized alias for existing Python consumers.
-        "models": inference_setups,
-    }
+    return payload
 
 
 @lru_cache(maxsize=1)
@@ -137,13 +116,8 @@ def presentation_for_inference_setup(inference_setup_id: str) -> dict[str, Any]:
                 "inference-setup ID"
             ),
         },
-        "mapping_status": "fallback",
+        "mapping_status": "uncatalogued",
     }
-
-
-def presentation_for_model(model_id: str) -> dict[str, Any]:
-    """Deprecated alias for :func:`presentation_for_inference_setup`."""
-    return presentation_for_inference_setup(model_id)
 
 
 def structured_model_label(presentation: dict[str, Any], decoder: str) -> str:
@@ -154,11 +128,11 @@ def structured_model_label(presentation: dict[str, Any], decoder: str) -> str:
     return f"{' · '.join(parts)} ({decoder})"
 
 
-def build_name_mapping_rows(
+def build_presentation_rows(
     evaluated_by_id: Mapping[str, Mapping[str, Any]],
     profile_context_by_id: Mapping[str, Mapping[str, str]],
 ) -> list[dict[str, str]]:
-    """Build the auditable old-to-new presentation-name mapping.
+    """Build the auditable inference-setup presentation table.
 
     Completed-run values take precedence because they describe what actually ran;
     profile-derived values fill the rows for registered models not yet evaluated.
@@ -174,13 +148,16 @@ def build_name_mapping_rows(
         evaluated = evaluated_by_id.get(inference_setup_id)
         if evaluated is not None:
             decoder = str(evaluated.get("decoding") or "not recorded")
-            platform = str(evaluated.get("platform") or "platform-not-recorded")
+            execution_target = str(
+                evaluated.get("execution_target") or "execution-target-not-recorded"
+            )
             leaderboard_status = "evaluated"
         else:
             profile_context = profile_context_by_id.get(inference_setup_id, {})
             decoder = str(profile_context.get("decoder") or "not recorded")
-            platform = str(
-                profile_context.get("platform") or "platform-not-recorded"
+            execution_target = str(
+                profile_context.get("execution_target")
+                or "execution-target-not-recorded"
             )
             leaderboard_status = "profile_only"
 
@@ -188,12 +165,7 @@ def build_name_mapping_rows(
         architecture = presentation["architecture"]
         rows.append(
             {
-                "previous_inference_setup_id": inference_setup_id,
-                # Deprecated v1 alias retained in the mapping CSV.
-                "previous_model_id": inference_setup_id,
-                "previous_presentation_name": (
-                    f"{platform} · {decoder_slug(decoder)} · {inference_setup_id}"
-                ),
+                "inference_setup_id": inference_setup_id,
                 "model_group": presentation["model_group"],
                 "model_name": presentation["model_name"],
                 "model_variant": presentation["variant"],
@@ -203,11 +175,9 @@ def build_name_mapping_rows(
                 "architecture_evidence_status": architecture["evidence_status"],
                 "architecture_evidence_source": architecture["source"],
                 "decoder": decoder,
-                "execution_target": platform,
-                # Deprecated v1 alias retained in the mapping CSV.
-                "platform": platform,
+                "execution_target": execution_target,
                 "leaderboard_status": leaderboard_status,
-                "new_presentation_name": structured_model_label(
+                "presentation_name": structured_model_label(
                     presentation, decoder
                 ),
             }

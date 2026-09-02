@@ -9,7 +9,7 @@ from inference.profile import InferenceProfile, ProfileError
 
 
 def create_backend(profile: InferenceProfile, model_path: str | Path) -> ASRBackend:
-    """Import only the adapter supported by the selected runtime image."""
+    """Import only the adapter supported by the selected execution image."""
     try:
         if profile.adapter == "gemma4_audio":
             from inference.multimodal.adapters.gemma4_audio import Gemma4AudioBackend

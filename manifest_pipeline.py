@@ -14,7 +14,7 @@ import soundfile as sf
 
 from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
 from egra_eval2.linking import add_audio_keys, attach_hypotheses
-from egra_eval2.nemo_manifest import load_many_manifests
+from egra_eval2.prediction_manifest import load_prediction_manifests
 from egra_eval2.passage_merge import attach_passage_texts
 from egra_eval2.textgrid_io import add_refs_from_textgrid
 from egra_eval2.manifest_builder import (
@@ -42,9 +42,9 @@ def setup_logger() -> logging.Logger:
     return logger
 
 
-def _default_evaluation_root(asr_manifests: list[str] | None) -> Path:
+def _default_evaluation_root(prediction_manifests: list[str] | None) -> Path:
     """Reuse the model/timestamp directory created by standard inference output."""
-    for manifest in asr_manifests or []:
+    for manifest in prediction_manifests or []:
         path = Path(manifest)
         run_dir = path.parent
         if path.name == "transcriptions.jsonl" and run_dir.parent.name == "transcripts":
@@ -67,26 +67,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--passages_csv", default=None)
     p.add_argument(
         "--audio_manifest",
-        "--manifest_base_in",
-        dest="manifest_base_in",
+        dest="audio_manifest",
         default=None,
         help=(
             "Audio manifest whose rows define the evaluation inputs; normally the "
-            "same segmented manifest supplied to inference. "
-            "--manifest_base_in remains a backward-compatible alias."
+            "same segmented manifest supplied to inference."
         ),
     )
     p.add_argument(
         "--prediction_manifest",
-        "--asr_manifest",
-        "--nemo_manifest",
-        dest="asr_manifest",
+        dest="prediction_manifests",
         action="append",
         default=None,
-        help=(
-            "Prediction transcriptions.jsonl to attach; repeat for multiple manifests. "
-            "--asr_manifest and --nemo_manifest remain backward-compatible aliases."
-        ),
+        help="Prediction transcriptions.jsonl to attach; repeat for multiple manifests.",
     )
     p.add_argument("--manifest_audio_key", default="audio_filepath")
     p.add_argument("--manifest_hyp_key", default="pred_text")
@@ -250,15 +243,15 @@ def main() -> None:
     try:
         prepare_ipa_reference_view(
             dataset_root=layout.root,
-            manifest_base_in=args.manifest_base_in,
-            asr_manifests=args.asr_manifest,
+            audio_manifest=args.audio_manifest,
+            prediction_manifests=args.prediction_manifests,
             logger=logger,
         )
     except ReferenceViewError as exc:
         raise SystemExit(str(exc)) from exc
 
     if not args.output_root:
-        args.output_root = str(_default_evaluation_root(args.asr_manifest))
+        args.output_root = str(_default_evaluation_root(args.prediction_manifests))
         logger.info("No --output_root supplied; using default: %s", args.output_root)
 
     args.egra_csv = args.egra_csv or str(layout.canonical_csv)
@@ -275,14 +268,14 @@ def main() -> None:
         else manifests_dir / "ref_manifest.clean.jsonl"
     )
 
-    if args.manifest_base_in:
-        logger.info("Stage A: loading base manifest (preserve granularity) -> %s", args.manifest_base_in)
-        raw_df = load_base_manifest_dataframe(args.manifest_base_in, logger)
+    if args.audio_manifest:
+        logger.info("Stage A: loading audio manifest (preserve granularity) -> %s", args.audio_manifest)
+        raw_df = load_base_manifest_dataframe(args.audio_manifest, logger)
 
-        if args.asr_manifest:
-            logger.info("Loading %d prediction manifest(s) to attach pred_text...", len(args.asr_manifest))
-            asr_df = load_many_manifests(
-                args.asr_manifest,
+        if args.prediction_manifests:
+            logger.info("Loading %d prediction manifest(s) to attach pred_text...", len(args.prediction_manifests))
+            asr_df = load_prediction_manifests(
+                args.prediction_manifests,
                 audio_key=args.manifest_audio_key,
                 hyp_key=args.manifest_hyp_key,
                 can_key=args.manifest_can_key,
@@ -308,10 +301,10 @@ def main() -> None:
         df_egra = adjust_letter_canonical_text(df_egra, logger)
         df_egra = add_audio_keys(df_egra, audio_col="audio_file")
 
-        if args.asr_manifest:
-            logger.info("Loading %d prediction manifest(s)...", len(args.asr_manifest))
-            asr_df = load_many_manifests(
-                args.asr_manifest,
+        if args.prediction_manifests:
+            logger.info("Loading %d prediction manifest(s)...", len(args.prediction_manifests))
+            asr_df = load_prediction_manifests(
+                args.prediction_manifests,
                 audio_key=args.manifest_audio_key,
                 hyp_key=args.manifest_hyp_key,
                 can_key=args.manifest_can_key,

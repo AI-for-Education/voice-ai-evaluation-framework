@@ -1,4 +1,4 @@
-"""Lazy model-family exports for dependency-isolated runtime images."""
+"""Lazy model-family exports for dependency-isolated execution images."""
 
 from typing import Any
 

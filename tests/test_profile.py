@@ -23,8 +23,9 @@ def _sequential_chunking() -> dict[str, object]:
 
 
 BASE_PROFILE = {
-    "id": "example",
-    "framework": "transformers",
+    "profile_schema_version": 2,
+    "inference_setup_id": "example",
+    "inference_library": "transformers",
     "adapter": "ctc",
     "artifact": "example-model",
     "language": "sw",
@@ -40,8 +41,9 @@ BASE_PROFILE = {
 }
 
 MULTIMODAL_PROFILE = {
-    "id": "gemma-test",
-    "framework": "multimodal",
+    "profile_schema_version": 2,
+    "inference_setup_id": "gemma-test",
+    "inference_library": "multimodal",
     "adapter": "gemma4_audio",
     "artifact": "gemma-model",
     "language": "sw",
@@ -86,8 +88,9 @@ def _transducer_profile(
     if strategy == "modified_beam_search":
         decoding["transducer_search_kwargs"] = {"max_active_paths": 4}
     return {
-        "id": f"zipformer-{strategy}",
-        "framework": "sherpa_onnx",
+        "profile_schema_version": 2,
+        "inference_setup_id": f"zipformer-{strategy}",
+        "inference_library": "sherpa_onnx",
         "adapter": "online_transducer",
         "artifact": "zipformer",
         "language": "sw",
@@ -103,6 +106,24 @@ def _transducer_profile(
         },
         "decoding": decoding,
     }
+
+
+def _native_transducer_profile(
+    strategy: str = "greedy_search",
+) -> dict[str, object]:
+    profile = _transducer_profile(strategy)
+    profile.update(
+        inference_setup_id=f"zipformer-torchscript-{strategy}",
+        inference_library="torch",
+        adapter="streaming_transducer",
+    )
+    loader = profile["loader"]
+    assert isinstance(loader, dict)
+    loader.update(
+        artifact_format="torchscript",
+        artifact_precision="fp32",
+    )
+    return profile
 
 
 # Core profile schema
@@ -130,8 +151,8 @@ def test_parse_profile_rejects_unsafe_artifacts(artifact: str) -> None:
         parse_profile(profile)
 
 
-def test_profile_rejects_adapter_framework_mismatch() -> None:
-    profile = dict(BASE_PROFILE, framework="nemo")
+def test_profile_rejects_adapter_inference_library_mismatch() -> None:
+    profile = dict(BASE_PROFILE, inference_library="nemo")
     with pytest.raises(ProfileError, match="Unsupported adapter"):
         parse_profile(profile)
 
@@ -145,6 +166,33 @@ def test_plain_processor_mode_is_ctc_only() -> None:
     )
     with pytest.raises(ProfileError, match="only valid for transformers/ctc"):
         parse_profile(profile)
+
+
+def test_transducer_artifact_selector_is_typed() -> None:
+    payload = _transducer_profile()
+    loader = payload["loader"]
+    assert isinstance(loader, dict)
+    loader.update(artifact_format="ort", artifact_precision="int8")
+
+    profile = parse_profile(payload)
+
+    assert profile.loader.artifact_format == "ort"
+    assert profile.loader.artifact_precision == "int8"
+    assert profile.to_dict()["loader"]["artifact_format"] == "ort"
+
+
+def test_native_transducer_requires_torchscript_fp32() -> None:
+    profile = parse_profile(_native_transducer_profile())
+    assert profile.inference_library == "torch"
+    assert profile.loader.artifact_format == "torchscript"
+    assert profile.loader.artifact_precision == "fp32"
+
+    invalid = _native_transducer_profile()
+    loader = invalid["loader"]
+    assert isinstance(loader, dict)
+    loader["artifact_precision"] = "int8"
+    with pytest.raises(ProfileError, match="artifact_precision: fp32"):
+        parse_profile(invalid)
 
 
 # CTC decoding profiles
@@ -462,9 +510,9 @@ def test_generation_kwargs_are_typed_before_model_loading(
 @pytest.mark.parametrize(
     ("section", "value", "message"),
     [
-        ("id", ["model"], "id is required"),
+        ("inference_setup_id", ["model"], "inference_setup_id is required"),
         (
-            "framework",
+            "inference_library",
             {"name": "transformers"},
             "inference_library is required",
         ),
@@ -601,6 +649,10 @@ def _result_affecting_profile_paths(payload: dict[str, object]) -> set[str]:
         paths.add("loader.torch_dtype")
     if loader.get("attention_implementation") is not None:
         paths.add("loader.attention_implementation")
+    if loader.get("artifact_format", "auto") != "auto":
+        paths.add("loader.artifact_format")
+    if loader.get("artifact_precision", "auto") != "auto":
+        paths.add("loader.artifact_precision")
 
     for field in ("prompt", "output_notation", "output_inventory"):
         if field in payload:
@@ -611,7 +663,7 @@ def _result_affecting_profile_paths(payload: dict[str, object]) -> set[str]:
 def test_all_tracked_profiles_are_valid_and_unique() -> None:
     repo = Path(__file__).resolve().parents[1]
     profile_paths = sorted((repo / "inference").glob("*/profiles/*.yaml"))
-    assert len(profile_paths) == 23
+    assert len(profile_paths) == 29
 
     ids: set[str] = set()
     for path in profile_paths:
@@ -622,7 +674,7 @@ def test_all_tracked_profiles_are_valid_and_unique() -> None:
         assert "framework" not in payload
         assert payload["inference_setup_id"] == profile.inference_setup_id
         assert payload["inference_library"] == profile.inference_library
-        assert profile.framework == path.parents[1].name
+        assert profile.inference_library == path.parents[1].name
         assert profile.pipeline_contract is not None
         assert profile.parameter_evidence
         for item in profile.parameter_evidence:
@@ -637,27 +689,31 @@ def test_all_tracked_profiles_are_valid_and_unique() -> None:
         }
         missing = _result_affecting_profile_paths(profile.to_dict()) - covered
         assert not missing, f"{path} lacks parameter evidence for: {sorted(missing)}"
-        assert profile.id not in ids
-        ids.add(profile.id)
+        assert profile.inference_setup_id not in ids
+        ids.add(profile.inference_setup_id)
 
 
-def test_v1_profile_normalizes_to_v2_and_conflicts_fail() -> None:
+def test_current_profile_uses_only_canonical_fields() -> None:
     profile = parse_profile(BASE_PROFILE)
     payload = profile.to_dict()
 
     assert payload["profile_schema_version"] == 2
-    assert payload["inference_setup_id"] == BASE_PROFILE["id"]
-    assert payload["inference_library"] == BASE_PROFILE["framework"]
-    assert profile.id == profile.inference_setup_id
-    assert profile.framework == profile.inference_library
+    assert payload["inference_setup_id"] == BASE_PROFILE["inference_setup_id"]
+    assert payload["inference_library"] == BASE_PROFILE["inference_library"]
 
-    conflicting = dict(
-        BASE_PROFILE,
-        profile_schema_version=2,
-        inference_setup_id="different",
-    )
-    with pytest.raises(ProfileError, match="Conflicting profile fields"):
-        parse_profile(conflicting)
+
+@pytest.mark.parametrize("legacy_field", ["id", "framework"])
+def test_current_profile_rejects_removed_legacy_fields(legacy_field: str) -> None:
+    profile = dict(BASE_PROFILE, **{legacy_field: "removed"})
+    with pytest.raises(ProfileError, match="Unknown profile key"):
+        parse_profile(profile)
+
+
+def test_current_profile_requires_schema_version_2() -> None:
+    profile = dict(BASE_PROFILE)
+    del profile["profile_schema_version"]
+    with pytest.raises(ProfileError, match="profile_schema_version must be 2"):
+        parse_profile(profile)
 
 
 @pytest.mark.parametrize(
@@ -682,7 +738,7 @@ def test_whisper_decoder_pairs_preserve_model_contract(
     beam = load_profile(profiles_root / beam_name)
 
     contract = (
-        "framework",
+        "inference_library",
         "adapter",
         "artifact",
         "language",
@@ -694,7 +750,7 @@ def test_whisper_decoder_pairs_preserve_model_contract(
     assert tuple(getattr(baseline, key) for key in contract) == tuple(
         getattr(beam, key) for key in contract
     )
-    assert baseline.id != beam.id
+    assert baseline.inference_setup_id != beam.inference_setup_id
     assert baseline.decoding.generation_kwargs["num_beams"] == 1
     assert beam.decoding.generation_kwargs["num_beams"] == 5
     assert baseline.decoding.generation_kwargs["do_sample"] is False
@@ -711,7 +767,7 @@ def test_zipformer_decoder_pair_preserves_model_contract() -> None:
     )
 
     assert (
-        greedy.framework,
+        greedy.inference_library,
         greedy.adapter,
         greedy.artifact,
         greedy.language,
@@ -720,7 +776,7 @@ def test_zipformer_decoder_pair_preserves_model_contract() -> None:
         greedy.output_notation,
         greedy.output_inventory,
     ) == (
-        beam.framework,
+        beam.inference_library,
         beam.adapter,
         beam.artifact,
         beam.language,
@@ -729,8 +785,51 @@ def test_zipformer_decoder_pair_preserves_model_contract() -> None:
         beam.output_notation,
         beam.output_inventory,
     )
-    assert greedy.id != beam.id
+    assert greedy.inference_setup_id != beam.inference_setup_id
     assert greedy.decoding.strategy == "greedy_search"
+    assert beam.decoding.strategy == "modified_beam_search"
+    assert beam.decoding.transducer_search_kwargs is not None
+    assert beam.decoding.transducer_search_kwargs.max_active_paths == 4
+
+
+@pytest.mark.parametrize(
+    ("profiles_subdir", "baseline_name", "beam_name"),
+    [
+        (
+            "sherpa_onnx",
+            "zipformer-streaming-robust-sw-v4-onnx-int8.yaml",
+            "zipformer-streaming-robust-sw-v4-onnx-int8-modified-beam4.yaml",
+        ),
+        (
+            "sherpa_onnx",
+            "zipformer-streaming-robust-sw-v4-ort-int8.yaml",
+            "zipformer-streaming-robust-sw-v4-ort-int8-modified-beam4.yaml",
+        ),
+        (
+            "torch",
+            "zipformer-streaming-robust-sw-v4-torchscript.yaml",
+            "zipformer-streaming-robust-sw-v4-torchscript-modified-beam4.yaml",
+        ),
+    ],
+)
+def test_new_zipformer_decoder_pairs_preserve_artifact_selection(
+    profiles_subdir: str,
+    baseline_name: str,
+    beam_name: str,
+) -> None:
+    profiles_root = (
+        Path(__file__).resolve().parents[1]
+        / "inference"
+        / profiles_subdir
+        / "profiles"
+    )
+    baseline = load_profile(profiles_root / baseline_name)
+    beam = load_profile(profiles_root / beam_name)
+
+    assert baseline.artifact == beam.artifact
+    assert baseline.loader.artifact_format == beam.loader.artifact_format
+    assert baseline.loader.artifact_precision == beam.loader.artifact_precision
+    assert baseline.decoding.strategy == "greedy_search"
     assert beam.decoding.strategy == "modified_beam_search"
     assert beam.decoding.transducer_search_kwargs is not None
     assert beam.decoding.transducer_search_kwargs.max_active_paths == 4
@@ -794,8 +893,9 @@ def test_hallucination_guard_is_rejected_for_ctc() -> None:
 def test_phi4_profile_scopes_trusted_code_and_offload_policy() -> None:
     profile = parse_profile(
         {
-            "id": "phi4-test",
-            "framework": "multimodal",
+            "profile_schema_version": 2,
+            "inference_setup_id": "phi4-test",
+            "inference_library": "multimodal",
             "adapter": "phi4_audio",
             "artifact": "phi4-model",
             "language": "sw",
@@ -845,7 +945,7 @@ def test_qwen_profile_requires_large_gpu_and_text_only() -> None:
     profile = copy.deepcopy(MULTIMODAL_PROFILE)
     profile.update(
         {
-            "id": "qwen-test",
+            "inference_setup_id": "qwen-test",
             "adapter": "qwen_omni_audio",
             "artifact": "qwen-model",
             "hardware": {

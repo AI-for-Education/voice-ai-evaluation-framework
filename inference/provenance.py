@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import asdict, is_dataclass
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 _PACKAGE_DISTRIBUTIONS = {
@@ -16,6 +16,7 @@ _PACKAGE_DISTRIBUTIONS = {
     "flash_attn": "flash-attn",
     "huggingface_hub": "huggingface-hub",
     "kenlm": "kenlm",
+    "kaldi_native_fbank": "kaldi-native-fbank",
     "librosa": "librosa",
     "nemo_toolkit": "nemo-toolkit",
     "numpy": "numpy",
@@ -35,9 +36,21 @@ _PACKAGE_DISTRIBUTIONS = {
     "yaml": "PyYAML",
 }
 
-# These immutable revisions are the same ones enforced by
-# inference/download_first_phase_models.sh.
+# The BookBot matrix runner verifies the selected files against the tracked
+# SHA-256 manifest associated with these immutable source revisions.
 _HUGGING_FACE_SOURCES = {
+    "sherpa-onnx-ort-zipformer-streaming-robust-sw-v4": (
+        "bookbot/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4",
+        "311c41c8770242c02478d4569fcf5e0cd00c1218",
+    ),
+    "sherpa-onnx-zipformer-streaming-robust-sw-v4": (
+        "bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4",
+        "0e52da6c03294fd983f3a8621b32ac6a71b4787d",
+    ),
+    "zipformer-streaming-robust-sw-v4": (
+        "bookbot/zipformer-streaming-robust-sw-v4",
+        "f27bc1620ac08c6a4bc6a1cf6072d592e7b09a49",
+    ),
     "gemma-4-E2B-it": (
         "google/gemma-4-E2B-it",
         "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
@@ -92,6 +105,7 @@ _CONFIG_IDENTITY_FILES = (
     "language_model/attrs.json",
     "preprocessor_config.json",
     "processor_config.json",
+    "required_operators.config",
     "tokenizer_config.json",
     "tokens.txt",
     "vocab.json",
@@ -103,7 +117,9 @@ _LOCAL_ARTIFACT_SUFFIXES = {
     ".model",
     ".nemo",
     ".onnx",
+    ".ort",
     ".pt",
+    ".safetensors",
 }
 
 
@@ -215,8 +231,13 @@ def _read_hugging_face_identity(model_path: Path) -> dict[str, Any]:
     }
 
 
-def model_identity(model_path: str | Path, *, artifact: str) -> dict[str, Any]:
-    """Describe the selected local model without re-hashing huge Hub weights."""
+def model_artifact_identity(
+    model_path: str | Path,
+    *,
+    artifact: str,
+    selected_files: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Describe the selected local model without re-hashing covered Hub weights."""
     path = Path(model_path)
     identity: dict[str, Any] = {
         "artifact": artifact,
@@ -267,27 +288,52 @@ def model_identity(model_path: str | Path, *, artifact: str) -> dict[str, Any]:
     if configuration_files:
         identity["configuration_files"] = configuration_files
 
-    # Local exported runtimes do not have a Hub revision/ETag identity, so hash
-    # their executable artifacts directly. Hub snapshots use the pinned commit
-    # and per-file ETags above to avoid hashing multi-gigabyte weights per run.
-    if source is None and not local_hf["metadata_files"]:
-        artifact_files: dict[str, Any] = {}
-        for candidate in sorted(item for item in path.rglob("*") if item.is_file()):
-            relative = candidate.relative_to(path)
-            if any(part in {".cache", ".git"} for part in relative.parts):
-                continue
-            if (
-                candidate.suffix.lower() not in _LOCAL_ARTIFACT_SUFFIXES
-                and relative.as_posix() not in _CONFIG_IDENTITY_FILES
-            ):
-                continue
-            artifact_files[relative.as_posix()] = {
-                "size_bytes": candidate.stat().st_size,
-                "sha256": sha256_file(candidate),
-            }
-        if artifact_files:
-            identity["artifact_files"] = artifact_files
-            identity["artifact_manifest_sha256"] = canonical_json_sha256(artifact_files)
+    # A Hub ETag identifies files represented in the local download metadata.
+    # Hash only executable artifacts that are not represented there. This keeps
+    # complete Hub snapshots cheap while binding partial snapshots and local
+    # exports to the actual files used by inference.
+    hub_files = set(local_hf["files"])
+    artifact_files: dict[str, Any] = {}
+    if selected_files is None:
+        candidates = sorted(item for item in path.rglob("*") if item.is_file())
+    else:
+        normalized_selected_files: list[str] = []
+        candidates = []
+        for raw_relative_name in selected_files:
+            relative = Path(raw_relative_name)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError(
+                    "Selected artifact files must be relative to the model directory: "
+                    f"{raw_relative_name}"
+                )
+            normalized_name = relative.as_posix()
+            normalized_selected_files.append(normalized_name)
+            candidate = path / relative
+            if candidate.is_file():
+                candidates.append(candidate)
+        identity["selected_files"] = normalized_selected_files
+
+    for candidate in candidates:
+        relative = candidate.relative_to(path)
+        relative_name = relative.as_posix()
+        if any(part in {".cache", ".git"} for part in relative.parts):
+            continue
+        if relative_name in _CONFIG_IDENTITY_FILES:
+            continue
+        if (
+            selected_files is None
+            and candidate.suffix.lower() not in _LOCAL_ARTIFACT_SUFFIXES
+        ):
+            continue
+        if relative_name in hub_files:
+            continue
+        artifact_files[relative_name] = {
+            "size_bytes": candidate.stat().st_size,
+            "sha256": sha256_file(candidate),
+        }
+    if artifact_files:
+        identity["artifact_files"] = artifact_files
+        identity["artifact_manifest_sha256"] = canonical_json_sha256(artifact_files)
     return identity
 
 

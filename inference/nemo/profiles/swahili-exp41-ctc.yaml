@@ -36,4 +36,4 @@ parameter_evidence:
       - loader.torch_dtype
     level: supported
     source: https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/asr/results.html
-    rationale: Automatic checkpoint loading preserves the native NeMo model precision; runtime batch controls remain launcher arguments.
+    rationale: Automatic checkpoint loading preserves the native NeMo model precision; run batch controls remain launcher arguments.

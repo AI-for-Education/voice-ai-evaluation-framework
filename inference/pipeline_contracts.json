@@ -2,7 +2,7 @@
   "schema_version": 2,
   "audio_preparation": {
     "shared_soundfile_librosa_16khz": {
-      "summary": "Decode WAV audio with SoundFile, average multichannel audio to mono float32, and resample to the backend target rate with librosa.resample without overriding its res_type default.",
+      "summary": "Decode WAV audio with SoundFile, average multichannel audio to mono float32, and resample to the inference adapter's target rate with librosa.resample without overriding its res_type default.",
       "loader": "soundfile",
       "sample_dtype": "float32",
       "channel_policy": "average_channels_to_mono",
@@ -32,7 +32,7 @@
       "evidence": {
         "level": "exact",
         "source": "https://github.com/AI-for-Education/nemoasr-android/blob/6cd031267aed45e47347bc05a0eb63eee285f0d8/android/NemoAsrDemo/app/src/main/java/com/example/nemoasrdemo/OnnxAsrEngine.kt",
-        "rationale": "The local Android-compatible backend reproduces the pinned deployment loader and resampling algorithm."
+        "rationale": "The local Android-compatible inference adapter reproduces the pinned deployment loader and resampling algorithm."
       }
     }
   },
@@ -62,7 +62,7 @@
         "evidence": {
           "level": "exact",
           "source": "repo:inference/onnxruntime/README.md",
-          "rationale": "The packaged deployment artifact is selected and hash-checked by the Android-compatible backend."
+          "rationale": "The packaged deployment artifact is selected and hash-checked by the Android-compatible inference adapter."
         }
       }
     },
@@ -75,7 +75,7 @@
         "evidence": {
           "level": "exact",
           "source": "artifact:preprocessor_config.json",
-          "rationale": "The effective processor class, artifact configuration identities, and sampling rate are recorded by the backend and model identity."
+          "rationale": "The effective processor class, artifact configuration identities, and sampling rate are recorded by the inference adapter and model-artifact identity."
         }
       },
       "canonical_nemo_model_preprocessor": {
@@ -147,7 +147,7 @@
         "evidence": {
           "level": "exact",
           "source": "https://github.com/AI-for-Education/nemoasr-android/blob/6cd031267aed45e47347bc05a0eb63eee285f0d8/android/NemoAsrDemo/app/src/main/java/com/example/nemoasrdemo/OnnxAsrEngine.kt",
-          "rationale": "The local backend ports the pinned deployment frontend and records its revision and fixed feature dimensions."
+          "rationale": "The local inference adapter ports the pinned deployment frontend and records its revision and fixed feature dimensions."
         }
       },
       "canonical_sherpa_online_frontend": {
@@ -164,6 +164,31 @@
           "level": "supported",
           "source": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4",
           "rationale": "The artifact is published for Sherpa-ONNX and the inference adapter records the effective recognizer call and ONNX Runtime version."
+        }
+      },
+      "bookbot_torchscript_owner_aligned_frontend": {
+        "classification": "compatible_third_party_frontend",
+        "summary": "Mirror BookBot's streaming feature geometry with a Kaldi-compatible extractor while applying the shared audio loader and an explicit short-input safeguard.",
+        "implementation": "kaldi_native_fbank_online_fbank",
+        "feature_parameters": {
+          "sample_rate_hz": 16000,
+          "feature_bins": 80,
+          "dither": 0,
+          "snip_edges": false,
+          "high_frequency_hz": -400,
+          "encoder_chunk_size": 32,
+          "encoder_input_frames": 64,
+          "encoder_pad_frames": 13,
+          "audio_loading": "shared_mean_downmix_and_resample_to_16khz",
+          "owner_extractor": "kaldifeat.OnlineFbank",
+          "project_extractor": "kaldi_native_fbank.OnlineFbank",
+          "finalization": "owner_0.3_second_tail_without_general_residual_flush; zero-pad only when needed to construct the first encoder window"
+        },
+        "authority": "project",
+        "evidence": {
+          "level": "supported",
+          "source": "https://github.com/k2-fsa/icefall/blob/master/egs/librispeech/ASR/zipformer/jit_pretrained_streaming.py",
+          "rationale": "The geometry and tail follow the owner-invoked script; the repository deliberately substitutes kaldi-native-fbank, uses shared downmix/resampling, and pads only otherwise undecodable sub-window inputs."
         }
       }
     },
@@ -191,7 +216,7 @@
         "evidence": {
           "level": "exact",
           "source": "repo:docker-compose.yml",
-          "rationale": "The repository selects the runtime image and the backend records effective model loading decisions."
+          "rationale": "The repository selects the execution image and the inference adapter records effective model loading decisions."
         }
       },
       "nemo_image": {
@@ -200,7 +225,7 @@
         "inference_library": "nemo",
         "inference_engine": "pytorch",
         "environment": "shared_asr_container",
-        "authority": "framework_owner",
+        "authority": "inference_library_owner",
         "evidence": {
           "level": "supported",
           "source": "https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/asr/results.html",
@@ -220,7 +245,7 @@
           "rationale": "This is a controlled project execution environment, not a physical Android-device claim."
         }
       },
-      "android_pinned_runtime_proxy": {
+      "android_pinned_execution_environment_proxy": {
         "summary": "Run the Android-parity adapter with the pinned ONNX Runtime requirement, single-item batch, and one thread on the current PC.",
         "runner": "repository_inference_runner",
         "inference_library": "repository_android_parity_adapter",
@@ -244,6 +269,19 @@
           "level": "exact",
           "source": "repo:docker-compose.yml",
           "rationale": "Image selection is project-owned and effective recognizer and engine values are recorded by the inference adapter."
+        }
+      },
+      "native_torchscript_image": {
+        "summary": "Run the BookBot JIT artifact directly through PyTorch with a Kaldi-compatible online feature frontend in the shared ASR container.",
+        "runner": "repository_inference_runner",
+        "inference_library": "torch",
+        "inference_engine": "pytorch_jit",
+        "environment": "shared_asr_container",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:docker-compose.yml",
+          "rationale": "The repository fixes the service and adapter while run metadata records the effective Torch and feature-extractor versions."
         }
       }
     },
@@ -271,8 +309,8 @@
         "authority": "project",
         "evidence": {
           "level": "project",
-          "source": "local-development:docs/inference-setup-evidence.md",
-          "rationale": "The need or hardware constraint may come from the model family, but the exact duration and zero-overlap stitching policy are project choices unless separately evidenced. The supporting note is local-development-only and is not versioned."
+          "source": "repo:docs/inference-setup-evidence.md",
+          "rationale": "The need or hardware constraint may come from the model family, but the exact duration and zero-overlap stitching policy are project choices unless separately evidenced."
         }
       }
     }
@@ -282,12 +320,12 @@
       "summary": "Evaluate the inference adapter's unmodified pred_text in a representation compatible with the profile's declared output units.",
       "hypothesis_field": "pred_text",
       "text_postprocessing": "none",
-      "reference_integrity": "required_except_archived_legacy_diagnostic",
+      "reference_integrity": "required",
       "authority": "project",
       "evidence": {
         "level": "exact",
-        "source": "local-development:docs/project-onboarding-guide.md",
-        "rationale": "The workflow contract fixes the inference-to-evaluation handoff and representation compatibility rules. The supporting guide is local-development-only and is not versioned."
+        "source": "repo:docs/project-onboarding-guide.md",
+        "rationale": "The workflow contract fixes the inference-to-evaluation handoff and representation compatibility rules."
       }
     }
   },
@@ -332,7 +370,7 @@
       "evidence": {
         "level": "exact",
         "source": "repo:inference/pipeline_provenance.py",
-        "rationale": "The metadata writer resolves these fields from observed execution state and uses an explicit not_available object when historical or live evidence is absent."
+        "rationale": "The metadata writer resolves these fields from observed execution state and uses an explicit not_available object when evidence is absent."
       }
     }
   }

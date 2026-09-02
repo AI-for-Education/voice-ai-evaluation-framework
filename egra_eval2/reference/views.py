@@ -304,16 +304,16 @@ def build_reference_views(
 def prepare_ipa_reference_view(
     *,
     dataset_root: str | Path,
-    manifest_base_in: str | None,
-    asr_manifests: Sequence[str] | None,
+    audio_manifest: str | None,
+    prediction_manifests: Sequence[str] | None,
     logger: logging.Logger,
     reference_language: str = "swh",
 ) -> None:
     """Generate or reuse the dataset IPA cache for any declared model output."""
-    if not manifest_base_in:
+    if not audio_manifest:
         return
 
-    for manifest in asr_manifests or []:
+    for manifest in prediction_manifests or []:
         metadata_path = Path(manifest).with_name("run_metadata.json")
         if not metadata_path.is_file():
             continue
@@ -322,14 +322,14 @@ def prepare_ipa_reference_view(
         except (OSError, json.JSONDecodeError):
             logger.warning("Could not read ASR run metadata: %s", metadata_path)
             continue
-        profile = metadata.get("profile", {})
+        profile = metadata.get("inference_profile", {})
         output_units = profile.get("output_units")
         if output_units not in {"orthographic", "phoneme"}:
             continue
 
         views = build_reference_views(
             dataset_root=dataset_root,
-            manifest_in=manifest_base_in,
+            manifest_in=audio_manifest,
             language=reference_language,
         )
         logger.info(

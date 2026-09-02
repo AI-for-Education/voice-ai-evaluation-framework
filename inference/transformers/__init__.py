@@ -1,1 +1,1 @@
-"""Hugging Face Transformers ASR inference backend."""
+"""Hugging Face Transformers ASR adapters and command-line route."""

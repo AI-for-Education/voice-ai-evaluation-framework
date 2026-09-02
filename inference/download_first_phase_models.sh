@@ -53,8 +53,8 @@ Options:
 Run the script again after an interruption. Hugging Face reconciles each pinned
 package and avoids downloading unchanged completed files. Packages are full
 repository snapshots unless that repository documents a separately loadable
-benchmark-language adapter (MMS Swahili). Byte-level resume behavior is
-controlled by the installed Hugging Face client and is not assumed by this
+Kiswahili language adapter used by this evaluation (MMS Swahili). Byte-level
+resume behavior is controlled by the installed Hugging Face client and is not assumed by this
 script. Completed jobs receive source, size, and completion manifests beside
 their destination and are skipped on later runs.
 EOF

@@ -95,8 +95,8 @@ other:
 Each tracked YAML profile contains structured `parameter_evidence` records that
 link result-affecting settings to model-owner documentation, pinned artifact
 metadata, or an explicit project decision in this tracked README. Evidence is
-copied into run metadata while legacy profiles without it remain valid. The
-parser and `tests/test_profile.py` validate field coverage and source paths.
+copied into run metadata. The parser and `tests/test_profile.py` validate field
+coverage and source paths.
 
 ### Paired greedy and non-greedy profiles
 

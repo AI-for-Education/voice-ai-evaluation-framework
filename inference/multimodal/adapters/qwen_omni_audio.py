@@ -151,7 +151,6 @@ class QwenOmniAudioBackend:
         )
         self._metadata: dict[str, Any] = {
             "inference_library": "multimodal",
-            "framework": "multimodal",  # Deprecated metadata alias.
             "adapter": "qwen_omni_audio",
             "model_class": type(self.model).__name__,
             "processor_class": type(self.processor).__name__,

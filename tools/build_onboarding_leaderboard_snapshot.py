@@ -22,7 +22,7 @@ class SnapshotError(ValueError):
 FILES = {
     "orthographic": "leaderboard_orthographic.csv",
     "ipa": "leaderboard_ipa.csv",
-    "mapping": "leaderboard_model_name_mapping.csv",
+    "presentation": "leaderboard_model_presentation.csv",
     "metadata": "leaderboard_metadata.json",
 }
 
@@ -170,19 +170,21 @@ def _render_status(
     metadata: Mapping[str, Any],
     orthographic: Sequence[Mapping[str, str]],
     ipa: Sequence[Mapping[str, str]],
-    mapping: Sequence[Mapping[str, str]],
+    presentation: Sequence[Mapping[str, str]],
 ) -> str:
     statuses: dict[str, int] = {}
-    for row in mapping:
+    for row in presentation:
         status = row.get("leaderboard_status", "unknown") or "unknown"
         statuses[status] = statuses.get(status, 0) + 1
     profile_only = [
-        row for row in mapping if row.get("leaderboard_status") == "profile_only"
+        row
+        for row in presentation
+        if row.get("leaderboard_status") == "profile_only"
     ]
     skipped_orthographic = _skipped(metadata, "orthographic")
     skipped_ipa = _skipped(metadata, "ipa")
     generated = _markdown(metadata.get("generated_at", "not available"))
-    latest_only = metadata.get("latest_completed_run_per_model") is True
+    latest_only = metadata.get("latest_completed_run_per_inference_setup") is True
 
     lines = [
         "# Current leaderboard status",
@@ -195,9 +197,9 @@ def _render_status(
         "",
         "| Item | Current count |",
         "|---|---:|",
-        f"| Registered model profiles | {len(mapping)} |",
-        f"| Evaluated profiles | {statuses.get('evaluated', 0)} |",
-        f"| Profile-only models | {statuses.get('profile_only', 0)} |",
+        f"| Registered inference setups | {len(presentation)} |",
+        f"| Evaluated setups | {statuses.get('evaluated', 0)} |",
+        f"| Profile-only setups | {statuses.get('profile_only', 0)} |",
         f"| Eligible orthographic/WER rows | {len(orthographic)} |",
         f"| Eligible IPA/PER rows | {len(ipa)} |",
         f"| Skipped orthographic results | {len(skipped_orthographic)} |",
@@ -205,7 +207,7 @@ def _render_status(
         "",
         (
             "The generated view keeps the newest completed run for each stable "
-            f"model ID: **{'yes' if latest_only else 'no'}**."
+            f"inference setup ID: **{'yes' if latest_only else 'no'}**."
         ),
         "",
         "## Leading orthographic results",
@@ -232,7 +234,7 @@ def _render_status(
     ]
     if profile_only:
         for row in profile_only:
-            name = row.get("new_presentation_name") or row.get("previous_model_id")
+            name = row.get("presentation_name") or row.get("inference_setup_id")
             lines.append(f"- {_markdown(name)}")
     else:
         lines.append("All registered profiles currently have an eligible evaluation.")
@@ -261,10 +263,10 @@ def _render_status(
             ),
             (
                 "- Rankings describe this benchmark dataset and the recorded "
-                "model, preprocessing, decoder, and runtime configurations."
+                "model artifact, inference setup, and execution stack."
             ),
             (
-                "- A PC-executed Android runtime proxy does not measure physical-"
+                "- A PC-executed Android-behaviour proxy does not measure physical-"
                 "phone latency, memory, battery use, or thermal behavior."
             ),
             "- Smoke-test results are not eligible evidence of full benchmark quality.",
@@ -274,8 +276,8 @@ def _render_status(
             "- `data/leaderboard_orthographic.csv` — complete ranked WER rows.",
             "- `data/leaderboard_ipa.csv` — complete ranked PER rows.",
             (
-                "- `data/leaderboard_model_name_mapping.csv` — registered and "
-                "profile-only model status."
+                "- `data/leaderboard_model_presentation.csv` — registered and "
+                "profile-only inference setups."
             ),
             (
                 "- `data/leaderboard_metadata.json` — portable generation metadata "
@@ -312,7 +314,7 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
             headers[namespace],
             {
                 "rank",
-                "model_id",
+                "inference_setup_id",
                 "model_label",
                 f"global_{metric}",
                 "global_mer",
@@ -328,17 +330,17 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
         if board_metadata.get("ranking_metric") != metric:
             raise SnapshotError(f"Unexpected {namespace} ranking metric")
 
-    mapping_header, mapping_rows = _read_csv(source_paths["mapping"])
+    presentation_header, presentation_rows = _read_csv(source_paths["presentation"])
     _require_columns(
-        source_paths["mapping"],
-        mapping_header,
-        {"previous_model_id", "new_presentation_name", "leaderboard_status"},
+        source_paths["presentation"],
+        presentation_header,
+        {"inference_setup_id", "presentation_name", "leaderboard_status"},
     )
-    declared_mapping_rows = (
-        (metadata.get("presentation_naming") or {}).get("old_to_new_mapping") or {}
+    declared_presentation_rows = (
+        (metadata.get("presentation_naming") or {}).get("presentation_table") or {}
     ).get("rows")
-    if declared_mapping_rows != len(mapping_rows):
-        raise SnapshotError("Model mapping row count disagrees with metadata")
+    if declared_presentation_rows != len(presentation_rows):
+        raise SnapshotError("Model presentation row count disagrees with metadata")
 
     portable = _portable_metadata(metadata)
     portable["package_snapshot"] = {
@@ -346,7 +348,9 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
         "source_sha256": _sha256(source_paths["metadata"]),
         "portable_paths": True,
     }
-    status = _render_status(metadata, rows["orthographic"], rows["ipa"], mapping_rows)
+    status = _render_status(
+        metadata, rows["orthographic"], rows["ipa"], presentation_rows
+    )
 
     package_root.mkdir(parents=True, exist_ok=True)
     data_root = package_root / "data"
@@ -357,7 +361,7 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
         staging = Path(temporary)
         staged_status = staging / "05-current-leaderboard-status.md"
         staged_status.write_text(status, encoding="utf-8", newline="\n")
-        for namespace in ("orthographic", "ipa", "mapping"):
+        for namespace in ("orthographic", "ipa", "presentation"):
             shutil.copyfile(source_paths[namespace], staging / FILES[namespace])
         staged_metadata = staging / FILES["metadata"]
         staged_metadata.write_text(
@@ -367,14 +371,15 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
         )
 
         _install_staged_file(staged_status, package_root / staged_status.name)
-        for name in ("orthographic", "ipa", "mapping", "metadata"):
+        for name in ("orthographic", "ipa", "presentation", "metadata"):
             _install_staged_file(staging / FILES[name], data_root / FILES[name])
 
     return {
         "generated_at": generated_at,
-        "registered_profiles": len(mapping_rows),
-        "evaluated_profiles": sum(
-            row.get("leaderboard_status") == "evaluated" for row in mapping_rows
+        "registered_inference_setups": len(presentation_rows),
+        "evaluated_inference_setups": sum(
+            row.get("leaderboard_status") == "evaluated"
+            for row in presentation_rows
         ),
         "orthographic_rows": len(rows["orthographic"]),
         "ipa_rows": len(rows["ipa"]),

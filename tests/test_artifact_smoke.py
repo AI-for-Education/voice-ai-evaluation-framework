@@ -35,7 +35,7 @@ def test_nemo_artifact_loads() -> None:
 
     backend = NemoBackend(profile=profile, model_path=model_path, batch_size=1)
     try:
-        assert backend.metadata()["framework"] == "nemo"
+        assert backend.metadata()["inference_library"] == "nemo"
     finally:
         backend.close()
 
@@ -49,7 +49,7 @@ def test_transformers_artifact_loads() -> None:
 
     backend = create_backend(profile, model_path)
     try:
-        assert backend.metadata()["framework"] == "transformers"
+        assert backend.metadata()["inference_library"] == "transformers"
     finally:
         backend.close()
 
@@ -88,8 +88,65 @@ def test_sherpa_onnx_artifact_loads() -> None:
     )
     try:
         metadata = backend.metadata()
-        assert metadata["framework"] == "sherpa_onnx"
+        assert metadata["inference_library"] == "sherpa_onnx"
         assert metadata["decoding_strategy"] == "greedy_search"
+    finally:
+        backend.close()
+
+
+@pytest.mark.parametrize(
+    ("profile_name", "artifact_format"),
+    [
+        ("zipformer-streaming-robust-sw-v4-onnx-int8.yaml", "onnx"),
+        ("zipformer-streaming-robust-sw-v4-ort-int8.yaml", "ort"),
+    ],
+)
+def test_sherpa_quantized_artifact_loads(
+    profile_name: str,
+    artifact_format: str,
+) -> None:
+    profile, model_path = _artifact_or_skip(
+        REPO_ROOT / "inference/sherpa_onnx/profiles" / profile_name
+    )
+    from inference.sherpa_onnx.backend import SherpaOnnxOnlineTransducerBackend
+
+    backend = SherpaOnnxOnlineTransducerBackend(
+        profile=profile,
+        model_path=model_path,
+        num_threads=1,
+    )
+    try:
+        metadata = backend.metadata()
+        assert metadata["artifact_format"] == artifact_format
+        assert metadata["artifact_precision"] == "int8"
+    finally:
+        backend.close()
+
+
+def test_bookbot_native_torchscript_owner_sample() -> None:
+    profile, model_path = _artifact_or_skip(
+        REPO_ROOT
+        / "inference/torch/profiles/zipformer-streaming-robust-sw-v4-torchscript.yaml"
+    )
+    sample_path = model_path / "test_waves/sample1.wav"
+    if not sample_path.is_file():
+        pytest.skip(f"BookBot owner sample is absent: {sample_path}")
+
+    from inference.torch.backend import TorchScriptStreamingTransducerBackend
+
+    backend = TorchScriptStreamingTransducerBackend(
+        profile=profile,
+        model_path=model_path,
+        num_threads=1,
+    )
+    try:
+        rows = backend.transcribe_batch([str(sample_path)])
+        assert len(rows) == 1
+        assert rows[0].error is None
+        assert rows[0].pred_text == (
+            "wɑʃiɑɑᵐɓɑɔwɑnɑiʃihɑsɑkɑtikɑɛnɛɔlɑmɑʃɑɾikikɑtikɑ"
+            "ufɑlmɛhuɔwɛnjɛutɑʄiɾiwɑmɑfutɑ"
+        )
     finally:
         backend.close()
 
@@ -103,7 +160,7 @@ def test_gemma4_multimodal_artifact_loads() -> None:
     backend = Gemma4AudioBackend(profile=profile, model_path=model_path)
     try:
         metadata = backend.metadata()
-        assert metadata["framework"] == "multimodal"
+        assert metadata["inference_library"] == "multimodal"
         assert metadata["adapter"] == "gemma4_audio"
         assert metadata["effective_torch_dtype"] == "bfloat16"
     finally:

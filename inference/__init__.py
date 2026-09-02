@@ -1,1 +1,1 @@
-"""Framework-organized ASR inference package."""
+"""ASR inference routes sharing profiles, adapters, and run contracts."""

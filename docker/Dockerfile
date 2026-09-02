@@ -85,7 +85,7 @@ RUN pip3 install \
 RUN pip3 install "nemo_toolkit[asr]==2.3"
 
 # PC validation for NeMo-derived FP32/INT8 ONNX deployment artifacts. The
-# explicit Python runtime stays compatible with NeMo's NumPy/protobuf pins;
+# explicit Python environment stays compatible with NeMo's NumPy/protobuf pins;
 # onnx-asr adds the matching feature preprocessor and greedy CTC wrapper.
 RUN pip3 install \
     numpy==1.26.2 \
@@ -101,6 +101,13 @@ RUN if [ "$TORCH_CUDA" = "cpu" ]; then \
       pip3 install sherpa-onnx==1.13.5+cuda12.cudnn9.onnxruntime1.27.1 \
         --find-links https://k2-fsa.github.io/sherpa/onnx/cuda.html ; \
     fi \
+ && pip3 check
+
+# Kaldi-compatible online features for BookBot's native TorchScript Zipformer.
+# This lightweight extractor has no PyTorch ABI coupling; decoding stays in the
+# already pinned PyTorch runtime above. Keep this additive layer last so the
+# established ASR dependency image remains cacheable.
+RUN pip3 install kaldi-native-fbank==1.22.3 \
  && pip3 check
 
 # App

@@ -137,7 +137,7 @@
     "swahili-exp41-ctc-android-int8": {
       "model_group": "Exp41",
       "model_name": "sw-tz-child-egra-fastconformer-ctc-110m",
-      "variant": "Published INT8 · Android runtime proxy",
+      "variant": "Published INT8 · Android-behaviour proxy",
       "official_model_url": "https://huggingface.co/AI-for-Education/sw-tz-child-egra-fastconformer-ctc-110m",
       "official_model_url_note": "Official Hugging Face model listing; derived deployment artifact from the listed model_exp41_avg.nemo checkpoint",
       "architecture": {
@@ -276,6 +276,78 @@
         "label": "Streaming Zipformer transducer",
         "evidence_status": "owner_documented",
         "source": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4"
+      }
+    },
+    "zipformer-streaming-robust-sw-v4-onnx-int8": {
+      "model_group": "Bookbot",
+      "model_name": "sherpa-onnx-zipformer-streaming-robust-sw-v4",
+      "variant": "INT8 ONNX · greedy",
+      "official_model_url": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Streaming Zipformer transducer",
+        "evidence_status": "owner_documented",
+        "source": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4"
+      }
+    },
+    "zipformer-streaming-robust-sw-v4-onnx-int8-modified-beam4": {
+      "model_group": "Bookbot",
+      "model_name": "sherpa-onnx-zipformer-streaming-robust-sw-v4",
+      "variant": "INT8 ONNX · modified beam (4)",
+      "official_model_url": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Streaming Zipformer transducer",
+        "evidence_status": "owner_documented",
+        "source": "https://huggingface.co/bookbot/sherpa-onnx-zipformer-streaming-robust-sw-v4"
+      }
+    },
+    "zipformer-streaming-robust-sw-v4-ort-int8": {
+      "model_group": "Bookbot",
+      "model_name": "sherpa-onnx-ort-zipformer-streaming-robust-sw-v4",
+      "variant": "INT8 ORT · greedy",
+      "official_model_url": "https://huggingface.co/bookbot/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Streaming Zipformer transducer",
+        "evidence_status": "owner_documented",
+        "source": "https://huggingface.co/bookbot/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4"
+      }
+    },
+    "zipformer-streaming-robust-sw-v4-ort-int8-modified-beam4": {
+      "model_group": "Bookbot",
+      "model_name": "sherpa-onnx-ort-zipformer-streaming-robust-sw-v4",
+      "variant": "INT8 ORT · modified beam (4)",
+      "official_model_url": "https://huggingface.co/bookbot/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Streaming Zipformer transducer",
+        "evidence_status": "owner_documented",
+        "source": "https://huggingface.co/bookbot/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4"
+      }
+    },
+    "zipformer-streaming-robust-sw-v4-torchscript": {
+      "model_group": "Bookbot",
+      "model_name": "zipformer-streaming-robust-sw-v4",
+      "variant": "native TorchScript · greedy",
+      "official_model_url": "https://huggingface.co/bookbot/zipformer-streaming-robust-sw-v4",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Streaming Zipformer transducer",
+        "evidence_status": "owner_documented",
+        "source": "https://huggingface.co/bookbot/zipformer-streaming-robust-sw-v4"
+      }
+    },
+    "zipformer-streaming-robust-sw-v4-torchscript-modified-beam4": {
+      "model_group": "Bookbot",
+      "model_name": "zipformer-streaming-robust-sw-v4",
+      "variant": "native TorchScript · modified beam (4; project-adapted)",
+      "official_model_url": "https://huggingface.co/bookbot/zipformer-streaming-robust-sw-v4",
+      "official_model_url_note": "Official Hugging Face model listing; BookBot publishes a JIT command only for greedy decoding",
+      "architecture": {
+        "label": "Streaming Zipformer transducer",
+        "evidence_status": "owner_documented",
+        "source": "https://huggingface.co/bookbot/zipformer-streaming-robust-sw-v4"
       }
     }
   }

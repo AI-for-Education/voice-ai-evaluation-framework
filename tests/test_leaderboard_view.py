@@ -13,8 +13,6 @@ def test_display_orders_analysis_before_configuration_details() -> None:
         "architecture": "XLS-R",
         "run_id": "example_run",
         "inference_setup_id": "bookbot-orthographic-ctc",
-        "run_name": "deprecated_example_run",
-        "model_id": "deprecated-bookbot-orthographic-ctc",
         "model_group": "Bookbot",
         "model_name": "XLS-R 300M",
         "model_variant": "orthographic",
@@ -56,5 +54,4 @@ def test_display_orders_analysis_before_configuration_details() -> None:
         *expected_results,
         "status",
         "architecture",
-        "run",
     ]

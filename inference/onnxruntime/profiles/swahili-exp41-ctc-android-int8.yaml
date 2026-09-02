@@ -11,7 +11,7 @@ pipeline_contract:
   audio_preparation: android_pcm16_linear_16khz
   model_artifact: published_deployment_artifact
   input_processing: deployment_parity_android_frontend
-  execution_stack: android_pinned_runtime_proxy
+  execution_stack: android_pinned_execution_environment_proxy
   chunking: none
   evaluation: direct_pred_text_by_output_units
   observation_policy: observed_effective_values_v2

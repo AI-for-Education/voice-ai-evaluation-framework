@@ -18,8 +18,9 @@ def _profile(adapter: str):
     is_phi4 = adapter == "phi4_audio"
     return parse_profile(
         {
-            "id": f"{adapter}-test",
-            "framework": "multimodal",
+            "profile_schema_version": 2,
+            "inference_setup_id": f"{adapter}-test",
+            "inference_library": "multimodal",
             "adapter": adapter,
             "artifact": "model",
             "language": "sw",
@@ -185,10 +186,10 @@ def test_phi4_loader_uses_local_overlay_and_bounded_offload(
         assert metadata["generation"]["actual_call_kwargs"]["max_new_tokens"] == 8
         assert "<|audio_1|>" in metadata["rendered_prompt"]
     finally:
-        runtime_dir = backend._runtime_dir
+        work_dir = backend._work_dir
         backend.close()
-    assert runtime_dir is not None
-    assert not runtime_dir.exists()
+    assert work_dir is not None
+    assert not work_dir.exists()
 
 
 def test_qwen_current_hardware_is_blocked_before_model_loading(

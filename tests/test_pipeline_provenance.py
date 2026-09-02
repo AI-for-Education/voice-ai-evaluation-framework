@@ -8,22 +8,21 @@ from pathlib import Path
 
 import pytest
 
-from inference.backfill_pipeline_provenance import backfill
 from inference.pipeline_provenance import (
     build_pipeline_provenance,
     execution_environment_from_environment,
     infer_contract_references,
     resolve_contract_references,
-    runtime_launch_context_from_environment,
     summarize_wav_headers,
 )
 from inference.profile import load_profile
+from tools.migrations.backfill_pipeline_provenance import _parse_args, backfill
 
 
 def test_all_tracked_profiles_resolve_their_declared_contract() -> None:
     repository = Path(__file__).resolve().parents[1]
     paths = sorted((repository / "inference").glob("*/profiles/*.yaml"))
-    assert len(paths) == 23
+    assert len(paths) == 29
     for path in paths:
         profile = load_profile(path)
         payload = profile.to_dict()
@@ -60,7 +59,59 @@ def test_wav_header_summary_observes_format_without_decoding(tmp_path: Path) -> 
     assert summary["sample_width_byte_counts"] == {"2": 1}
 
 
-def test_runtime_launch_context_records_container_identity_without_guessing() -> None:
+def test_backfill_default_repository_root_is_the_project_root() -> None:
+    args = _parse_args([])
+
+    assert Path(args.repository_root) == Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {
+            "inference_profile": {},
+            "inference_adapter": {},
+            "execution_stack": {},
+            "model_artifact": {"identity": {}},
+        },
+        {
+            "profile": {},
+            "backend": {},
+            "runtime": {},
+            "model_identity": {},
+        },
+    ],
+    ids=("current-metadata", "historical-metadata"),
+)
+def test_backfill_dry_run_accepts_current_and_historical_metadata(
+    tmp_path: Path,
+    metadata: dict[str, object],
+) -> None:
+    run_dir = tmp_path / "transcripts" / "sample_run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_metadata.json").write_text(
+        json.dumps(metadata),
+        encoding="utf-8",
+    )
+    (run_dir / "transcriptions.jsonl").write_text("{}\n", encoding="utf-8")
+
+    summary = backfill(
+        output_root=tmp_path,
+        repository_root=Path(__file__).resolve().parents[1],
+        apply=False,
+        refresh=False,
+    )
+
+    assert summary["run_metadata"] == {
+        "discovered": 1,
+        "updated": 1,
+        "skipped": 0,
+        "errors": 0,
+    }
+    assert summary["error_details"] == []
+
+
+def test_execution_environment_records_container_identity_without_guessing() -> None:
     context = execution_environment_from_environment(
         {
             "PIPELINE_LAUNCH_ORCHESTRATOR": "docker_compose",
@@ -85,7 +136,6 @@ def test_runtime_launch_context_records_container_identity_without_guessing() ->
     }
     unavailable = execution_environment_from_environment({})
     assert unavailable["status"] == "not_available"
-    assert runtime_launch_context_from_environment({}) == unavailable
 
 
 def test_all_profile_launchers_use_the_central_execution_environment_helper() -> None:
@@ -98,6 +148,10 @@ def test_all_profile_launchers_use_the_central_execution_environment_helper() ->
         ),
         "run_sherpa_onnx_inference.sh": (
             "sherpa-onnx-asr",
+            "voice-ai-evaluation-framework-asr:latest",
+        ),
+        "run_torch_inference.sh": (
+            "torch-asr",
             "voice-ai-evaluation-framework-asr:latest",
         ),
         "run_onnxruntime_inference.sh": (
@@ -133,117 +187,32 @@ def test_all_profile_launchers_use_the_central_execution_environment_helper() ->
         assert f'"{image}"' in source
         assert '"${PIPELINE_EXECUTION_ENVIRONMENT_DOCKER_ARGS[@]}"' in source
 
-    shim = (repository / "inference/runtime_identity.sh").read_text(
-        encoding="utf-8"
-    )
-    assert 'source "$SCRIPT_DIR/execution_environment_identity.sh"' in shim
-    assert "pipeline_runtime_docker_args" in shim
-
-
-def test_unknown_historical_profile_is_explicitly_not_available(tmp_path: Path) -> None:
+def test_missing_current_contract_is_explicitly_not_available(tmp_path: Path) -> None:
     transcript = tmp_path / "transcriptions.jsonl"
     transcript.write_text("", encoding="utf-8")
 
     pipeline = build_pipeline_provenance(
-        profile={"id": "unknown"},
-        backend={},
-        runtime={},
-        model_identity=None,
+        profile={
+            "profile_schema_version": 2,
+            "inference_setup_id": "unknown",
+            "inference_library": "transformers",
+        },
+        adapter_metadata={},
+        execution_stack={},
+        model_artifact_identity=None,
         profile_link=None,
         run_metadata_path=tmp_path / "run_metadata.json",
         transcriptions_path=transcript,
         input_audio_summary=None,
-        recording_mode="retrospective_recovery",
+        recording_mode="run_time",
     )
 
     assert pipeline["contract"]["references"]["status"] == "not_available"
     assert (
-        pipeline["stages"]["inference"]["artifact"]["identity"]["status"]
+        pipeline["model_artifact"]["identity"]["status"]
         == "not_available"
     )
     assert pipeline["links"]["profile"]["status"] == "not_available"
-
-
-def test_backfill_is_dry_run_by_default_and_idempotent_when_applied(
-    tmp_path: Path,
-) -> None:
-    repository = Path(__file__).resolve().parents[1]
-    output = tmp_path / "output"
-    run_name = "legacy_run"
-    run_dir = output / "transcripts" / run_name
-    run_dir.mkdir(parents=True)
-    transcript = run_dir / "transcriptions.jsonl"
-    transcript.write_text(
-        json.dumps(
-            {"audio_filepath": "missing.wav", "duration": 1.0, "pred_text": "x"}
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    run_metadata = run_dir / "run_metadata.json"
-    run_metadata.write_text(
-        json.dumps(
-            {
-                "profile": {
-                    "id": "swahili-exp41-ctc",
-                    "framework": "nemo",
-                    "adapter": "nemo",
-                    "artifact": "model_exp41_avg.nemo",
-                    "output_units": "orthographic",
-                    "decoding": {"strategy": "ctc", "generation_kwargs": {}},
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    evaluation_dir = output / "evaluations" / run_name / "orthographic"
-    manifests = evaluation_dir.parent / "manifests"
-    manifests.mkdir(parents=True)
-    clean_manifest = manifests / "ref_manifest.clean.jsonl"
-    clean_manifest.write_text("{}\n", encoding="utf-8")
-    evaluation_dir.mkdir()
-    evaluation_metadata = evaluation_dir / "evaluation_metadata.json"
-    evaluation_metadata.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "status": "complete",
-                "source_manifest": str(clean_manifest),
-                "requested_scoring_representation": "orthographic",
-                "effective_scoring_units": "orthographic",
-                "output_namespace": "orthographic",
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    dry_run = backfill(
-        output_root=output,
-        repository_root=repository,
-        apply=False,
-    )
-    assert dry_run["run_metadata"]["updated"] == 1
-    assert "pipeline_provenance" not in json.loads(run_metadata.read_text())
-
-    applied = backfill(
-        output_root=output,
-        repository_root=repository,
-        apply=True,
-    )
-    assert applied["run_metadata"]["updated"] == 1
-    assert applied["evaluation_metadata"]["updated"] == 1
-    assert json.loads(run_metadata.read_text())["pipeline_provenance"]["recording"][
-        "mode"
-    ] == "retrospective_recovery"
-    assert json.loads(evaluation_metadata.read_text())["schema_version"] == 2
-
-    repeated = backfill(
-        output_root=output,
-        repository_root=repository,
-        apply=True,
-    )
-    assert repeated["run_metadata"]["skipped"] == 1
-    assert repeated["evaluation_metadata"]["skipped"] == 1
 
 
 def test_evaluation_metadata_links_the_source_run_and_outputs(
@@ -264,9 +233,12 @@ def test_evaluation_metadata_links_the_source_run_and_outputs(
     (run_dir / "run_metadata.json").write_text(
         json.dumps(
             {
-                "profile": {
-                    "id": "model",
-                    "framework": "transformers",
+                "metadata_schema_version": 2,
+                "inference_setup_id": "model",
+                "inference_profile": {
+                    "profile_schema_version": 2,
+                    "inference_setup_id": "model",
+                    "inference_library": "transformers",
                     "adapter": "ctc",
                     "artifact": "model",
                     "output_units": "orthographic",

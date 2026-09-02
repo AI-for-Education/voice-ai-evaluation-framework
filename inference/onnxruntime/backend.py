@@ -216,7 +216,6 @@ class OnnxRuntimeCtcBackend:
     def metadata(self) -> dict[str, Any]:
         return {
             "inference_library": "onnxruntime",
-            "framework": "onnxruntime",  # Deprecated metadata alias.
             "adapter": "ctc",
             "device": "cpu",
             "provider": "CPUExecutionProvider",

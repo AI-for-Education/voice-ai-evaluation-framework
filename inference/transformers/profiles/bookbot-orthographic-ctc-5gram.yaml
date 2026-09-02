@@ -4,7 +4,7 @@
 # score_boundary=true below mirror that packaged metadata exactly.
 # Runtime API: https://huggingface.co/docs/transformers/model_doc/wav2vec2
 # beam_width=100 and n_best=1 match the installed pyctcdecode/Transformers
-# decoder defaults. decoder_workers=1 is the deterministic project runtime
+# decoder defaults. decoder_workers=1 is the deterministic project resource
 # choice and does not change the decoded one-best hypothesis.
 profile_schema_version: 2
 inference_setup_id: bookbot-orthographic-ctc-5gram
@@ -60,4 +60,4 @@ parameter_evidence:
       - decoding.ctc_lm_kwargs.decoder_workers
     level: project
     source: repo:inference/transformers/README.md
-    rationale: One persistent decoder worker is a deterministic bounded-runtime choice; worker count does not change the one-best decoder arguments.
+    rationale: One persistent decoder worker is a deterministic bounded-resource choice; worker count does not change the one-best decoder arguments.

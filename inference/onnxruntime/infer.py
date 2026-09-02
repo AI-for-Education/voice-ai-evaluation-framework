@@ -20,10 +20,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--inference_profile",
-        "--model_config",
         dest="inference_profile",
         required=True,
-        help="Inference profile YAML (--model_config is deprecated)",
+        help="Inference profile YAML",
     )
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--root_audio_dir", default=None)

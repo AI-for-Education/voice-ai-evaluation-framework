@@ -145,7 +145,7 @@ class TransformersCTCBackend:
         if self._is_mms_profile() and not profile.language:
             raise ProfileError("MMS profiles require a language adapter code")
         if self._uses_lm():
-            self._prepare_lm_runtime()
+            self._prepare_lm_decoder_resources()
 
         self.device = device or _select_device()
         dtype_argument, self._dtype_fallback = _loader_dtype(
@@ -241,7 +241,7 @@ class TransformersCTCBackend:
             raise ProfileError("CTC beam_search decoding requires ctc_lm_kwargs")
         return config
 
-    def _prepare_lm_runtime(self) -> None:
+    def _prepare_lm_decoder_resources(self) -> None:
         missing = [
             relative
             for relative in _LM_REQUIRED_FILES
@@ -508,7 +508,6 @@ class TransformersCTCBackend:
     def metadata(self) -> dict[str, Any]:
         metadata = {
             "inference_library": "transformers",
-            "framework": "transformers",  # Deprecated metadata alias.
             "adapter": "ctc",
             "strategy": self.profile.decoding.strategy,
             "decoder_call": self._decoder_call,

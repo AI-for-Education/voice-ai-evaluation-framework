@@ -94,7 +94,7 @@ class Phi4AudioBackend:
         self.model_path = Path(model_path)
         self.model = None
         self.processor = None
-        self._runtime_dir: Path | None = None
+        self._work_dir: Path | None = None
         if not self.model_path.is_dir():
             raise ProfileError(
                 f"Multimodal model directory not found: {self.model_path}"
@@ -121,12 +121,12 @@ class Phi4AudioBackend:
             or tempfile.gettempdir()
         )
         root.mkdir(parents=True, exist_ok=True)
-        self._runtime_dir = Path(tempfile.mkdtemp(prefix="phi4_", dir=root))
+        self._work_dir = Path(tempfile.mkdtemp(prefix="phi4_", dir=root))
         processor_path = _prepare_processor_snapshot(
             self.model_path,
-            self._runtime_dir,
+            self._work_dir,
         )
-        weight_offload_path = self._runtime_dir / "weights"
+        weight_offload_path = self._work_dir / "weights"
         weight_offload_path.mkdir()
 
         max_memory = {
@@ -186,7 +186,6 @@ class Phi4AudioBackend:
         )
         self._metadata: dict[str, Any] = {
             "inference_library": "multimodal",
-            "framework": "multimodal",  # Deprecated metadata alias.
             "adapter": "phi4_audio",
             "model_class": type(self.model).__name__,
             "processor_class": type(self.processor).__name__,
@@ -303,7 +302,7 @@ class Phi4AudioBackend:
         self.processor = None
         if getattr(self, "device", None) is not None and self.device.type == "cuda":
             torch.cuda.empty_cache()
-        runtime_dir = getattr(self, "_runtime_dir", None)
-        if runtime_dir is not None:
-            shutil.rmtree(runtime_dir, ignore_errors=True)
-            self._runtime_dir = None
+        work_dir = getattr(self, "_work_dir", None)
+        if work_dir is not None:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            self._work_dir = None

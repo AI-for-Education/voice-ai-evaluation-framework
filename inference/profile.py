@@ -18,9 +18,6 @@ _TOP_LEVEL_KEYS = {
     "profile_schema_version",
     "inference_setup_id",
     "inference_library",
-    # Deprecated v1 aliases accepted only for compatibility.
-    "id",
-    "framework",
     "adapter",
     "artifact",
     "language",
@@ -42,6 +39,8 @@ _LOADER_KEYS = {
     "trust_remote_code",
     "torch_dtype",
     "attention_implementation",
+    "artifact_format",
+    "artifact_precision",
 }
 _DECODING_KEYS = {
     "strategy",
@@ -100,19 +99,6 @@ _PARAMETER_EVIDENCE_LEVELS = {
     "project",
     "unvalidated",
 }
-_PIPELINE_CONTRACT_V1_KEYS = {
-    "schema_version",
-    "audio_preparation",
-    "inference",
-    "evaluation",
-    "runtime_resolution",
-}
-_PIPELINE_INFERENCE_V1_KEYS = {
-    "artifact",
-    "frontend",
-    "runtime",
-    "chunking",
-}
 _PIPELINE_CONTRACT_V2_KEYS = {
     "schema_version",
     "audio_preparation",
@@ -128,6 +114,7 @@ _ADAPTERS = {
     "nemo": {"nemo"},
     "onnxruntime": {"android_ctc", "ctc"},
     "sherpa_onnx": {"online_transducer"},
+    "torch": {"streaming_transducer"},
     "transformers": {"ctc", "speech_seq2seq"},
 }
 
@@ -143,6 +130,8 @@ class LoaderConfig:
     trust_remote_code: bool = False
     torch_dtype: str = "auto"
     attention_implementation: str | None = None
+    artifact_format: str = "auto"
+    artifact_precision: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -176,7 +165,7 @@ class DecodingConfig:
     generation_kwargs: dict[str, Any] = field(default_factory=dict)
     ctc_lm_kwargs: CTCLMConfig | None = None
     transducer_search_kwargs: TransducerSearchConfig | None = None
-    # pred_text is always the direct backend hypothesis.
+    # pred_text is always the direct inference-adapter hypothesis.
     long_form: WhisperLongFormConfig | None = None
 
 
@@ -237,16 +226,6 @@ class InferenceProfile:
     pipeline_contract: PipelineContract | None = None
     parameter_evidence: tuple[ParameterEvidence, ...] = ()
 
-    @property
-    def id(self) -> str:
-        """Deprecated v1 alias for ``inference_setup_id``."""
-        return self.inference_setup_id
-
-    @property
-    def framework(self) -> str:
-        """Deprecated v1 alias for ``inference_library``."""
-        return self.inference_library
-
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload = {"profile_schema_version": 2, **payload}
@@ -254,6 +233,9 @@ class InferenceProfile:
             # Profiles created before parameter provenance was introduced keep
             # their existing serialized shape and effective adapter defaults.
             del payload["loader"]["attention_implementation"]
+        for defaulted_loader_key in ("artifact_format", "artifact_precision"):
+            if payload["loader"][defaulted_loader_key] == "auto":
+                del payload["loader"][defaulted_loader_key]
         if not payload["parameter_evidence"]:
             del payload["parameter_evidence"]
         else:
@@ -287,10 +269,6 @@ class InferenceProfile:
         if payload["decoding"]["long_form"] is None:
             del payload["decoding"]["long_form"]
         return payload
-
-
-# Import compatibility for callers that still use the v1 type name.
-ModelProfile = InferenceProfile
 
 
 def _unknown_keys(data: dict[str, Any], allowed: set[str], section: str) -> None:
@@ -335,6 +313,8 @@ def _build_loader(
     trust_remote_code = data.get("trust_remote_code", False)
     torch_dtype = data.get("torch_dtype", "auto")
     attention_implementation = data.get("attention_implementation")
+    artifact_format = data.get("artifact_format", "auto")
+    artifact_precision = data.get("artifact_precision", "auto")
     if not isinstance(processor_mode, str):
         raise ProfileError("loader.processor_mode must be a string")
     if type(local_files_only) is not bool:
@@ -347,12 +327,18 @@ def _build_loader(
         attention_implementation, str
     ):
         raise ProfileError("loader.attention_implementation must be a string or null")
+    if not isinstance(artifact_format, str):
+        raise ProfileError("loader.artifact_format must be a string")
+    if not isinstance(artifact_precision, str):
+        raise ProfileError("loader.artifact_precision must be a string")
     config = LoaderConfig(
         processor_mode=processor_mode,
         local_files_only=local_files_only,
         trust_remote_code=trust_remote_code,
         torch_dtype=torch_dtype,
         attention_implementation=attention_implementation,
+        artifact_format=artifact_format,
+        artifact_precision=artifact_precision,
     )
     if config.processor_mode not in {
         "auto",
@@ -385,6 +371,14 @@ def _build_loader(
         raise ProfileError(
             "loader.attention_implementation must be eager, sdpa, "
             "flash_attention_2, or null"
+        )
+    if config.artifact_format not in {"auto", "onnx", "ort", "torchscript"}:
+        raise ProfileError(
+            "loader.artifact_format must be auto, onnx, ort, or torchscript"
+        )
+    if config.artifact_precision not in {"auto", "fp32", "int8"}:
+        raise ProfileError(
+            "loader.artifact_precision must be auto, fp32, or int8"
         )
     return config
 
@@ -463,52 +457,15 @@ def _build_pipeline_contract(value: Any) -> PipelineContract | None:
     if value is None:
         return None
     data = _require_mapping(value, "pipeline_contract")
-    schema_version = data.get("schema_version")
-    if schema_version == 1:
-        _unknown_keys(data, _PIPELINE_CONTRACT_V1_KEYS, "pipeline_contract")
-        missing = sorted(_PIPELINE_CONTRACT_V1_KEYS - set(data))
-        if missing:
-            raise ProfileError(
-                "pipeline_contract is missing required key(s): " + ", ".join(missing)
-            )
-        inference_data = _require_mapping(
-            data["inference"], "pipeline_contract.inference"
+    if data.get("schema_version") != 2:
+        raise ProfileError("pipeline_contract.schema_version must be 2")
+    _unknown_keys(data, _PIPELINE_CONTRACT_V2_KEYS, "pipeline_contract")
+    missing = sorted(_PIPELINE_CONTRACT_V2_KEYS - set(data))
+    if missing:
+        raise ProfileError(
+            "pipeline_contract is missing required key(s): " + ", ".join(missing)
         )
-        _unknown_keys(
-            inference_data,
-            _PIPELINE_INFERENCE_V1_KEYS,
-            "pipeline_contract.inference",
-        )
-        missing = sorted(_PIPELINE_INFERENCE_V1_KEYS - set(inference_data))
-        if missing:
-            raise ProfileError(
-                "pipeline_contract.inference is missing required key(s): "
-                + ", ".join(missing)
-            )
-        normalized: dict[str, Any] = {
-            "schema_version": 2,
-            "audio_preparation": data["audio_preparation"],
-            "model_artifact": inference_data["artifact"],
-            "input_processing": inference_data["frontend"],
-            "execution_stack": inference_data["runtime"],
-            "chunking": inference_data["chunking"],
-            "evaluation": data["evaluation"],
-            "observation_policy": (
-                "observed_effective_values_v2"
-                if data["runtime_resolution"] == "observed_effective_values_v1"
-                else data["runtime_resolution"]
-            ),
-        }
-    elif schema_version == 2:
-        _unknown_keys(data, _PIPELINE_CONTRACT_V2_KEYS, "pipeline_contract")
-        missing = sorted(_PIPELINE_CONTRACT_V2_KEYS - set(data))
-        if missing:
-            raise ProfileError(
-                "pipeline_contract is missing required key(s): " + ", ".join(missing)
-            )
-        normalized = dict(data)
-    else:
-        raise ProfileError("pipeline_contract.schema_version must be 1 or 2")
+    normalized = dict(data)
 
     for key in sorted(_PIPELINE_CONTRACT_V2_KEYS - {"schema_version"}):
         item = normalized[key]
@@ -825,6 +782,10 @@ def _build_decoding(
             "greedy_search",
             "modified_beam_search",
         },
+        ("torch", "streaming_transducer"): {
+            "greedy_search",
+            "modified_beam_search",
+        },
         ("nemo", "nemo"): {"ctc", "rnnt"},
     }[(inference_library, adapter)]
     if strategy not in expected:
@@ -886,38 +847,16 @@ def _build_decoding(
     )
 
 
-def _canonical_profile_value(
-    data: dict[str, Any], canonical: str, deprecated: str
-) -> Any:
-    """Return one schema value and reject conflicting v1/v2 aliases."""
-    canonical_value = data.get(canonical)
-    deprecated_value = data.get(deprecated)
-    if (
-        canonical in data
-        and deprecated in data
-        and canonical_value != deprecated_value
-    ):
-        raise ProfileError(
-            f"Conflicting profile fields: {canonical} and deprecated {deprecated}"
-        )
-    return canonical_value if canonical in data else deprecated_value
-
-
 def parse_profile(data: Any) -> InferenceProfile:
     """Validate parsed YAML and return an immutable inference profile."""
     if not isinstance(data, dict):
         raise ProfileError("Inference profile must contain a YAML mapping")
     _unknown_keys(data, _TOP_LEVEL_KEYS, "profile")
 
-    profile_schema_version = data.get("profile_schema_version", 1)
-    if profile_schema_version not in {1, 2}:
-        raise ProfileError("profile_schema_version must be 1 or 2")
-    inference_setup_id = _canonical_profile_value(
-        data, "inference_setup_id", "id"
-    )
-    inference_library = _canonical_profile_value(
-        data, "inference_library", "framework"
-    )
+    if data.get("profile_schema_version") != 2:
+        raise ProfileError("profile_schema_version must be 2")
+    inference_setup_id = data.get("inference_setup_id")
+    inference_library = data.get("inference_library")
     required_values = {
         "inference_setup_id": inference_setup_id,
         "inference_library": inference_library,
@@ -979,6 +918,30 @@ def parse_profile(data: Any) -> InferenceProfile:
         )
     if inference_library == "nemo" and loader.torch_dtype != "auto":
         raise ProfileError("loader.torch_dtype must be auto for the NeMo backend")
+    explicit_artifact_loader = (
+        loader.artifact_format != "auto" or loader.artifact_precision != "auto"
+    )
+    if explicit_artifact_loader and inference_library not in {"sherpa_onnx", "torch"}:
+        raise ProfileError(
+            "loader.artifact_format and loader.artifact_precision are only valid "
+            "for sherpa_onnx and torch inference"
+        )
+    if inference_library == "sherpa_onnx":
+        if loader.artifact_format == "torchscript":
+            raise ProfileError(
+                "sherpa_onnx profiles cannot load torchscript artifacts"
+            )
+    if inference_library == "torch":
+        if loader.artifact_format != "torchscript":
+            raise ProfileError(
+                "torch/streaming_transducer requires "
+                "loader.artifact_format: torchscript"
+            )
+        if loader.artifact_precision != "fp32":
+            raise ProfileError(
+                "torch/streaming_transducer requires "
+                "loader.artifact_precision: fp32"
+            )
 
     prompt_value = data.get("prompt")
     audio_value = data.get("audio")
@@ -1097,19 +1060,10 @@ def load_profile(
     path: str | Path,
     *,
     expected_inference_library: str | None = None,
-    expected_framework: str | None = None,
 ) -> InferenceProfile:
     """Load and validate one tracked YAML inference profile."""
     if yaml is None:
         raise ProfileError("PyYAML is required to load inference profiles")
-    if (
-        expected_inference_library
-        and expected_framework
-        and expected_inference_library != expected_framework
-    ):
-        raise ProfileError(
-            "Conflicting expected_inference_library and expected_framework"
-        )
     profile_path = Path(path)
     if not profile_path.is_file():
         raise ProfileError(f"Inference profile not found: {profile_path}")
@@ -1118,11 +1072,13 @@ def load_profile(
     except yaml.YAMLError as exc:
         raise ProfileError(f"Invalid YAML in {profile_path}: {exc}") from exc
     profile = parse_profile(data)
-    expected = expected_inference_library or expected_framework
-    if expected and profile.inference_library != expected:
+    if (
+        expected_inference_library
+        and profile.inference_library != expected_inference_library
+    ):
         raise ProfileError(
             "Profile inference library is "
-            f"'{profile.inference_library}', expected '{expected}'"
+            f"'{profile.inference_library}', expected '{expected_inference_library}'"
         )
     return profile
 

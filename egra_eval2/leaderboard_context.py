@@ -74,7 +74,7 @@ def contract_references(
     contract = pipeline.get("contract")
     contract = contract if isinstance(contract, dict) else {}
     references = contract.get("references")
-    if isinstance(references, dict) and references.get("schema_version") in {1, 2}:
+    if isinstance(references, dict) and references.get("schema_version") == 2:
         recording = pipeline.get("recording")
         recording = recording if isinstance(recording, dict) else {}
         mode = str(recording.get("mode") or "recording mode not available")
@@ -82,32 +82,21 @@ def contract_references(
 
     recovered = infer_contract_references(profile)
     if recovered is not None:
-        return recovered, "profile-derived contract fallback"
-    return {}, "legacy profile/backend fallback"
+        return recovered, "inference-profile contract"
+    return {}, "pipeline contract not recorded"
 
 
 def _inference_reference(references: dict[str, Any], field: str) -> str:
-    canonical_fields = {
-        "artifact": "model_artifact",
-        "frontend": "input_processing",
-        "runtime": "execution_stack",
-        "chunking": "chunking",
-    }
-    canonical = references.get(canonical_fields[field])
-    if isinstance(canonical, str):
-        return canonical
-    inference = references.get("inference")
-    inference = inference if isinstance(inference, dict) else {}
-    value = inference.get(field)
+    value = references.get(field)
     return value if isinstance(value, str) else ""
 
 
-def artifact_context(
+def model_artifact_label(
     profile: dict[str, Any],
     run_metadata: dict[str, Any],
     references: dict[str, Any],
 ) -> str:
-    artifact = _inference_reference(references, "artifact")
+    artifact = _inference_reference(references, "model_artifact")
     labels = {
         "canonical_checkpoint": "canonical model-owner artifact",
         "project_export": "project-exported ONNX artifact",
@@ -116,21 +105,21 @@ def artifact_context(
     if artifact in labels:
         return labels[artifact]
 
-    backend = run_metadata.get("inference_adapter", run_metadata.get("backend"))
+    backend = run_metadata.get("inference_adapter")
     backend = backend if isinstance(backend, dict) else {}
     if backend.get("artifact_target") == "packaged_android_reference":
         return "published Android deployment artifact"
-    if profile.get("inference_library", profile.get("framework")) == "onnxruntime":
+    if profile.get("inference_library") == "onnxruntime":
         return "ONNX artifact (role not recorded)"
     if profile.get("artifact"):
         return "selected artifact (role not recorded)"
     return "artifact not recorded"
 
 
-def preprocessing_context(references: dict[str, Any]) -> str:
+def input_processing_label(references: dict[str, Any]) -> str:
     audio = references.get("audio_preparation")
     audio = audio if isinstance(audio, str) else ""
-    frontend = _inference_reference(references, "frontend")
+    frontend = _inference_reference(references, "input_processing")
     chunking = _inference_reference(references, "chunking")
 
     audio_labels = {
@@ -168,11 +157,11 @@ def preprocessing_context(references: dict[str, Any]) -> str:
 
 
 def inference_engine_version(run_metadata: dict[str, Any]) -> tuple[str, str]:
-    runtime = run_metadata.get("execution_stack", run_metadata.get("runtime"))
-    runtime = runtime if isinstance(runtime, dict) else {}
-    packages = runtime.get("packages")
+    execution_stack = run_metadata.get("execution_stack")
+    execution_stack = execution_stack if isinstance(execution_stack, dict) else {}
+    packages = execution_stack.get("packages")
     packages = packages if isinstance(packages, dict) else {}
-    backend = run_metadata.get("inference_adapter", run_metadata.get("backend"))
+    backend = run_metadata.get("inference_adapter")
     backend = backend if isinstance(backend, dict) else {}
     observed = (
         packages.get("onnxruntime")
@@ -183,24 +172,18 @@ def inference_engine_version(run_metadata: dict[str, Any]) -> tuple[str, str]:
     return str(observed or ""), str(required or "")
 
 
-# Deprecated compatibility alias.
-runtime_version = inference_engine_version
-
-
 def execution_stack_context(
     profile: dict[str, Any],
     run_metadata: dict[str, Any],
     references: dict[str, Any],
 ) -> tuple[str, bool]:
     """Describe the software and environment used for one inference run."""
-    runtime = run_metadata.get("execution_stack", run_metadata.get("runtime"))
-    runtime = runtime if isinstance(runtime, dict) else {}
-    launch = runtime.get("launch_context")
+    execution_stack = run_metadata.get("execution_stack")
+    execution_stack = execution_stack if isinstance(execution_stack, dict) else {}
+    launch = execution_stack.get("launch_context")
     launch = launch if isinstance(launch, dict) else {}
     observed_version, required_version = inference_engine_version(run_metadata)
-    inference_library = profile.get(
-        "inference_library", profile.get("framework")
-    )
+    inference_library = profile.get("inference_library")
     if inference_library not in {"onnxruntime", "sherpa_onnx"}:
         observed_version = ""
         required_version = ""
@@ -257,17 +240,19 @@ def execution_stack_context(
         environment = f"{label} ({'; '.join(details)})" if details else label
         return f"{route} → {environment}", True
 
-    runtime_reference = _inference_reference(references, "runtime")
+    execution_stack_reference = _inference_reference(references, "execution_stack")
     labels = {
         "shared_transformers_image": "shared ASR container",
         "multimodal_image": "model-family multimodal container",
         "nemo_image": "shared ASR container",
         "onnxruntime_shared_image": "shared ASR container on PC",
-        "android_pinned_runtime_proxy": "dedicated Android-parity container on PC",
+        "android_pinned_execution_environment_proxy": (
+            "dedicated Android-parity container on PC"
+        ),
         "sherpa_onnx_image": "shared ASR container",
     }
-    if runtime_reference in labels:
-        label = labels[runtime_reference]
+    if execution_stack_reference in labels:
+        label = labels[execution_stack_reference]
         if observed_version:
             label += f" (ONNX Runtime {observed_version} observed)"
         elif required_version:
@@ -275,9 +260,7 @@ def execution_stack_context(
         return f"{route} → {label}", False
 
     if inference_library == "onnxruntime":
-        backend = run_metadata.get(
-            "inference_adapter", run_metadata.get("backend")
-        )
+        backend = run_metadata.get("inference_adapter")
         backend = backend if isinstance(backend, dict) else {}
         quantization = backend.get("quantization")
         precision = "INT8" if quantization == "int8" else "FP32"
@@ -292,19 +275,15 @@ def execution_stack_context(
     return f"{route} → environment not recorded", False
 
 
-# Deprecated compatibility alias.
-runtime_context = execution_stack_context
-
-
 def execution_target_label(
     profile: dict[str, Any],
     run_metadata: dict[str, Any],
     references: dict[str, Any],
 ) -> str:
     """Return a compact execution-target label for presentation names."""
-    runtime = run_metadata.get("execution_stack", run_metadata.get("runtime"))
-    runtime = runtime if isinstance(runtime, dict) else {}
-    launch = runtime.get("launch_context")
+    execution_stack = run_metadata.get("execution_stack")
+    execution_stack = execution_stack if isinstance(execution_stack, dict) else {}
+    launch = execution_stack.get("launch_context")
     launch = launch if isinstance(launch, dict) else {}
     service = launch.get("compose_service")
     service_labels = {
@@ -320,16 +299,18 @@ def execution_target_label(
     if service in service_labels:
         return service_labels[service]
 
-    runtime_reference = _inference_reference(references, "runtime")
-    runtime_labels = {
+    execution_stack_reference = _inference_reference(references, "execution_stack")
+    execution_stack_labels = {
         "shared_transformers_image": "transformers",
         "nemo_image": "nemo",
         "onnxruntime_shared_image": "onnxruntime-desktop",
-        "android_pinned_runtime_proxy": "onnxruntime-android-proxy",
+        "android_pinned_execution_environment_proxy": (
+            "onnxruntime-android-proxy"
+        ),
         "sherpa_onnx_image": "sherpa-onnx",
     }
-    if runtime_reference in runtime_labels:
-        return runtime_labels[runtime_reference]
+    if execution_stack_reference in execution_stack_labels:
+        return execution_stack_labels[execution_stack_reference]
 
     adapter = profile.get("adapter")
     multimodal_labels = {
@@ -340,19 +321,13 @@ def execution_target_label(
     if adapter in multimodal_labels:
         return multimodal_labels[adapter]
 
-    inference_library = profile.get(
-        "inference_library", profile.get("framework")
-    )
+    inference_library = profile.get("inference_library")
     if isinstance(inference_library, str) and inference_library:
         return inference_library.strip().lower().replace("_", "-")
     return "execution-target-not-recorded"
 
 
-# Deprecated compatibility alias.
-platform_label = execution_target_label
-
-
 def decoder_slug(label: str) -> str:
-    """Normalize a readable decoder description for legacy display labels."""
+    """Normalize a readable decoder description for stable display labels."""
     normalized = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
     return normalized or "decoder-not-recorded"

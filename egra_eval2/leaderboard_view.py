@@ -30,13 +30,7 @@ RESULT_SECTION_LABELS = {
 AUDIT_ONLY_COLUMNS = (
     "summary_path",
     "inference_setup_id",
-    # Deprecated v1 aliases remain in CSV output but are hidden in the UI.
-    "model_id",
-    "run_name",
-    "platform",
-    "artifact_context",
-    "preprocessing_context",
-    "runtime_context",
+    "run_id",
     "model_group",
     "model_name",
     "model_variant",
@@ -84,12 +78,6 @@ def display_frame(frame: pd.DataFrame, metric: str) -> pd.DataFrame:
         "context_evidence": "factor evidence",
         "native_output_units": "native output",
         "hypothesis_route": "scoring route",
-        "scored_hypothesis": "scored hypothesis",
-        "postprocessing_method": "post-processing",
-        "postprocessed_rows": "adjusted rows",
-        "postprocessed_rows_pct": "adjusted rows (%)",
-        "postprocessing_words_removed": "words removed",
-        "postprocessing_audit_source": "audit source",
         "completed_at": "completed",
     }
     for section in RESULT_SECTIONS:

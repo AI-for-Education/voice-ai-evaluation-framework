@@ -48,7 +48,7 @@ model directory at `/models`.
 Root `infer.py` remains the only legacy interface. It accepts `--model`,
 `--dataset_root`, optional TextGrid discovery/segmentation, `--manifest_in`, and
 the existing decoder/execution flags. New inference commands use
-`--inference_profile` instead of `--model`; `--model_config` remains an alias.
+`--inference_profile` instead of `--model`.
 
 Audio is normalized to 16 kHz before transcription. The profile-driven adapter
 reports unreadable inputs per file. Legacy TextGrid behaviour and temporary-file

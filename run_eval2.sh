@@ -18,9 +18,6 @@ The default model-native evaluation is written under one of:
 Add --scoring_representation ipa for the parallel IPA/PER view under:
   input_output_data/output/evaluations/<model>_<timestamp>/ipa/
 
-Use --scoring_representation legacy_orthographic only to restore the historical
-phoneme-vs-orthography diagnostic under orthographic_legacy/. It is not a valid
-cross-model quality metric.
 EOF
   exit 1
 }

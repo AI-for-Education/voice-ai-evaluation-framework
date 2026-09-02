@@ -1,7 +1,6 @@
 from dataclasses import dataclass
+
 from jiwer import compute_measures
-from typing import List, Tuple
-import math
 
 from egra_eval2.dp_align import dp_align
 from egra_eval2.eval_utils import text_normalize
@@ -14,50 +13,6 @@ class Counts:
     I: int
     C: int
     N: int  # tokens in TRUTH after normalization
-
-    @property
-    def WER(self) -> float:
-        if self.N:
-            return ((self.S + self.D + self.I) / self.N) * 100.0
-        return math.inf if self.I > 0 else math.nan
-
-    @property
-    def ACC(self) -> float:
-        return self.C / self.N if self.N else math.nan
-
-    @property
-    def COR(self) -> int:
-        """
-        Correctness count derived from N-S-D (equivalent to hits on valid alignments).
-        """
-        return int(self.N - self.S - self.D) if self.N else 0
-
-    @property
-    def ACC_COR(self) -> float:
-        """
-        Accuracy derived from COR/N.
-        """
-        return (self.COR / self.N) if self.N else math.nan
-
-    # Macro precision/recall/F1 at token level (REF = truth, HYP = system)
-    @property
-    def precision(self) -> float:
-        denom = self.C + self.I
-        return self.C / denom if denom > 0 else math.nan
-
-    @property
-    def recall(self) -> float:
-        denom = self.C + self.D
-        return self.C / denom if denom > 0 else math.nan
-
-    @property
-    def f1(self) -> float:
-        p, r = self.precision, self.recall
-        return (
-            (2 * p * r) / (p + r)
-            if (not math.isnan(p) and not math.isnan(r) and (p + r) > 0)
-            else math.nan
-        )
 
 
 def score_error_rate(truth: str, hyp: str) -> Counts:
@@ -86,20 +41,7 @@ def score_error_rate(truth: str, hyp: str) -> Counts:
     )
 
 
-def get_csid_sequence(truth: str, hyp: str) -> List[str]:
-
-    # This normalisation below is faulty because it removes apostrophes
-    # def normalize_transcript(text: str) -> str:
-    #     import re, string
-    #     if text is None:
-    #         return ""
-    #     s = str(text).lower()
-    #     s = re.sub(r"[{}]".format(re.escape(string.punctuation)), " ", s)
-    #     s = re.sub(r"\s+", " ", s).strip()
-    #     return s
-    # can_norm2 = normalize_transcript(truth or "")
-    # other_norm2 = normalize_transcript(hyp or "")
-
+def get_csid_sequence(truth: str, hyp: str) -> list[str]:
     can_norm = text_normalize(truth or "")
     other_norm = text_normalize(hyp or "")
 
@@ -110,36 +52,12 @@ def get_csid_sequence(truth: str, hyp: str) -> List[str]:
     return [item[2] for item in alignment]
 
 
-def get_csid_sequence_with_pos(truth: str, hyp: str) -> List[Tuple[int, str, str]]:
-
-    # This normalisation below is faulty because it removes apostrophes
-    # def normalize_transcript(text: str) -> str:
-    #     import re, string
-    #     if text is None:
-    #         return ""
-    #     s = str(text).lower()
-    #     s = re.sub(r"[{}]".format(re.escape(string.punctuation)), " ", s)
-    #     s = re.sub(r"\s+", " ", s).strip()
-    #     return s
-    # can_norm2 = normalize_transcript(truth or "")
-    # other_norm2 = normalize_transcript(hyp or "")
-
-    can_norm = text_normalize(truth or "")
-    other_norm = text_normalize(hyp or "")
-
-    can_list = can_norm.split()
-    other_list = other_norm.split()
-
-    _, alignment = dp_align(can_list, other_list, output_align=True)
-    # return [item[2] for item in alignment]
-
-
 def score_mistake_error_rate(can: str, ref: str, hyp: str) -> Counts:
 
     ref_to_can = get_csid_sequence(can, ref)
     hyp_to_can = get_csid_sequence(can, hyp)
 
-    mer_errors, mer_alignment = dp_align(ref_to_can, hyp_to_can, output_align=True)
+    mer_errors, _ = dp_align(ref_to_can, hyp_to_can, output_align=True)
 
     return Counts(
         S=mer_errors.n_sub,
@@ -160,8 +78,8 @@ def score_fine_sub_del_ins(can: str, ref: str, hyp: str) -> dict:
     ref = ref.split()
     hyp = hyp.split()
 
-    ref_to_can_errors, ref_to_can_alignment = dp_align(can, ref, output_align=True)
-    hyp_to_can_errors, hyp_to_can_alignment = dp_align(can, hyp, output_align=True)
+    _, ref_to_can_alignment = dp_align(can, ref, output_align=True)
+    _, hyp_to_can_alignment = dp_align(can, hyp, output_align=True)
 
     ref_to_can_alignment_sequence = [i[-1] for i in ref_to_can_alignment]
     hyp_to_can_alignment_sequence = [i[-1] for i in hyp_to_can_alignment]
@@ -172,7 +90,7 @@ def score_fine_sub_del_ins(can: str, ref: str, hyp: str) -> dict:
     true_csid = [i[1] for i in mer_alignment]
     pred_csid = [i[0] for i in mer_alignment]
 
-    classes = set(["d", "i", "c", "s", "-"])
+    classes = {"d", "i", "s"}
     counts = {cls: {"tp": 0, "tn": 0, "fp": 0, "fn": 0} for cls in classes}
     for true, pred in zip(true_csid, pred_csid):
         for cls in classes:
@@ -191,10 +109,7 @@ def score_fine_sub_del_ins(can: str, ref: str, hyp: str) -> dict:
     label_map = {"s": "sub", "i": "ins", "d": "del", "c": "cor"}
     flat_counts = {}
     for cls in sorted(classes):
-        if cls == "-" or cls == "c":
-            continue
         label = label_map.get(cls, cls)
-        # for metric in ["tp", "tn", "fp", "fn"]:
         for metric in ["tp", "fp", "fn"]:
             flat_counts[f"{label}_{metric}"] = counts[cls][metric]
 

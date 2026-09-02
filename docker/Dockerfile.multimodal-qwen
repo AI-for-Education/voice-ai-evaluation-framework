@@ -1,4 +1,4 @@
-# Qwen2.5-Omni text-only runtime for a future >=40 GiB GPU host.
+# Qwen2.5-Omni text-only inference image for a future >=40 GiB GPU host.
 # It can be built on the current machine, but the adapter intentionally blocks
 # its 16 GiB GPU before loading weights.
 FROM voice-ai-evaluation-framework-asr:latest

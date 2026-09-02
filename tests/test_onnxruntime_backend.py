@@ -10,8 +10,9 @@ from inference.profile import parse_profile
 def _profile():
     return parse_profile(
         {
-            "id": "exp41-onnx-test",
-            "framework": "onnxruntime",
+            "profile_schema_version": 2,
+            "inference_setup_id": "exp41-onnx-test",
+            "inference_library": "onnxruntime",
             "adapter": "ctc",
             "artifact": "bundle/model.onnx",
             "language": "sw",
@@ -63,11 +64,13 @@ def test_backend_turns_batch_failure_into_one_error_per_input(monkeypatch) -> No
     )
 
     def fail(_audio):
-        raise RuntimeError("runtime failed")
+        raise RuntimeError("inference engine failed")
 
     monkeypatch.setattr(backend, "_decode", fail)
     rows = backend.transcribe_batch(["one.wav", "two.wav"])
 
     assert len(rows) == 2
     assert all(row.pred_text == "" for row in rows)
-    assert all(row.error == "inference_failed: runtime failed" for row in rows)
+    assert all(
+        row.error == "inference_failed: inference engine failed" for row in rows
+    )

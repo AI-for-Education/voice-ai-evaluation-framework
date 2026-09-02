@@ -1,91 +1,67 @@
-#!/usr/bin/env python3
-"""Command-line entry point for running the simplified EGRA evaluation pipeline."""
+"""Inactive reporting candidates preserved from the former evaluation.py.
+
+These functions are version-controlled migration material, not an alternative
+evaluation entrypoint. The supported evaluation flow remains
+eval_pipeline2.py and run_eval2.sh. Nothing in the active pipeline imports
+this module.
+
+Before promoting a function from this file:
+
+1. reconcile its metric definitions and output schema with the current
+   representation-aware evaluator;
+2. remove duplicated calculations in favour of egra_eval2.evaluate and
+   egra_eval2.metrics where possible;
+3. add focused tests and document the resulting output; and
+4. move the promoted function into a normal active module.
+
+The section headings deliberately make each independently useful candidate
+easy to find without preserving the obsolete combined command-line workflow.
+"""
 
 from __future__ import annotations
 
-import argparse
-import json
+from collections import Counter
 import logging
+from pathlib import Path
 import re
 import string
-from collections import Counter
-from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List
 
-import pandas as pd
 import numpy as np
-from sklearn.metrics import precision_recall_fscore_support
-import matplotlib.pyplot as plt
-from datetime import datetime
+import pandas as pd
 
-# Import the local dp_align module provided in the context
-try:
-    import dp_align
-except ImportError:
-    raise ImportError("Could not import 'dp_align'. Ensure dp_align.py is in the script directory.")
-
-from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
-from egra_eval2.linking import add_audio_keys, attach_hypotheses
-from egra_eval2.nemo_manifest import load_many_manifests
-from egra_eval2.passage_merge import attach_passage_texts
-from egra_eval2.textgrid_io import add_refs_from_textgrid
-from egra_eval2.run_eval import evaluate
-from egra_eval2.phonological import compute_phonological_metrics_row
-from egra_eval2.manifest_builder import (
-    build_reference_manifest_dataframe,
-    write_manifest_jsonl,
-)
-from egra_eval2.manifest_cleaner import clean_manifest_jsonl
-from egra_eval2.summarize import (
-    aggregate_phonological_metrics,
+from egra_eval2 import dp_align
+from egra_eval2.reporting_candidate_support import (
+    _annotate_audio_categories,
     summary_for_pair,
     summary_per_speaker,
     summary_per_speaker_macro,
     summary_per_speaker_subcategory,
     summary_phonological_by_category,
-    _annotate_audio_categories,
 )
 
-CONSONANTS = set("bcdfghjklmnpqrstvwxyz")
+try:
+    from sklearn.metrics import precision_recall_fscore_support
+except ImportError:  # Optional dependency retained only for migration candidates.
+    def precision_recall_fscore_support(*args, **kwargs):
+        raise RuntimeError(
+            "This migration candidate requires scikit-learn. "
+            "Promote and declare the dependency before using it in production."
+        )
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:  # Plotting remains best-effort in the preserved report.
+    plt = None
 
 
-def _append_a_to_consonant_letters(text: str) -> str:
-    if text is None or pd.isna(text):
-        return text
-    parts = re.split(r"(\s+)", str(text))
-
-    def transform_token(token: str) -> str:
-        cleaned = re.sub(r"[^a-z]", "", token.lower())
-        if not cleaned:
-            return token
-        first_char = cleaned[0]
-        if first_char in CONSONANTS:
-            if token.lower().endswith("a"):
-                return token
-            return f"{token}a"
-        return token
-
-    return "".join(
-        transform_token(part) if idx % 2 == 0 else part
-        for idx, part in enumerate(parts)
-    )
-
-
-def adjust_letter_canonical_text(df: pd.DataFrame, logger: logging.Logger) -> pd.DataFrame:
-    if "audio_type" not in df.columns or "canonical_text" not in df.columns:
-        return df
-    mask = df["audio_type"].astype(str).str.contains("letter", case=False, na=False)
-    if not mask.any():
-        return df
-    logger.info("Adjusting canonical texts for %d letter row(s).", int(mask.sum()))
-    out = df.copy()
-    out.loc[mask, "canonical_text"] = out.loc[mask, "canonical_text"].apply(_append_a_to_consonant_letters)
-    return out
-
-# ---------------------------------------------------------------------------
-# Advanced Metrics & Alignment Logic (dp_align Integration)
-# ---------------------------------------------------------------------------
-
+# ============================================================================
+# SUPPORTING LEGACY CALCULATIONS
+#
+# Kept only because the reporting candidates below depend on their historical
+# column names and alignment semantics. Prefer the active scoring modules when
+# migrating a report.
+# ============================================================================
 def get_csid_sequence(canonical_text: str, other_text: str) -> List[str]:
     """
     Uses dp_align to generate the sequence of 'c', 's', 'i', 'd' tags.
@@ -258,279 +234,10 @@ def calculate_advanced_metrics(df: pd.DataFrame, logger: logging.Logger) -> pd.D
 # Logging / CLI
 # ---------------------------------------------------------------------------
 
-def setup_logger() -> logging.Logger:
-    logger = logging.getLogger("egra_eval")
-    logger.setLevel(logging.INFO)
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter(
-            "[%(asctime)s] [%(levelname)s] %(name)s: %(message)s",
-            datefmt="%H:%M:%S",
-        ))
-        logger.addHandler(handler)
-    return logger
 
-
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Run EGRA evaluation using canonical/ASR data.")
-    p.add_argument("--dataset_root", required=True, help="Root folder containing 0_Audio/2_TextGrid and Student_* CSVs.")
-    p.add_argument("--output_root", default=None, help="Directory where outputs will be written (detailed CSV + summary subfolders). If omitted, defaults to input_output_data/output/experiments/exp_{YYYY_MM_DD_hh_mm_ss}.")
-
-    p.add_argument("--egra_csv", default=None)
-    p.add_argument("--meta_csv", default=None)
-    p.add_argument(
-        "--passages_csv",
-        required=True,
-        help="CSV mapping passage numbers to canonical text (e.g. oral_passages.csv).",
-    )
-    p.add_argument("--nemo_manifest", action="append", default=None, help="Path(s) to NeMo JSON manifests with ASR hypotheses (can be supplied multiple times).")
-    p.add_argument("--manifest_audio_key", default="audio_filepath")
-    p.add_argument("--manifest_hyp_key", default="pred_text")
-    p.add_argument("--manifest_can_key", default=None)
-    p.add_argument("--match_on", choices=["stem", "name", "path"], default="stem", help="How to join manifest HYPs to EGRA rows.")
-
-    p.add_argument("--out_csv", default=None)
-    p.add_argument("--summary_can_ref_dir", default=None)
-    p.add_argument("--summary_can_hyp_dir", default=None)
-    p.add_argument("--summary_ref_hyp_dir", default=None)
-
-    # Optional manifest-oriented workflow (PR2 style, opt-in).
-    p.add_argument(
-        "--build_manifest_first",
-        action="store_true",
-        help="Build and clean a reference manifest before scoring, then load it for REF/CAN texts.",
-    )
-    p.add_argument(
-        "--manifest_only",
-        action="store_true",
-        help="Build/clean manifest and exit without running evaluation.",
-    )
-    p.add_argument(
-        "--manifest_in",
-        default=None,
-        help="Path to an existing cleaned manifest JSONL to load for REF/CAN attachment.",
-    )
-    p.add_argument(
-        "--manifest_raw_out",
-        default=None,
-        help="Path for the raw built reference manifest JSONL. Defaults to <output_root>/manifests/ref_manifest.raw.jsonl.",
-    )
-    p.add_argument(
-        "--manifest_clean_out",
-        default=None,
-        help="Path for the cleaned manifest JSONL. Defaults to <output_root>/manifests/ref_manifest.clean.jsonl.",
-    )
-    p.add_argument(
-        "--manifest_clean_drop_empty",
-        action="store_true",
-        help="Drop rows with empty cleaned text from the generated manifest.",
-    )
-    p.add_argument(
-        "--manifest_path_prefix",
-        default=None,
-        help="Optional path prefix to rewrite audio paths in built manifest (e.g., /io/input/<dataset>).",
-    )
-    p.add_argument(
-        "--manifest_text_key",
-        default="ref_text",
-        help="Text key to load from cleaned manifest into REF (default: ref_text).",
-    )
-    return p.parse_args()
-
-# ---------------------------------------------------------------------------
-# IO resolution / outputs
-# ---------------------------------------------------------------------------
-
-def resolve_inputs(args: argparse.Namespace, logger: logging.Logger):
-    """Resolve dataset layout and output dirs; mutate args with defaults."""
-    try:
-        layout = resolve_dataset_paths(args.dataset_root)
-    except DatasetLayoutError as exc:
-        raise SystemExit(str(exc)) from exc
-
-    # If output_root not provided, default under repository input_output_data/output/experiments
-    if not args.output_root:
-        default_dir = Path("input_output_data") / "output" / "experiments" / f"exp_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}"
-        logger.info("No --output_root supplied; using default: %s", default_dir)
-        args.output_root = str(default_dir)
-
-    # Fill inferred CSVs
-    args.egra_csv = args.egra_csv or str(layout.canonical_csv)
-    args.meta_csv = args.meta_csv or str(layout.metadata_csv)
-    passages_path = Path(args.passages_csv)
-    if not passages_path.exists():
-        raise SystemExit(f"--passages_csv file not found: {passages_path}")
-
-    # Resolve manifest(s)
-    if not args.nemo_manifest:
-        candidate = layout.root / "nemo_asr_output" / "transcriptions.jsonl"
-        if candidate.exists():
-            args.nemo_manifest = [str(candidate)]
-        else:
-            raise SystemExit(
-                "No --nemo_manifest supplied and no default manifest found at "
-                f"{candidate}. Run inference first or provide the path explicitly."
-            )
-
-    logger.info(
-        "Dataset root resolved: audio=%s | textgrids=%s | canonical=%s | metadata=%s",
-        layout.audio_root, layout.textgrid_root, layout.canonical_csv, layout.metadata_csv,
-    )
-
-    # Prepare outputs
-    base = Path(args.output_root)
-    base.mkdir(parents=True, exist_ok=True)
-
-    args.out_csv = args.out_csv or str(base / "egra_eval_detailed.csv")
-    args.summary_can_ref_dir = args.summary_can_ref_dir or str(base / "can_ref")
-    args.summary_can_hyp_dir = args.summary_can_hyp_dir or str(base / "can_hyp")
-    args.summary_ref_hyp_dir = args.summary_ref_hyp_dir or str(base / "ref_hyp")
-
-    summary_dirs: Dict[str, Path] = {
-        "can_ref": Path(args.summary_can_ref_dir),
-        "can_hyp": Path(args.summary_can_hyp_dir),
-        "ref_hyp": Path(args.summary_ref_hyp_dir),
-    }
-    return layout, summary_dirs
-
-
-def ensure_output_dirs(out_csv: str, summary_dirs: Dict[str, Path]) -> None:
-    Path(out_csv).parent.mkdir(parents=True, exist_ok=True)
-    for d in summary_dirs.values():
-        d.mkdir(parents=True, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# Data loading / writing
-# ---------------------------------------------------------------------------
-
-def load_manifest(args: argparse.Namespace, logger: logging.Logger) -> pd.DataFrame:
-    if not args.nemo_manifest:
-        return pd.DataFrame()
-    logger.info("Loading %d NeMo manifest(s)...", len(args.nemo_manifest))
-    df = load_many_manifests(
-        args.nemo_manifest,
-        audio_key=args.manifest_audio_key,
-        hyp_key=args.manifest_hyp_key,
-        can_key=args.manifest_can_key,
-    )
-    logger.info("Loaded manifest rows: %d", len(df))
-    return df
-
-
-def load_text_manifest(
-    path: str,
-    *,
-    audio_key: str = "audio_filepath",
-    text_key: str = "ref_text",
-    can_key: str = "can_text",
-    logger: logging.Logger | None = None,
-) -> pd.DataFrame:
-    logger = logger or logging.getLogger("egra_eval")
-    rows: List[Dict[str, Any]] = []
-    bad = 0
-    total = 0
-
-    in_path = Path(path)
-    if not in_path.exists():
-        logger.warning("Text manifest does not exist: %s", in_path)
-        return pd.DataFrame()
-
-    with in_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            s = line.strip()
-            if not s:
-                continue
-            total += 1
-            try:
-                obj = json.loads(s)
-            except json.JSONDecodeError:
-                bad += 1
-                continue
-            if not isinstance(obj, dict):
-                bad += 1
-                continue
-            audio = str(obj.get(audio_key, "") or "").strip()
-            if not audio:
-                bad += 1
-                continue
-            p = Path(audio)
-            rows.append(
-                {
-                    "audio_path": audio,
-                    "audio_name": p.name,
-                    "audio_stem": p.stem,
-                    "manifest_text": str(obj.get(text_key, "") or ""),
-                    "manifest_can_text": str(obj.get(can_key, "") or ""),
-                }
-            )
-
-    out = pd.DataFrame(rows)
-    logger.info(
-        "Loaded text manifest %s | rows=%d | total_lines=%d | skipped=%d",
-        in_path,
-        len(out),
-        total,
-        bad,
-    )
-    return out
-
-
-def attach_texts_from_manifest(
-    df_egra: pd.DataFrame,
-    text_manifest_df: pd.DataFrame,
-    *,
-    match_on: str,
-    logger: logging.Logger,
-) -> pd.DataFrame:
-    if text_manifest_df is None or text_manifest_df.empty:
-        logger.warning("Text manifest is empty; keeping existing canonical/ref columns.")
-        return df_egra
-
-    left = df_egra.copy()
-    right = text_manifest_df.copy()
-
-    if match_on == "stem":
-        key = "audio_stem"
-    elif match_on == "name":
-        key = "audio_name"
-    elif match_on == "path":
-        key = "audio_path_csv"
-        right = right.rename(columns={"audio_path": "audio_path_csv"})
-    else:
-        raise ValueError("match_on must be one of: 'stem' | 'name' | 'path'")
-
-    merged = left.merge(
-        right[[key, "manifest_text", "manifest_can_text"]].drop_duplicates(subset=[key], keep="last"),
-        on=key,
-        how="left",
-    )
-
-    if "ref_text" not in merged.columns:
-        merged["ref_text"] = ""
-    if "canonical_text" not in merged.columns:
-        merged["canonical_text"] = ""
-
-    merged["ref_text"] = merged["manifest_text"].where(
-        merged["manifest_text"].astype(str).str.strip() != "",
-        merged["ref_text"],
-    )
-    merged["canonical_text"] = merged["manifest_can_text"].where(
-        merged["manifest_can_text"].astype(str).str.strip() != "",
-        merged["canonical_text"],
-    )
-
-    attached_ref = (merged["manifest_text"].astype(str).str.strip() != "").sum()
-    attached_can = (merged["manifest_can_text"].astype(str).str.strip() != "").sum()
-    logger.info(
-        "Attached texts from cleaned manifest (key=%s): ref_rows=%d, can_rows=%d",
-        key,
-        int(attached_ref),
-        int(attached_can),
-    )
-
-    merged.drop(columns=["manifest_text", "manifest_can_text"], inplace=True)
-    return merged
-
+# ============================================================================
+# MIGRATION CANDIDATE 1: detailed evaluation CSV shaping
+# ============================================================================
 
 def write_detailed_csv(df: pd.DataFrame, path: str, logger: logging.Logger) -> None:
     rename_map = {
@@ -643,6 +350,10 @@ def write_detailed_csv(df: pd.DataFrame, path: str, logger: logging.Logger) -> N
     logger.info("Wrote detailed results -> %s (rows: %d)", path, len(df))
 
 
+# ============================================================================
+# MIGRATION CANDIDATE 2: per-learner and category summary CSVs
+# ============================================================================
+
 def write_summary_csvs(df: pd.DataFrame, summary_dirs: Dict[str, Path], logger: logging.Logger) -> List[Path]:
     written: List[Path] = []
 
@@ -679,6 +390,10 @@ def write_summary_csvs(df: pd.DataFrame, summary_dirs: Dict[str, Path], logger: 
 
     return written
 
+
+# ============================================================================
+# MIGRATION CANDIDATE 3: extended text summary and diagnostic plots
+# ============================================================================
 
 def write_text_summary(df: pd.DataFrame, out_csv: str, logger: logging.Logger) -> Path:
     summary_path = Path(out_csv).parent / "egra_eval_summary.txt"
@@ -977,6 +692,10 @@ def write_text_summary(df: pd.DataFrame, out_csv: str, logger: logging.Logger) -
     return summary_path
 
 
+# ============================================================================
+# MIGRATION CANDIDATE 4: human-readable T1 metric walkthrough
+# ============================================================================
+
 def write_t1_example_walkthrough(df: pd.DataFrame, out_csv: str, logger: logging.Logger) -> Path:
     """
     Produce a step-by-step walkthrough for Task T1 (passage_passage) using a real row.
@@ -1145,162 +864,3 @@ def write_t1_example_walkthrough(df: pd.DataFrame, out_csv: str, logger: logging
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-
-def main() -> None:
-    logger = setup_logger()
-    args = parse_args()
-
-    layout, summary_dirs = resolve_inputs(args, logger)
-    ensure_output_dirs(args.out_csv, summary_dirs)
-
-    logger.info("Starting EGRA evaluation pipeline")
-    logger.info(
-        "EGRA CSV: %s | META CSV: %s | Passages CSV: %s | TextGrid root: %s | Manifest(s): %s",
-        args.egra_csv, args.meta_csv, args.passages_csv, layout.textgrid_root, args.nemo_manifest,
-    )
-
-    df_egra = pd.read_csv(args.egra_csv)
-    df_meta = pd.read_csv(args.meta_csv)
-    logger.info("Loaded EGRA rows: %d | META rows: %d", len(df_egra), len(df_meta))
-
-    # Base enrichment shared by both default (PR1) and optional manifest-oriented (PR2) workflows.
-    df_egra = adjust_letter_canonical_text(df_egra, logger)
-    df_egra = add_audio_keys(df_egra, audio_col="audio_file")
-
-    manifest_df = load_manifest(args, logger)
-    df_egra = attach_hypotheses(df_egra, manifest_df, match_on=args.match_on)
-    df_egra = add_refs_from_textgrid(
-        df_egra,
-        base_dir=str(layout.textgrid_root),
-        textgrid_col="textgrid",
-        tier_name="child",
-        logger=logger,
-    )
-    df_egra = attach_passage_texts(df_egra, args.passages_csv, logger=logger)
-
-    manifest_to_load: Path | None = Path(args.manifest_in) if args.manifest_in else None
-
-    # Optional PR2 workflow: build manifest -> clean manifest.
-    if args.build_manifest_first:
-        manifests_dir = Path(args.output_root) / "manifests"
-        manifests_dir.mkdir(parents=True, exist_ok=True)
-        raw_manifest_path = Path(args.manifest_raw_out) if args.manifest_raw_out else manifests_dir / "ref_manifest.raw.jsonl"
-        clean_manifest_path = Path(args.manifest_clean_out) if args.manifest_clean_out else manifests_dir / "ref_manifest.clean.jsonl"
-
-        logger.info("Stage A: building reference manifest -> %s", raw_manifest_path)
-        built_manifest_df = build_reference_manifest_dataframe(
-            df_egra,
-            dataset_root=layout.root,
-            audio_root=layout.audio_root,
-            path_prefix=args.manifest_path_prefix,
-            logger=logger,
-        )
-        write_manifest_jsonl(built_manifest_df, raw_manifest_path)
-
-        logger.info(
-            "Stage B: cleaning manifest (train_aggressive, drop_empty=%s) -> %s",
-            args.manifest_clean_drop_empty,
-            clean_manifest_path,
-        )
-        clean_stats = clean_manifest_jsonl(
-            input_path=raw_manifest_path,
-            output_path=clean_manifest_path,
-            drop_empty_text=args.manifest_clean_drop_empty,
-            text_input_key="ref_text",
-            text_output_key=args.manifest_text_key,
-        )
-        logger.info(
-            "Manifest cleaning stats: total=%d, bad_json=%d, written=%d, dropped_empty=%d",
-            clean_stats["total_lines"],
-            clean_stats["bad_json_skipped"],
-            clean_stats["written_lines"],
-            clean_stats["dropped_empty_text"],
-        )
-
-        manifest_to_load = clean_manifest_path
-
-    if args.manifest_only:
-        if not args.build_manifest_first:
-            raise SystemExit("--manifest_only requires --build_manifest_first.")
-        logger.info("Manifest-only mode enabled; skipping evaluation stage.")
-        print("Raw manifest:", raw_manifest_path)
-        print("Clean manifest:", clean_manifest_path)
-        return
-
-    if manifest_to_load is not None:
-        if not manifest_to_load.exists():
-            raise SystemExit(f"--manifest_in file not found: {manifest_to_load}")
-        logger.info("Stage C: loading cleaned manifest for REF/CAN attachment -> %s", manifest_to_load)
-        text_manifest_df = load_text_manifest(
-            str(manifest_to_load),
-            text_key=args.manifest_text_key,
-            can_key="can_text",
-            logger=logger,
-        )
-        df_egra = attach_texts_from_manifest(
-            df_egra,
-            text_manifest_df,
-            match_on=args.match_on,
-            logger=logger,
-        )
-
-    # Run Basic Evaluation (Jiwer based counts for standard WER/ACC)
-    df_results = evaluate(df_egra, df_meta)
-
-    # Ensure per-row WER_ref_hyp is calculated (not just global)
-    if not "WER_ref_hyp" in df_results.columns:
-        # Calculate WER_ref_hyp per row if missing
-        def calc_wer_ref_hyp(row):
-            try:
-                s = float(row.get("S_ref_hyp", 0))
-                d = float(row.get("D_ref_hyp", 0))
-                i = float(row.get("I_ref_hyp", 0))
-                n = float(row.get("N_ref_hyp", 0))
-                return (s + d + i) / n if n > 0 else float("nan")
-            except Exception:
-                return float("nan")
-        df_results["WER_ref_hyp"] = df_results.apply(calc_wer_ref_hyp, axis=1)
-
-    # --- NEW: Run Advanced Metrics using dp_align ---
-    df_results = calculate_advanced_metrics(df_results, logger)
-    # ------------------------------------------------
-
-    # --- NEW: Compute Phonological Metrics (TP/FP/FN for S/D/I) ---
-    logger.info("Computing phonological metrics (TP/FP/FN for substitutions, deletions, insertions)...")
-    phonological_metrics = df_results.apply(compute_phonological_metrics_row, axis=1)
-    phonological_df = pd.DataFrame(list(phonological_metrics))
-    df_results = pd.concat([df_results, phonological_df], axis=1)
-    # ----------------------------------------------------------------
-
-    # Ensure all relevant columns are present for output
-    required_cols = [
-        "learner_id","audio_type","audio_file","CAN","REF","HYP","WER_can_ref","ACC_can_ref","S_can_ref","D_can_ref","I_can_ref","C_can_ref","N_can_ref",
-        "WER_can_hyp","ACC_can_hyp","S_can_hyp","D_can_hyp","I_can_hyp","C_can_hyp","N_can_hyp",
-        "WER_ref_hyp","ACC_ref_hyp","S_ref_hyp","D_ref_hyp","I_ref_hyp","C_ref_hyp","N_ref_hyp",
-        "EGRA-COR","EGRA-ACC","ASR-EGRA-COR","ASR-EGRA-ACC","MAE_EGRA_COR","ASR_WER","has_hyp","gender","child_grade","child_age","region","council","ward",
-        "Kiswahili_lang1","Kigogo_lang2","Kirangi_lang3","Kihaya_lang4","Runyambo_lang5","Kihangaza_lang6","English_lang7",
-        "ACC_can_ref_norm_for_mae","ACC_can_hyp_norm_for_mae","MAE_EGRA_ACC","Bias_Baseline_MAE",
-        "S_Precision","S_Recall","S_F1","I_Precision","I_Recall","I_F1","D_Precision","D_Recall","D_F1",
-        "Mistakes_Precision","Mistakes_Recall","Mistakes_F1","Mistake_Error_Rate (MER)",
-        "S_TP","S_FP","S_FN","S_Precision","S_Recall","S_F1","D_TP","D_FP","D_FN","D_Precision","D_Recall","D_F1",
-        "I_TP","I_FP","I_FN","I_Precision","I_Recall","I_F1"
-    ]
-    for col in required_cols:
-        if col not in df_results.columns:
-            df_results[col] = float("nan")
-
-    write_detailed_csv(df_results, args.out_csv, logger)
-    summary_txt_path = write_text_summary(df_results, args.out_csv, logger)
-    t1_walkthrough_path = write_t1_example_walkthrough(df_results, args.out_csv, logger)
-    summary_paths = write_summary_csvs(df_results, summary_dirs, logger)
-
-    print("Detailed results:", args.out_csv)
-    print("Summary text:", summary_txt_path)
-    print("T1 walkthrough:", t1_walkthrough_path)
-    print("Summary directories/files:")
-    for path in summary_paths:
-        print("  ", path)
-
-
-if __name__ == "__main__":
-    main()

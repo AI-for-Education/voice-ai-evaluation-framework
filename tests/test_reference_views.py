@@ -205,7 +205,7 @@ def test_manifest_pipeline_prepares_cache_for_all_declared_model_outputs(
     transcript.touch()
     (transcript_dir / "run_metadata.json").write_text(
         json.dumps(
-            {"profile": {"output_units": "phoneme", "language": "sw"}}
+            {"inference_profile": {"output_units": "phoneme", "language": "sw"}}
         ),
         encoding="utf-8",
     )
@@ -222,8 +222,8 @@ def test_manifest_pipeline_prepares_cache_for_all_declared_model_outputs(
 
     prepare_ipa_reference_view(
         dataset_root=tmp_path,
-        manifest_base_in="base.jsonl",
-        asr_manifests=[str(transcript)],
+        audio_manifest="base.jsonl",
+        prediction_manifests=[str(transcript)],
         logger=logging.getLogger("test_reference_views"),
     )
 
@@ -236,14 +236,14 @@ def test_manifest_pipeline_prepares_cache_for_all_declared_model_outputs(
     ]
 
     (transcript_dir / "run_metadata.json").write_text(
-        json.dumps({"profile": {"output_units": "orthographic"}}),
+        json.dumps({"inference_profile": {"output_units": "orthographic"}}),
         encoding="utf-8",
     )
     calls.clear()
     prepare_ipa_reference_view(
         dataset_root=tmp_path,
-        manifest_base_in="base.jsonl",
-        asr_manifests=[str(transcript)],
+        audio_manifest="base.jsonl",
+        prediction_manifests=[str(transcript)],
         logger=logging.getLogger("test_reference_views"),
     )
     assert calls == [

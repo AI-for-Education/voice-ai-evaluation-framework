@@ -1,4 +1,4 @@
-# Paza Phi-4 runtime. Model weights remain bind-mounted from the host.
+# Paza Phi-4 execution image. Model weights remain bind-mounted from the host.
 # Keep this separate from the Transformers 5.x Gemma/current-ASR image.
 FROM voice-ai-evaluation-framework-asr:latest
 

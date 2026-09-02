@@ -6,6 +6,8 @@ inference/transformers/models/**
 !inference/transformers/models/.gitkeep
 inference/sherpa_onnx/models/**
 !inference/sherpa_onnx/models/.gitkeep
+inference/torch/models/**
+!inference/torch/models/.gitkeep
 inference/onnxruntime/models/**
 !inference/onnxruntime/models/.gitkeep
 inference/multimodal/models/**
@@ -25,6 +27,7 @@ input_output_data/input/**
 *.ckpt
 
 # Temporary / generated files
+/outputs/
 inference/nemo/tmp/**
 !inference/nemo/tmp/.gitkeep
 inference/transformers/tmp/**
@@ -32,6 +35,7 @@ inference/transformers/tmp/**
 docker-compose.override.yml
 *.egg-info/
 __pycache__/
+.ipynb_checkpoints/
 .venv*/
 .pytest_cache/
 venv/
@@ -46,7 +50,7 @@ input_output_data/archive
 .DS_Store
 Thumbs.db
 
-# Private working notes (kept locally, not versioned)
+# Local-development documentation stays in the workspace; only the shared
+# vocabulary contract is versioned.
 /docs/*
-!/docs/core-inference-workflow.md
 !/docs/vocabulary.md

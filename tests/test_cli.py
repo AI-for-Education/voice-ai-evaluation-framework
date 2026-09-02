@@ -13,10 +13,11 @@ from inference.onnxruntime import infer as onnxruntime_infer
 from inference.multimodal import infer as multimodal_infer
 from inference.profile import ProfileError
 from inference.sherpa_onnx import infer as sherpa_infer
+from inference.torch import infer as torch_infer
 from inference.transformers import infer as transformers_infer
 
 
-def _load_eval_manifest(path: Path, **overrides: object) -> pd.DataFrame:
+def _load_eval_manifest(path: Path) -> pd.DataFrame:
     from eval_pipeline2 import load_eval_manifest
 
     return load_eval_manifest(
@@ -26,7 +27,6 @@ def _load_eval_manifest(path: Path, **overrides: object) -> pd.DataFrame:
         can_key="can_text",
         hyp_key="pred_text",
         logger=logging.getLogger("test"),
-        **overrides,
     )
 
 
@@ -37,10 +37,11 @@ def _load_eval_manifest(path: Path, **overrides: object) -> pd.DataFrame:
         nemo_infer.parse_profile_args,
         onnxruntime_infer.parse_args,
         sherpa_infer.parse_args,
+        torch_infer.parse_args,
         transformers_infer.parse_args,
     ],
 )
-def test_framework_launchers_require_model_config(parse_args) -> None:
+def test_inference_launchers_require_inference_profile(parse_args) -> None:
     with pytest.raises(SystemExit) as exc_info:
         parse_args(
             [
@@ -60,13 +61,14 @@ def test_framework_launchers_require_model_config(parse_args) -> None:
         nemo_infer.parse_profile_args,
         onnxruntime_infer.parse_args,
         sherpa_infer.parse_args,
+        torch_infer.parse_args,
         transformers_infer.parse_args,
     ],
 )
-def test_framework_launchers_default_to_standard_output_base(parse_args) -> None:
+def test_inference_launchers_default_to_standard_output_base(parse_args) -> None:
     args = parse_args(
         [
-            "--model_config",
+            "--inference_profile",
             "profile.yaml",
             "--root_audio_dir",
             "audio",
@@ -78,6 +80,58 @@ def test_framework_launchers_default_to_standard_output_base(parse_args) -> None
     assert args.smoke_test is True
 
 
+def test_sherpa_launcher_provider_override_defaults_to_auto() -> None:
+    common = [
+        "--inference_profile",
+        "profile.yaml",
+        "--root_audio_dir",
+        "audio",
+    ]
+
+    assert sherpa_infer.parse_args(common).provider == "auto"
+    assert sherpa_infer.parse_args([*common, "--provider", "cpu"]).provider == "cpu"
+
+
+@pytest.mark.parametrize(
+    ("provider_args", "expected_provider"),
+    [([], None), (["--provider", "cpu"], "cpu")],
+)
+def test_sherpa_launcher_forwards_provider_override(
+    monkeypatch,
+    tmp_path: Path,
+    provider_args: list[str],
+    expected_provider: str | None,
+) -> None:
+    observed: dict[str, object] = {}
+    profile = object()
+
+    monkeypatch.setattr(sherpa_infer, "load_profile", lambda *args, **kwargs: profile)
+    monkeypatch.setattr(sherpa_infer, "resolve_model_path", lambda loaded: tmp_path)
+
+    def fake_backend(loaded_profile, model_path, **kwargs):
+        observed.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(sherpa_infer, "SherpaOnnxOnlineTransducerBackend", fake_backend)
+    monkeypatch.setattr(
+        sherpa_infer,
+        "run_backend",
+        lambda **kwargs: tmp_path / "transcripts",
+    )
+
+    sherpa_infer.main(
+        [
+            "--inference_profile",
+            "profile.yaml",
+            "--root_audio_dir",
+            "audio",
+            *provider_args,
+        ]
+    )
+
+    assert observed["provider"] == expected_provider
+
+
 @pytest.mark.parametrize(
     "module",
     [
@@ -85,6 +139,7 @@ def test_framework_launchers_default_to_standard_output_base(parse_args) -> None
         nemo_infer,
         onnxruntime_infer,
         sherpa_infer,
+        torch_infer,
         transformers_infer,
     ],
 )
@@ -100,7 +155,7 @@ def test_invalid_batch_size_fails_before_profile_or_model_loading(
     with pytest.raises(SystemExit, match="--batch_size must be at least 1"):
         module.main(
             [
-                "--model_config",
+                "--inference_profile",
                 "profile.yaml",
                 "--root_audio_dir",
                 "audio",
@@ -112,7 +167,7 @@ def test_invalid_batch_size_fails_before_profile_or_model_loading(
         )
 
 
-def test_transformers_launcher_rejects_wrong_framework_before_backend_creation(
+def test_transformers_launcher_rejects_wrong_library_before_backend_creation(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -120,10 +175,14 @@ def test_transformers_launcher_rejects_wrong_framework_before_backend_creation(
     profile_path.write_text(
         yaml.safe_dump(
             {
-                "id": "wrong-framework",
-                "framework": "nemo",
+                "profile_schema_version": 2,
+                "inference_setup_id": "wrong-library",
+                "inference_library": "nemo",
                 "adapter": "nemo",
                 "artifact": "model.nemo",
+                "language": "sw",
+                "task": "transcribe",
+                "output_units": "orthographic",
                 "decoding": {"strategy": "ctc"},
             }
         ),
@@ -138,7 +197,7 @@ def test_transformers_launcher_rejects_wrong_framework_before_backend_creation(
     with pytest.raises(SystemExit, match="expected 'transformers'"):
         transformers_infer.main(
             [
-                "--model_config",
+                "--inference_profile",
                 str(profile_path),
                 "--root_audio_dir",
                 str(tmp_path),
@@ -156,10 +215,14 @@ def test_nemo_launcher_rejects_missing_artifact_before_backend_creation(
     profile_path.write_text(
         yaml.safe_dump(
             {
-                "id": "missing-model",
-                "framework": "nemo",
+                "profile_schema_version": 2,
+                "inference_setup_id": "missing-model",
+                "inference_library": "nemo",
                 "adapter": "nemo",
                 "artifact": "missing.nemo",
+                "language": "sw",
+                "task": "transcribe",
+                "output_units": "orthographic",
                 "decoding": {"strategy": "ctc"},
             }
         ),
@@ -174,7 +237,7 @@ def test_nemo_launcher_rejects_missing_artifact_before_backend_creation(
     with pytest.raises(SystemExit, match="Model artifact not found"):
         nemo_infer.main(
             [
-                "--model_config",
+                "--inference_profile",
                 str(profile_path),
                 "--root_audio_dir",
                 str(tmp_path),
@@ -226,18 +289,8 @@ def test_evaluation_output_defaults_follow_transcript_run() -> None:
     ) == smoke_evaluation
 
 
-@pytest.mark.parametrize(
-    ("audio_flag", "prediction_flag"),
-    [
-        ("--audio_manifest", "--prediction_manifest"),
-        ("--manifest_base_in", "--asr_manifest"),
-        ("--manifest_base_in", "--nemo_manifest"),
-    ],
-)
-def test_manifest_pipeline_accepts_preferred_and_legacy_manifest_names(
+def test_manifest_pipeline_accepts_current_manifest_names(
     monkeypatch: pytest.MonkeyPatch,
-    audio_flag: str,
-    prediction_flag: str,
 ) -> None:
     from manifest_pipeline import parse_args
 
@@ -248,17 +301,17 @@ def test_manifest_pipeline_accepts_preferred_and_legacy_manifest_names(
             "manifest_pipeline.py",
             "--dataset_root",
             "dataset",
-            audio_flag,
+            "--audio_manifest",
             "segments.jsonl",
-            prediction_flag,
+            "--prediction_manifest",
             "predictions.jsonl",
         ],
     )
 
     args = parse_args()
 
-    assert args.manifest_base_in == "segments.jsonl"
-    assert args.asr_manifest == ["predictions.jsonl"]
+    assert args.audio_manifest == "segments.jsonl"
+    assert args.prediction_manifests == ["predictions.jsonl"]
 
 
 
@@ -308,20 +361,6 @@ def test_eval_manifest_rejects_corrupted_reference_text(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit, match="Reference integrity check failed"):
         _load_eval_manifest(manifest)
-
-
-def test_eval_manifest_legacy_recovery_preserves_corrupted_reference(
-    tmp_path: Path,
-) -> None:
-    manifest = tmp_path / "legacy_corrupt.jsonl"
-    manifest.write_text(
-        '{"audio_filepath":"a.wav","ref_text":"safi","can_text":"ng\ufffdambo","pred_text":"hyp"}\n',
-        encoding="utf-8",
-    )
-
-    result = _load_eval_manifest(manifest, validate_references=False)
-
-    assert result.loc[0, "manifest_can_text"] == "ng\ufffdambo"
 
 
 def test_eval_manifest_allows_ipa_and_corrupted_model_output(tmp_path: Path) -> None:

@@ -287,7 +287,6 @@ class TransformersSpeechSeq2SeqBackend:
     def metadata(self) -> dict[str, Any]:
         return {
             "inference_library": "transformers",
-            "framework": "transformers",  # Deprecated metadata alias.
             "adapter": "speech_seq2seq",
             "model_class": self._model_class,
             "processor_class": self._processor_class,

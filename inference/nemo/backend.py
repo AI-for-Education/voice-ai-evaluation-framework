@@ -40,8 +40,8 @@ TARGET_SR = 16000
 DEFAULT_TMP = Path(__file__).resolve().parent / "tmp"
 
 
-def require_nemo_runtime() -> None:
-    """Fail with an actionable message when invoked outside the NeMo image."""
+def require_nemo_dependencies() -> None:
+    """Fail with an actionable message when NeMo dependencies are unavailable."""
     if torch is None or ASRModel is None:
         raise RuntimeError(
             "NeMo inference requires torch and nemo_toolkit[asr]. "
@@ -57,7 +57,7 @@ def write_wav(path: str, audio: np.ndarray, sr: int) -> None:
 
 def configure_decoding_strategy(model: Any, decoder_type: str = "ctc") -> None:
     """Preserve the existing CTC/RNNT/hybrid decoder selection semantics."""
-    require_nemo_runtime()
+    require_nemo_dependencies()
 
     if EncDecCTCModel is not None and isinstance(model, EncDecCTCModel):
         if decoder_type == "rnnt":
@@ -70,7 +70,7 @@ def configure_decoding_strategy(model: Any, decoder_type: str = "ctc") -> None:
     if EncDecHybridRNNTCTCModel is not None and isinstance(
         model, EncDecHybridRNNTCTCModel
     ):
-        if CTCDecodingConfig is None:  # Defensive; covered by require_nemo_runtime().
+        if CTCDecodingConfig is None:  # Defensive; covered by the dependency check.
             raise RuntimeError("NeMo CTC decoding support is unavailable")
         ctc_cfg = CTCDecodingConfig()
         model.change_decoding_strategy(ctc_cfg, decoder_type=decoder_type)
@@ -114,7 +114,7 @@ def build_override_cfg(model: Any, batch_size: int, num_workers: int | None):
 
 def transcribe_batches(model: Any, files: list[str], override_cfg: Any) -> list[str]:
     """Transcribe files in NeMo-sized batches and normalize hypothesis objects."""
-    require_nemo_runtime()
+    require_nemo_dependencies()
     assert torch is not None
 
     hypotheses: list[str] = []
@@ -137,9 +137,9 @@ def transcribe_batches(model: Any, files: list[str], override_cfg: Any) -> list[
     return hypotheses
 
 
-def configure_runtime(cpu_workers: int) -> tuple[str, int]:
-    """Select the legacy CUDA/CPU runtime and thread settings."""
-    require_nemo_runtime()
+def configure_execution(cpu_workers: int) -> tuple[str, int]:
+    """Select the CUDA/CPU device and thread settings."""
+    require_nemo_dependencies()
     assert torch is not None
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -182,7 +182,7 @@ class NemoBackend:
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
 
-        require_nemo_runtime()
+        require_nemo_dependencies()
         assert ASRModel is not None
 
         self.profile = profile
@@ -190,7 +190,7 @@ class NemoBackend:
         self.tmp_dir = Path(tmp_dir)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.debug = debug
-        self.device, num_workers = configure_runtime(cpu_workers)
+        self.device, num_workers = configure_execution(cpu_workers)
         self.num_workers = num_workers
 
         self.model = ASRModel.restore_from(
@@ -327,7 +327,6 @@ class NemoBackend:
     def metadata(self) -> dict[str, Any]:
         return {
             "inference_library": "nemo",
-            "framework": "nemo",  # Deprecated metadata alias.
             "adapter": "nemo",
             "model_class": self._model_class,
             "device": self.device,

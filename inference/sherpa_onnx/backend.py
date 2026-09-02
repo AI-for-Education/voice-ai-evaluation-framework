@@ -17,14 +17,24 @@ SAMPLE_RATE = 16000
 TAIL_PADDING_SECONDS = 0.66
 
 
-def _one_model_file(model_path: Path, prefix: str) -> Path:
-    matches = sorted(
-        path for path in model_path.glob(f"{prefix}*.onnx") if ".int8." not in path.name
-    )
+def _one_model_file(
+    model_path: Path,
+    prefix: str,
+    *,
+    artifact_format: str,
+    artifact_precision: str,
+) -> Path:
+    suffix = f".{artifact_format}"
+    candidates = model_path.glob(f"{prefix}*{suffix}")
+    if artifact_precision == "int8":
+        matches = sorted(path for path in candidates if ".int8." in path.name)
+    else:
+        matches = sorted(path for path in candidates if ".int8." not in path.name)
     if len(matches) != 1:
         names = ", ".join(path.name for path in matches) or "none"
         raise RuntimeError(
-            f"Expected exactly one float {prefix}*.onnx file in {model_path}; "
+            "Expected exactly one "
+            f"{artifact_precision} {prefix}*{suffix} file in {model_path}; "
             f"found: {names}"
         )
     return matches[0]
@@ -67,9 +77,38 @@ class SherpaOnnxOnlineTransducerBackend:
                 f"Sherpa-ONNX model directory not found: {self.model_path}"
             )
 
-        self.encoder_path = _one_model_file(self.model_path, "encoder-")
-        self.decoder_path = _one_model_file(self.model_path, "decoder-")
-        self.joiner_path = _one_model_file(self.model_path, "joiner-")
+        self.artifact_format = (
+            "onnx"
+            if profile.loader.artifact_format == "auto"
+            else profile.loader.artifact_format
+        )
+        self.artifact_precision = (
+            "fp32"
+            if profile.loader.artifact_precision == "auto"
+            else profile.loader.artifact_precision
+        )
+        if self.artifact_format not in {"onnx", "ort"}:
+            raise ProfileError(
+                "Sherpa-ONNX requires loader.artifact_format to be onnx or ort"
+            )
+        if self.artifact_precision not in {"fp32", "int8"}:
+            raise ProfileError(
+                "Sherpa-ONNX requires loader.artifact_precision to be fp32 or int8"
+            )
+
+        selector = {
+            "artifact_format": self.artifact_format,
+            "artifact_precision": self.artifact_precision,
+        }
+        self.encoder_path = _one_model_file(
+            self.model_path, "encoder-", **selector
+        )
+        self.decoder_path = _one_model_file(
+            self.model_path, "decoder-", **selector
+        )
+        self.joiner_path = _one_model_file(
+            self.model_path, "joiner-", **selector
+        )
         self.tokens_path = self.model_path / "tokens.txt"
         if not self.tokens_path.is_file():
             raise RuntimeError(
@@ -204,12 +243,13 @@ class SherpaOnnxOnlineTransducerBackend:
             version = str(getattr(self._sherpa_onnx, "__version__", "unknown"))
         payload = {
             "inference_library": "sherpa_onnx",
-            "framework": "sherpa_onnx",  # Deprecated metadata alias.
             "adapter": "online_transducer",
             "device": "cuda:0" if self.provider == "cuda" else "cpu",
             "provider": self.provider,
             "sampling_rate": SAMPLE_RATE,
             "decoding_strategy": self.decoding_method,
+            "artifact_format": self.artifact_format,
+            "artifact_precision": self.artifact_precision,
             "num_threads": self.num_threads,
             "recognizer_call": {
                 "api": "sherpa_onnx.OnlineRecognizer.from_transducer",
@@ -220,6 +260,12 @@ class SherpaOnnxOnlineTransducerBackend:
             "decoder": self.decoder_path.name,
             "joiner": self.joiner_path.name,
             "tokens": self.tokens_path.name,
+            "selected_artifact_files": [
+                self.encoder_path.name,
+                self.decoder_path.name,
+                self.joiner_path.name,
+                self.tokens_path.name,
+            ],
         }
         if self.max_active_paths is not None:
             payload["max_active_paths"] = self.max_active_paths

@@ -1,3 +1,10 @@
+"""Inactive summary helpers for reporting migration candidates only.
+
+Nothing in the supported evaluation flow imports this module. These helpers
+remain version-controlled solely so selected legacy reports can be reconciled
+with the current evaluator before promotion.
+"""
+
 from __future__ import annotations
 
 import math

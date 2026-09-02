@@ -99,10 +99,6 @@ def execution_environment_from_environment(
     }
 
 
-# Deprecated compatibility alias used by v1 readers and external callers.
-runtime_launch_context_from_environment = execution_environment_from_environment
-
-
 def load_contract_registry(path: str | Path = CONTRACT_REGISTRY_PATH) -> dict[str, Any]:
     registry_path = Path(path)
     payload = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -125,31 +121,6 @@ def _mapping(value: Any) -> dict[str, Any]:
 
 def _contract_refs(value: Any) -> dict[str, Any] | None:
     raw = _mapping(value)
-    if raw.get("schema_version") == 1:
-        inference = _mapping(raw.get("inference"))
-        required = ("artifact", "frontend", "runtime", "chunking")
-        if not isinstance(raw.get("audio_preparation"), str):
-            return None
-        if any(not isinstance(inference.get(key), str) for key in required):
-            return None
-        if not isinstance(raw.get("evaluation"), str):
-            return None
-        if not isinstance(raw.get("runtime_resolution"), str):
-            return None
-        return {
-            "schema_version": 2,
-            "audio_preparation": raw["audio_preparation"],
-            "model_artifact": inference["artifact"],
-            "input_processing": inference["frontend"],
-            "execution_stack": inference["runtime"],
-            "chunking": inference["chunking"],
-            "evaluation": raw["evaluation"],
-            "observation_policy": (
-                "observed_effective_values_v2"
-                if raw["runtime_resolution"] == "observed_effective_values_v1"
-                else raw["runtime_resolution"]
-            ),
-        }
     if raw.get("schema_version") != 2:
         return None
     required = (
@@ -167,110 +138,8 @@ def _contract_refs(value: Any) -> dict[str, Any] | None:
 
 
 def infer_contract_references(profile: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Recover contract references from an embedded legacy profile when possible."""
-    explicit = _contract_refs(profile.get("pipeline_contract"))
-    if explicit is not None:
-        return explicit
-
-    inference_library = profile.get(
-        "inference_library", profile.get("framework")
-    )
-    adapter = profile.get("adapter")
-    artifact = str(profile.get("artifact") or "")
-    profile_id = str(
-        profile.get("inference_setup_id", profile.get("id")) or ""
-    )
-
-    if (inference_library, adapter) == ("onnxruntime", "android_ctc"):
-        execution_stack = (
-            "onnxruntime_shared_image"
-            if "published-int8-android-frontend" in profile_id
-            else "android_pinned_runtime_proxy"
-        )
-        return _references(
-            audio="android_pcm16_linear_16khz",
-            artifact="published_deployment_artifact",
-            frontend="deployment_parity_android_frontend",
-            execution_stack=execution_stack,
-            chunking="none",
-        )
-    if (inference_library, adapter) == ("onnxruntime", "ctc"):
-        artifact_role = (
-            "published_deployment_artifact"
-            if "swahili-exp41-ctc-android/" in artifact
-            else "project_export"
-        )
-        return _references(
-            audio="shared_soundfile_librosa_16khz",
-            artifact=artifact_role,
-            frontend="compatible_onnx_asr_nemo_frontend",
-            execution_stack="onnxruntime_shared_image",
-            chunking="none",
-        )
-    if (inference_library, adapter) == ("nemo", "nemo"):
-        return _references(
-            audio="shared_soundfile_librosa_16khz",
-            artifact="canonical_checkpoint",
-            frontend="canonical_nemo_model_preprocessor",
-            execution_stack="nemo_image",
-            chunking="none",
-        )
-    if (inference_library, adapter) == ("sherpa_onnx", "online_transducer"):
-        return _references(
-            audio="shared_soundfile_librosa_16khz",
-            artifact="canonical_checkpoint",
-            frontend="canonical_sherpa_online_frontend",
-            execution_stack="sherpa_onnx_image",
-            chunking="none",
-        )
-    if inference_library == "transformers" and adapter in {"ctc", "speech_seq2seq"}:
-        chunking = "none"
-        if _mapping(profile.get("decoding")).get("long_form"):
-            chunking = "whisper_timestamp_long_form"
-        elif profile.get("audio"):
-            chunking = "profile_sequential_zero_overlap"
-        return _references(
-            audio="shared_soundfile_librosa_16khz",
-            artifact="canonical_checkpoint",
-            frontend="canonical_transformers_auto_processor",
-            execution_stack="shared_transformers_image",
-            chunking=chunking,
-        )
-    if inference_library == "multimodal" and adapter in {
-        "gemma4_audio",
-        "phi4_audio",
-        "qwen_omni_audio",
-    }:
-        return _references(
-            audio="shared_soundfile_librosa_16khz",
-            artifact="canonical_checkpoint",
-            frontend="canonical_transformers_auto_processor",
-            execution_stack="multimodal_image",
-            chunking=(
-                "profile_sequential_zero_overlap" if profile.get("audio") else "none"
-            ),
-        )
-    return None
-
-
-def _references(
-    *,
-    audio: str,
-    artifact: str,
-    frontend: str,
-    execution_stack: str,
-    chunking: str,
-) -> dict[str, Any]:
-    return {
-        "schema_version": 2,
-        "audio_preparation": audio,
-        "model_artifact": artifact,
-        "input_processing": frontend,
-        "execution_stack": execution_stack,
-        "chunking": chunking,
-        "evaluation": "direct_pred_text_by_output_units",
-        "observation_policy": "observed_effective_values_v2",
-    }
+    """Read schema-v2 contract references from an inference profile."""
+    return _contract_refs(profile.get("pipeline_contract"))
 
 
 def resolve_contract_references(
@@ -371,27 +240,27 @@ def _first(metadata: Mapping[str, Any], *keys: str) -> Any:
     for key in keys:
         if metadata.get(key) is not None:
             return metadata[key]
-    return not_available("The backend did not record this effective value")
+    return not_available("The inference adapter did not record this effective value")
 
 
 def _frontend_configuration_identity(
-    model_identity: Mapping[str, Any] | None,
-    backend: Mapping[str, Any],
+    model_artifact_identity: Mapping[str, Any] | None,
+    adapter_metadata: Mapping[str, Any],
 ) -> Any:
-    identity = _mapping(model_identity)
+    identity = _mapping(model_artifact_identity)
     configuration_files = identity.get("configuration_files")
     if configuration_files:
         return configuration_files
-    if backend.get("frontend_reference_revision") is not None:
+    if adapter_metadata.get("frontend_reference_revision") is not None:
         return {
-            "implementation": backend.get("frontend"),
-            "reference_revision": backend["frontend_reference_revision"],
+            "implementation": adapter_metadata.get("frontend"),
+            "reference_revision": adapter_metadata["frontend_reference_revision"],
         }
-    if backend.get("onnx_asr_version") is not None:
+    if adapter_metadata.get("onnx_asr_version") is not None:
         return {
             "implementation": "onnx-asr",
-            "version": backend["onnx_asr_version"],
-            "source": "runtime_package",
+            "version": adapter_metadata["onnx_asr_version"],
+            "source": "execution_stack_package",
         }
     if identity.get("kind") == "file" and identity.get("sha256"):
         return {
@@ -440,74 +309,95 @@ def _resampling_observation(
     }
 
 
-def _chunking_effective(profile: Mapping[str, Any], backend: Mapping[str, Any]) -> Any:
-    if backend.get("chunking") is not None:
-        return {"configuration": backend["chunking"], "statistics": backend.get("chunking_stats", not_available("Chunk statistics were not recorded"))}
-    if backend.get("long_audio") is not None:
+def _chunking_effective(
+    profile: Mapping[str, Any],
+    adapter_metadata: Mapping[str, Any],
+) -> Any:
+    if adapter_metadata.get("chunking") is not None:
         return {
-            "configuration": backend["long_audio"],
+            "configuration": adapter_metadata["chunking"],
+            "statistics": adapter_metadata.get(
+                "chunking_stats",
+                not_available("Chunk statistics were not recorded"),
+            ),
+        }
+    if adapter_metadata.get("long_audio") is not None:
+        return {
+            "configuration": adapter_metadata["long_audio"],
             "statistics": {
-                key: backend[key]
+                key: adapter_metadata[key]
                 for key in ("files_seen", "long_audio_files", "chunks_generated")
-                if key in backend
+                if key in adapter_metadata
             },
         }
     decoding = _mapping(profile.get("decoding"))
     if decoding.get("long_form") is not None:
-        return {"configuration": decoding["long_form"], "statistics": not_available("Historical chunk statistics were not recorded")}
+        return {
+            "configuration": decoding["long_form"],
+            "statistics": not_available(
+                "Historical chunk statistics were not recorded"
+            ),
+        }
     if profile.get("audio") is not None:
-        return {"configuration": profile["audio"], "statistics": not_available("Historical chunk statistics were not recorded")}
+        return {
+            "configuration": profile["audio"],
+            "statistics": not_available(
+                "Historical chunk statistics were not recorded"
+            ),
+        }
     return {"configuration": "none"}
 
 
 def build_pipeline_provenance(
     *,
     profile: Mapping[str, Any],
-    backend: Mapping[str, Any],
-    execution_stack: Mapping[str, Any] | None = None,
-    runtime: Mapping[str, Any] | None = None,
-    model_identity: Mapping[str, Any] | None,
+    adapter_metadata: Mapping[str, Any],
+    execution_stack: Mapping[str, Any],
+    model_artifact_identity: Mapping[str, Any] | None,
     profile_link: Mapping[str, Any] | None,
     run_metadata_path: str | Path,
     transcriptions_path: str | Path,
     input_audio_summary: Mapping[str, Any] | None,
     recording_mode: str,
+    published_transcriptions_path: str | Path | None = None,
     limitations: Iterable[str] = (),
 ) -> dict[str, Any]:
     references = infer_contract_references(profile)
     resolved = resolve_contract_references(references)
-    backend_payload = dict(backend)
-    if execution_stack is not None and runtime is not None:
-        if dict(execution_stack) != dict(runtime):
-            raise ValueError("Conflicting execution_stack and deprecated runtime")
-    runtime_payload = dict(execution_stack or runtime or {})
+    adapter_payload = dict(adapter_metadata)
+    execution_stack_payload = dict(execution_stack)
     transcript_path = Path(transcriptions_path)
+    published_transcript_path = Path(
+        published_transcriptions_path or transcriptions_path
+    )
     run_path = Path(run_metadata_path)
     profile_output_units = profile.get("output_units", "orthographic")
-    inference_library = profile.get(
-        "inference_library", profile.get("framework")
-    )
+    inference_library = profile.get("inference_library")
     valid_views = (
         ["ipa"] if profile_output_units == "phoneme" else ["orthographic", "ipa"]
     )
     processor_config_identity = _frontend_configuration_identity(
-        model_identity, backend_payload
+        model_artifact_identity,
+        adapter_payload,
     )
     selected_frontend = {
-        "processor_class": _first(backend_payload, "processor_class", "frontend"),
+        "processor_class": _first(adapter_payload, "processor_class", "frontend"),
         "feature_configuration_identity": processor_config_identity,
         "target_sample_rate_hz": _first(
-            backend_payload, "sampling_rate", "sample_rate", "target_sample_rate"
+            adapter_payload, "sampling_rate", "sample_rate", "target_sample_rate"
         ),
     }
     decoder_strategy = _first(
-        backend_payload,
+        adapter_payload,
         "effective_decoder_type",
         "decoding_strategy",
         "strategy",
         "decoder_type",
     )
-    if isinstance(decoder_strategy, dict) and decoder_strategy.get("status") == "not_available":
+    if (
+        isinstance(decoder_strategy, dict)
+        and decoder_strategy.get("status") == "not_available"
+    ):
         profile_strategy = _mapping(profile.get("decoding")).get("strategy")
         if isinstance(profile_strategy, str):
             decoder_strategy = {
@@ -517,8 +407,8 @@ def build_pipeline_provenance(
     decoder_observed = {
         "profile": _mapping(profile.get("decoding")),
         "effective_strategy": decoder_strategy,
-        "backend_call": _first(
-            backend_payload,
+        "adapter_call": _first(
+            adapter_payload,
             "effective_decoding_config",
             "generation",
             "recognizer_call",
@@ -526,10 +416,19 @@ def build_pipeline_provenance(
         ),
     }
     links = {
-        "profile": dict(profile_link) if profile_link else not_available("The source profile path or identity was not recorded"),
+        "profile": (
+            dict(profile_link)
+            if profile_link
+            else not_available(
+                "The source profile path or identity was not recorded"
+            )
+        ),
         "contract_registry": contract_registry_identity(),
         "run_metadata": {"path": str(run_path), "relation": "self"},
-        "transcriptions": file_identity(transcript_path),
+        "transcriptions": {
+            **file_identity(transcript_path),
+            "path": str(published_transcript_path),
+        },
         "expected_evaluation_root": str(
             run_path.parent.parent.parent / "evaluations" / run_path.parent.name
             if run_path.parent.parent.name == "transcripts"
@@ -554,8 +453,8 @@ def build_pipeline_provenance(
     model_artifact = {
         "contract": resolved["model_artifact"],
         "identity": (
-            dict(model_identity)
-            if model_identity
+            dict(model_artifact_identity)
+            if model_artifact_identity
             else not_available("The selected model-artifact identity was not recorded")
         ),
     }
@@ -565,24 +464,24 @@ def build_pipeline_provenance(
     }
     chunking = {
         "contract": resolved["chunking"],
-        "observed": _chunking_effective(profile, backend_payload),
+        "observed": _chunking_effective(profile, adapter_payload),
     }
     execution_stack_observed = {
         "runner": {
-            "argv": runtime_payload.get(
+            "argv": execution_stack_payload.get(
                 "argv", not_available("Invocation arguments were not recorded")
             ),
-            "adapter": backend_payload.get(
+            "adapter": adapter_payload.get(
                 "adapter", not_available("Inference adapter was not recorded")
             ),
-            "batch_size": runtime_payload.get(
+            "batch_size": execution_stack_payload.get(
                 "batch_size", not_available("Batch size was not recorded")
             ),
         },
         "inference_library": {
             "name": inference_library
             or not_available("Inference library was not recorded"),
-            "packages": runtime_payload.get(
+            "packages": execution_stack_payload.get(
                 "packages", not_available("Package versions were not recorded")
             ),
         },
@@ -591,46 +490,51 @@ def build_pipeline_provenance(
                 "inference_engine",
                 not_available("Inference engine was not recorded"),
             ),
-            "provider": backend_payload.get(
+            "provider": adapter_payload.get(
                 "provider",
                 (
                     not_applicable(
                         "This inference adapter records a device rather than an execution provider"
                     )
-                    if inference_library in {"transformers", "multimodal", "nemo"}
+                    if inference_library in {
+                        "transformers",
+                        "multimodal",
+                        "nemo",
+                        "torch",
+                    }
                     else not_available("Execution provider was not recorded")
                 ),
             ),
             "versions": {
                 key: value
-                for key, value in backend_payload.items()
+                for key, value in adapter_payload.items()
                 if "version" in key and value is not None
             }
             or not_available("Engine or adapter versions were not recorded"),
         },
         "environment": {
-            "launch": runtime_payload.get(
+            "launch": execution_stack_payload.get(
                 "launch_context",
                 not_available("Container launch identity was not recorded"),
             ),
-            "python": runtime_payload.get(
+            "python": execution_stack_payload.get(
                 "python", not_available("Python version was not recorded")
             ),
-            "platform": runtime_payload.get(
+            "platform": execution_stack_payload.get(
                 "platform", not_available("Operating platform was not recorded")
             ),
         },
         "hardware": {
-            "device": backend_payload.get(
+            "device": adapter_payload.get(
                 "device", not_available("Device was not recorded")
             ),
-            "requested_torch_dtype": backend_payload.get(
+            "requested_torch_dtype": adapter_payload.get(
                 "requested_torch_dtype",
                 _mapping(profile.get("loader")).get(
                     "torch_dtype", not_available("Requested dtype was not recorded")
                 ),
             ),
-            "effective_torch_dtype": backend_payload.get(
+            "effective_torch_dtype": adapter_payload.get(
                 "effective_torch_dtype",
                 (
                     not_applicable("This setup does not execute a PyTorch model")
@@ -638,27 +542,28 @@ def build_pipeline_provenance(
                     else not_available("Effective dtype was not recorded")
                 ),
             ),
-            "attention_implementation": backend_payload.get(
+            "attention_implementation": adapter_payload.get(
                 "attention_implementation",
                 (
                     not_applicable(
                         "This setup has no Transformers attention implementation"
                     )
-                    if inference_library in {"nemo", "onnxruntime", "sherpa_onnx"}
+                    if inference_library
+                    in {"nemo", "onnxruntime", "sherpa_onnx", "torch"}
                     else not_available(
                         "Effective attention implementation was not recorded"
                     )
                 ),
             ),
             "threads_or_workers": {
-                key: backend_payload[key]
+                key: adapter_payload[key]
                 for key in (
                     "num_threads",
                     "num_workers",
                     "decoder_workers",
                     "batch_size_required",
                 )
-                if key in backend_payload
+                if key in adapter_payload
             }
             or not_available("Thread or worker controls were not recorded"),
         },
@@ -680,45 +585,6 @@ def build_pipeline_provenance(
             "compatible_scoring_views": valid_views,
         },
     }
-    legacy_runtime_observed = {
-        "launch_context": execution_stack_observed["environment"]["launch"],
-        "python": execution_stack_observed["environment"]["python"],
-        "platform": execution_stack_observed["environment"]["platform"],
-        "batch_size": execution_stack_observed["runner"]["batch_size"],
-        "packages": execution_stack_observed["inference_library"]["packages"],
-        "argv": execution_stack_observed["runner"]["argv"],
-        "device": execution_stack_observed["hardware"]["device"],
-        "provider": execution_stack_observed["inference_engine"]["provider"],
-        "requested_torch_dtype": execution_stack_observed["hardware"][
-            "requested_torch_dtype"
-        ],
-        "effective_torch_dtype": execution_stack_observed["hardware"][
-            "effective_torch_dtype"
-        ],
-        "attention_implementation": execution_stack_observed["hardware"][
-            "attention_implementation"
-        ],
-        "threads_or_workers": execution_stack_observed["hardware"][
-            "threads_or_workers"
-        ],
-        "backend_versions": execution_stack_observed["inference_engine"][
-            "versions"
-        ],
-    }
-    legacy_stages = {
-        "audio_preparation": audio_preparation,
-        "inference": {
-            "artifact": model_artifact,
-            "frontend": input_processing,
-            "runtime": {
-                "contract": resolved["execution_stack"],
-                "observed": legacy_runtime_observed,
-            },
-            "chunking": chunking,
-            "decoder": decoder_observed,
-        },
-        "evaluation": evaluation,
-    }
     return {
         "schema_version": PIPELINE_PROVENANCE_SCHEMA_VERSION,
         "recording": {
@@ -736,7 +602,6 @@ def build_pipeline_provenance(
                 canonical_json_sha256(references) if references else None
             ),
             "observation_policy": resolved["observation_policy"],
-            "runtime_resolution": resolved["observation_policy"],
         },
         "model_artifact": model_artifact,
         "inference_setup": {
@@ -748,11 +613,6 @@ def build_pipeline_provenance(
         "execution_stack": execution_stack,
         "evaluation": evaluation,
         "links": links,
-        "stages": legacy_stages,
-        "deprecated_aliases": {
-            "stages": "Use model_artifact, inference_setup, execution_stack, and evaluation",
-            "contract.runtime_resolution": "contract.observation_policy",
-        },
     }
 
 
@@ -794,13 +654,7 @@ def build_evaluation_provenance(
             pass
     run_pipeline = _mapping(run_metadata.get("pipeline_provenance"))
     run_evaluation_stage = _mapping(run_pipeline.get("evaluation"))
-    if not run_evaluation_stage:
-        run_evaluation_stage = _mapping(
-            _mapping(run_pipeline.get("stages")).get("evaluation")
-        )
-    profile = _mapping(
-        run_metadata.get("inference_profile", run_metadata.get("profile"))
-    )
+    profile = _mapping(run_metadata.get("inference_profile"))
     source_run_link: Any
     if run_metadata_path is not None and run_metadata_path.is_file():
         source_run_link = file_identity(run_metadata_path)
@@ -808,26 +662,18 @@ def build_evaluation_provenance(
         source_run_link = not_available("No standard source run metadata was found")
     profile_link = _mapping(_mapping(run_pipeline.get("links")).get("profile"))
     if not profile_link:
-        recorded_profile = run_metadata.get(
-            "inference_profile", run_metadata.get("profile")
-        )
+        recorded_profile = run_metadata.get("inference_profile")
         if isinstance(recorded_profile, dict):
             profile_link = {
                 "embedded_profile_sha256": canonical_json_sha256(recorded_profile),
                 "recorded_path": run_metadata.get(
                     "inference_profile_path",
-                    run_metadata.get(
-                        "profile_path",
-                        not_available("The source profile path was not recorded"),
-                    ),
+                    not_available("The source profile path was not recorded"),
                 ),
                 "recorded_identity": run_metadata.get(
                     "inference_profile_identity",
-                    run_metadata.get(
-                        "profile_identity",
-                        not_available(
-                            "The source profile file identity was not recorded"
-                        ),
+                    not_available(
+                        "The source profile file identity was not recorded"
                     ),
                 ),
             }
@@ -858,8 +704,8 @@ def build_evaluation_provenance(
             "output_namespace": namespace,
             "hypothesis_field": "pred_text",
             "text_postprocessing": "none",
-            "representation_compatible": requested_representation != "legacy_orthographic",
-            "reference_integrity_enforced": requested_representation != "legacy_orthographic",
+            "representation_compatible": True,
+            "reference_integrity_enforced": True,
         },
         "links": {
             "source_manifest": file_identity(manifest_in),

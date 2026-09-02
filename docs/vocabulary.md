@@ -28,7 +28,7 @@ Use the following terms only when their detail helps the reader:
 | **Inference library** | The model-facing library called by an adapter, such as Transformers, NeMo, Sherpa-ONNX, or `onnx-asr`. |
 | **Inference engine** | The lower-level system that executes model operations, such as PyTorch or ONNX Runtime. |
 | **Execution environment** | The process/container, operating system, packages, and hardware available to a run. |
-| **Inference adapter** | Repository code that translates the common run interface into calls to a particular inference library. Internal `Backend` class names are compatibility names for these adapters. |
+| **Inference adapter** | Repository code that translates the common run interface into calls to a particular inference library. Internal classes implementing that interface may retain `Backend` in their names. |
 
 The **execution stack** groups the runner, inference library, inference engine,
 execution environment, and hardware. Ordinary guides should name the actual
@@ -49,10 +49,9 @@ environment; it is not contained inside a model artifact.
   compiled for a known set of models/operators to reduce deployment size. Both
   are ONNX Runtime.
 
-## Schema v2 and compatibility names
+## Current metadata names
 
-New inference profiles use `inference_setup_id`, `inference_library`, and one
-`execution_stack` contract reference. New run metadata uses the same terms.
-During migration, readers also accept v1 `id`, `framework`, and `runtime`
-fields, and new outputs dual-write marked v1 aliases. The aliases describe
-compatibility only; they are not preferred vocabulary.
+Inference profiles use `inference_setup_id`, `inference_library`, and one
+`execution_stack` contract reference. Run metadata uses the same terms. These
+current profile-driven routes accept and emit schema version 2 only. The sole
+legacy interface is the root/original NeMo `infer.py --model` workflow.

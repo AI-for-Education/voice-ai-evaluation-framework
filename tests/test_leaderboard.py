@@ -13,7 +13,7 @@ from inference.profile import load_profile
 def _write_run_metadata(
     output_root: Path,
     run_name: str,
-    model_id: str,
+    inference_setup_id: str,
     output_units: str,
 ) -> None:
     destination = output_root / "transcripts" / run_name
@@ -21,11 +21,26 @@ def _write_run_metadata(
     (destination / "run_metadata.json").write_text(
         json.dumps(
             {
-                "profile": {
-                    "id": model_id,
-                    "framework": "transformers",
+                "metadata_schema_version": 2,
+                "inference_setup_id": inference_setup_id,
+                "run_id": run_name,
+                "inference_profile": {
+                    "profile_schema_version": 2,
+                    "inference_setup_id": inference_setup_id,
+                    "inference_library": "transformers",
                     "adapter": "ctc",
+                    "artifact": "model",
                     "output_units": output_units,
+                    "pipeline_contract": {
+                        "schema_version": 2,
+                        "audio_preparation": "shared_soundfile_librosa_16khz",
+                        "model_artifact": "canonical_checkpoint",
+                        "input_processing": "canonical_transformers_auto_processor",
+                        "execution_stack": "shared_transformers_image",
+                        "chunking": "none",
+                        "evaluation": "direct_pred_text_by_output_units",
+                        "observation_policy": "observed_effective_values_v2",
+                    },
                     "decoding": {
                         "strategy": "greedy",
                         "generation_kwargs": {},
@@ -53,6 +68,7 @@ def _write_evaluation(
     (destination / "evaluation_metadata.json").write_text(
         json.dumps(
             {
+                "schema_version": 2,
                 "status": "complete",
                 "completed_at": completed_at,
                 "effective_scoring_units": scoring_units,
@@ -126,9 +142,6 @@ def test_builds_separate_wer_and_per_leaderboards(tmp_path: Path) -> None:
     assert orthographic["inference_setup_id"].tolist() == [
         "orthographic-model"
     ]
-    assert orthographic["model_id"].tolist() == orthographic[
-        "inference_setup_id"
-    ].tolist()
     assert orthographic["model_group"].tolist() == ["Uncatalogued"]
     assert orthographic["model_name"].tolist() == ["orthographic-model"]
     assert orthographic["model_variant"].tolist() == ["Unspecified"]
@@ -140,22 +153,19 @@ def test_builds_separate_wer_and_per_leaderboards(tmp_path: Path) -> None:
     assert orthographic["architecture_evidence_status"].tolist() == [
         "not_available"
     ]
-    assert orthographic["platform"].tolist() == ["transformers"]
+    assert orthographic["execution_target"].tolist() == ["transformers"]
     assert orthographic["decoding"].tolist() == ["greedy"]
-    assert orthographic["artifact_context"].tolist() == [
+    assert orthographic["model_artifact"].tolist() == [
         "canonical model-owner artifact"
     ]
-    assert orthographic["preprocessing_context"].tolist() == [
-        "shared SoundFile/librosa 16 kHz audio; canonical Transformers frontend; no chunking"
+    assert orthographic["inference_setup"].tolist() == [
+        "shared SoundFile/librosa 16 kHz audio; canonical Transformers frontend; no chunking; greedy decoding"
     ]
     assert orthographic["execution_stack"].tolist() == [
         "Transformers → PyTorch → shared ASR container"
     ]
-    assert orthographic["runtime_context"].tolist() == orthographic[
-        "execution_stack"
-    ].tolist()
     assert orthographic["context_evidence"].tolist() == [
-        "profile-derived contract fallback"
+        "inference-profile contract"
     ]
     assert orthographic["evaluation_status"].tolist() == ["scored"]
     assert orthographic["model_label"].tolist() == [
@@ -172,7 +182,10 @@ def test_builds_separate_wer_and_per_leaderboards(tmp_path: Path) -> None:
     assert "global_per" not in orthographic.columns
 
     ipa = frames["ipa"]
-    assert ipa["model_id"].tolist() == ["orthographic-model", "phoneme-model"]
+    assert ipa["inference_setup_id"].tolist() == [
+        "orthographic-model",
+        "phoneme-model",
+    ]
     assert ipa["global_per"].tolist() == [10.0, 15.0]
     assert ipa["hypothesis_route"].tolist() == [
         "orthographic -> IPA (Africa G2P)",
@@ -215,11 +228,13 @@ def test_excludes_retired_bookbot_orthographic_models(tmp_path: Path) -> None:
     output_root = tmp_path / "output"
     evaluations_root = output_root / "evaluations"
 
-    for index, model_id in enumerate(
+    for index, inference_setup_id in enumerate(
         ("bookbot-orthographic-ctc", "bookbot-orthographic-ctc-5gram")
     ):
         run_name = f"retired_{index}"
-        _write_run_metadata(output_root, run_name, model_id, "orthographic")
+        _write_run_metadata(
+            output_root, run_name, inference_setup_id, "orthographic"
+        )
         _write_evaluation(
             output_root,
             run_name,
@@ -257,10 +272,10 @@ def test_excludes_retired_bookbot_orthographic_models(tmp_path: Path) -> None:
 
     frames, skipped = build_leaderboards(evaluations_root)
 
-    assert frames["orthographic"][["rank", "model_id"]].values.tolist() == [
+    assert frames["orthographic"][["rank", "inference_setup_id"]].values.tolist() == [
         [1, "active-model"]
     ]
-    assert frames["ipa"][["rank", "model_id"]].values.tolist() == [
+    assert frames["ipa"][["rank", "inference_setup_id"]].values.tolist() == [
         [1, "active-model"]
     ]
     assert skipped == {"orthographic": [], "ipa": []}
@@ -269,7 +284,7 @@ def test_excludes_retired_bookbot_orthographic_models(tmp_path: Path) -> None:
 # Run selection and generated outputs
 
 
-def test_latest_completed_run_per_model_is_selected(tmp_path: Path) -> None:
+def test_latest_completed_run_per_inference_setup_is_selected(tmp_path: Path) -> None:
     output_root = tmp_path / "output"
     evaluations_root = output_root / "evaluations"
     for run_name, value, completed_at in (
@@ -287,10 +302,10 @@ def test_latest_completed_run_per_model_is_selected(tmp_path: Path) -> None:
         )
 
     latest, _ = build_leaderboards(evaluations_root)
-    assert latest["orthographic"]["run_name"].tolist() == ["model_new"]
+    assert latest["orthographic"]["run_id"].tolist() == ["model_new"]
 
     all_runs, _ = build_leaderboards(evaluations_root, latest_only=False)
-    assert all_runs["orthographic"]["run_name"].tolist() == [
+    assert all_runs["orthographic"]["run_id"].tolist() == [
         "model_old",
         "model_new",
     ]
@@ -322,7 +337,7 @@ def test_writes_two_csvs_and_generation_metadata(tmp_path: Path) -> None:
 
     assert paths["orthographic"].name == "leaderboard_orthographic.csv"
     assert paths["ipa"].name == "leaderboard_ipa.csv"
-    assert paths["name_mapping"].name == "leaderboard_model_name_mapping.csv"
+    assert paths["presentation"].name == "leaderboard_model_presentation.csv"
     assert paths["metadata"].name == "leaderboard_metadata.json"
     assert all(path.is_file() for path in paths.values())
     orthographic_csv = paths["orthographic"].read_text(encoding="utf-8")
@@ -335,18 +350,16 @@ def test_writes_two_csvs_and_generation_metadata(tmp_path: Path) -> None:
         "model_group · official_model_name [· variant] (decoder)"
     )
     assert metadata["presentation_naming"]["stable_identity_renamed"] is False
-    assert metadata["presentation_naming"]["old_to_new_mapping"]["rows"] == 22
-    assert metadata["presentation_naming"]["registered_inference_setups"] == 21
-    assert metadata["presentation_naming"]["registered_models"] == (
-        metadata["presentation_naming"]["registered_inference_setups"]
-    )
-    mapping = paths["name_mapping"].read_text(encoding="utf-8")
-    assert "previous_inference_setup_id" in mapping.splitlines()[0]
-    assert "previous_model_id" in mapping.splitlines()[0]
-    assert "execution_target" in mapping.splitlines()[0]
-    assert "new_presentation_name" in mapping.splitlines()[0]
-    assert "architecture_evidence_status" in mapping.splitlines()[0]
-    assert "official_model_url" in mapping.splitlines()[0]
+    assert metadata["presentation_naming"]["registered_inference_setups"] == 27
+    # The table includes the uncatalogued evaluated fixture in addition to the
+    # 27 active registry entries.
+    assert metadata["presentation_naming"]["presentation_table"]["rows"] == 28
+    presentation = paths["presentation"].read_text(encoding="utf-8")
+    assert "inference_setup_id" in presentation.splitlines()[0]
+    assert "execution_target" in presentation.splitlines()[0]
+    assert "presentation_name" in presentation.splitlines()[0]
+    assert "architecture_evidence_status" in presentation.splitlines()[0]
+    assert "official_model_url" in presentation.splitlines()[0]
     assert metadata["comparison_factors"]["order"] == [
         "model_artifact",
         "inference_setup",
@@ -355,79 +368,6 @@ def test_writes_two_csvs_and_generation_metadata(tmp_path: Path) -> None:
     assert metadata["leaderboards"]["orthographic"]["ranking_metric"] == "wer"
     assert metadata["leaderboards"]["ipa"]["ranking_metric"] == "per"
     assert skipped == {"orthographic": [], "ipa": []}
-
-
-# Audit and controlled-comparison columns
-
-
-def test_leaderboard_shows_new_and_legacy_postprocessing_audits(
-    tmp_path: Path,
-) -> None:
-    output_root = tmp_path / "output"
-    evaluations_root = output_root / "evaluations"
-
-    _write_run_metadata(output_root, "new_run", "new-model", "orthographic")
-    new_metadata_path = output_root / "transcripts" / "new_run" / "run_metadata.json"
-    new_metadata = json.loads(new_metadata_path.read_text(encoding="utf-8"))
-    new_metadata["output"] = {"results": 10}
-    new_metadata["postprocessing"] = {
-        "stage": "post_decode_pre_evaluation",
-        "method": "hallucination_guard",
-        "scored_text_field": "pred_text",
-        "raw_text_field": "raw_pred_text",
-        "adjusted_results": 3,
-        "total_words_removed": 7,
-    }
-    new_metadata_path.write_text(json.dumps(new_metadata), encoding="utf-8")
-    _write_evaluation(
-        output_root,
-        "new_run",
-        "orthographic",
-        "wer",
-        20.0,
-        "2026-01-02T00:00:00+00:00",
-    )
-
-    _write_run_metadata(output_root, "legacy_run", "legacy-model", "orthographic")
-    legacy_dir = output_root / "transcripts" / "legacy_run"
-    legacy_metadata_path = legacy_dir / "run_metadata.json"
-    legacy_metadata = json.loads(legacy_metadata_path.read_text(encoding="utf-8"))
-    legacy_metadata["backend"] = {"hallucination_guard": {"max_words_per_second": 8.0}}
-    legacy_metadata["output"] = {"results": 2}
-    legacy_metadata_path.write_text(json.dumps(legacy_metadata), encoding="utf-8")
-    (legacy_dir / "transcriptions.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps({"pred_text": "one", "raw_pred_text": "one two three"}),
-                json.dumps({"pred_text": "four"}),
-            ]
-        ),
-        encoding="utf-8",
-    )
-    _write_evaluation(
-        output_root,
-        "legacy_run",
-        "orthographic",
-        "wer",
-        25.0,
-        "2026-01-02T00:00:00+00:00",
-    )
-
-    frames, _ = build_leaderboards(evaluations_root, latest_only=False)
-    frame = frames["orthographic"].set_index("run_name")
-
-    assert frame.loc["new_run", "scored_hypothesis"] == "pred_text (post-processed)"
-    assert frame.loc["new_run", "postprocessing_method"] == "hallucination_guard"
-    assert frame.loc["new_run", "postprocessed_rows"] == 3
-    assert frame.loc["new_run", "postprocessed_rows_pct"] == 30.0
-    assert frame.loc["new_run", "postprocessing_words_removed"] == 7
-    assert frame.loc["new_run", "postprocessing_audit_source"] == "run_metadata"
-
-    assert frame.loc["legacy_run", "postprocessing_method"] == "hallucination_guard"
-    assert frame.loc["legacy_run", "postprocessed_rows"] == 1
-    assert frame.loc["legacy_run", "postprocessed_rows_pct"] == 50.0
-    assert frame.loc["legacy_run", "postprocessing_words_removed"] == 2
-    assert frame.loc["legacy_run", "postprocessing_audit_source"] == "raw_pred_text fallback"
 
 
 def test_controlled_onnx_comparison_keeps_three_factors_separate(
@@ -440,25 +380,25 @@ def test_controlled_onnx_comparison_keeps_three_factors_separate(
             "artifact": "project_export",
             "audio": "shared_soundfile_librosa_16khz",
             "frontend": "compatible_onnx_asr_nemo_frontend",
-            "runtime": "onnxruntime_shared_image",
+            "execution_stack": "onnxruntime_shared_image",
         },
         "100": {
             "artifact": "published_deployment_artifact",
             "audio": "shared_soundfile_librosa_16khz",
             "frontend": "compatible_onnx_asr_nemo_frontend",
-            "runtime": "onnxruntime_shared_image",
+            "execution_stack": "onnxruntime_shared_image",
         },
         "110": {
             "artifact": "published_deployment_artifact",
             "audio": "android_pcm16_linear_16khz",
             "frontend": "deployment_parity_android_frontend",
-            "runtime": "onnxruntime_shared_image",
+            "execution_stack": "onnxruntime_shared_image",
         },
         "111": {
             "artifact": "published_deployment_artifact",
             "audio": "android_pcm16_linear_16khz",
             "frontend": "deployment_parity_android_frontend",
-            "runtime": "android_pinned_runtime_proxy",
+            "execution_stack": "android_pinned_execution_environment_proxy",
         },
     }
     for index, (variant, factors) in enumerate(variants.items()):
@@ -468,32 +408,30 @@ def test_controlled_onnx_comparison_keeps_three_factors_separate(
         )
         metadata_path = output_root / "transcripts" / run_name / "run_metadata.json"
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        metadata["profile"].update(
+        metadata["inference_profile"].update(
             {
-                "framework": "onnxruntime",
+                "inference_library": "onnxruntime",
                 "adapter": "android_ctc" if variant in {"110", "111"} else "ctc",
                 "artifact": "model.onnx",
             }
         )
-        metadata["backend"] = {
+        metadata["inference_adapter"] = {
             "quantization": "int8",
             "onnxruntime_version": "1.23.2" if variant != "111" else None,
             "onnxruntime_version_required": "1.22.0" if variant == "111" else None,
         }
         metadata["pipeline_provenance"] = {
-            "recording": {"mode": "retrospective_recovery"},
+            "recording": {"mode": "run_time"},
             "contract": {
                 "references": {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "audio_preparation": factors["audio"],
-                    "inference": {
-                        "artifact": factors["artifact"],
-                        "frontend": factors["frontend"],
-                        "runtime": factors["runtime"],
-                        "chunking": "none",
-                    },
+                    "model_artifact": factors["artifact"],
+                    "input_processing": factors["frontend"],
+                    "execution_stack": factors["execution_stack"],
+                    "chunking": "none",
                     "evaluation": "direct_pred_text_by_output_units",
-                    "runtime_resolution": "observed_effective_values_v1",
+                    "observation_policy": "observed_effective_values_v2",
                 }
             },
         }
@@ -508,38 +446,38 @@ def test_controlled_onnx_comparison_keeps_three_factors_separate(
         )
 
     frame, skipped = build_leaderboards(evaluations_root, latest_only=False)
-    controlled = frame["orthographic"].set_index("model_id")
+    controlled = frame["orthographic"].set_index("inference_setup_id")
 
     assert skipped["orthographic"] == []
-    assert controlled.loc["controlled-000", "artifact_context"] == (
+    assert controlled.loc["controlled-000", "model_artifact"] == (
         "project-exported ONNX artifact"
     )
-    assert controlled.loc["controlled-100", "artifact_context"] == (
+    assert controlled.loc["controlled-100", "model_artifact"] == (
         "published Android deployment artifact"
     )
-    assert controlled.loc["controlled-100", "preprocessing_context"] == (
-        "shared SoundFile/librosa 16 kHz audio; compatible onnx-asr NeMo frontend; no chunking"
+    assert controlled.loc["controlled-100", "inference_setup"] == (
+        "shared SoundFile/librosa 16 kHz audio; compatible onnx-asr NeMo frontend; no chunking; greedy decoding"
     )
-    assert controlled.loc["controlled-110", "preprocessing_context"] == (
-        "Android PCM16/linear 16 kHz audio; Android deployment-parity frontend; no chunking"
+    assert controlled.loc["controlled-110", "inference_setup"] == (
+        "Android PCM16/linear 16 kHz audio; Android deployment-parity frontend; no chunking; greedy decoding"
     )
     assert controlled.loc["controlled-100", "execution_stack"] == (
         "onnx-asr → ONNX Runtime → shared ASR container on PC "
         "(ONNX Runtime 1.23.2 observed)"
     )
-    assert controlled.loc["controlled-100", "platform"] == "onnxruntime-desktop"
+    assert controlled.loc["controlled-100", "execution_target"] == "onnxruntime-desktop"
     assert controlled.loc["controlled-110", "execution_stack"] == (
         "Android-parity adapter → ONNX Runtime → shared ASR container on PC "
         "(ONNX Runtime 1.23.2 observed)"
     )
     assert controlled.loc["controlled-110", "context_evidence"] == (
-        "pipeline contract (retrospective recovery); inference engine observed"
+        "pipeline contract (run time); inference engine observed"
     )
     assert controlled.loc["controlled-111", "execution_stack"] == (
         "Android-parity adapter → ONNX Runtime → dedicated Android-parity "
         "container on PC (ONNX Runtime 1.22.0 required)"
     )
-    assert controlled.loc["controlled-111", "platform"] == (
+    assert controlled.loc["controlled-111", "execution_target"] == (
         "onnxruntime-android-proxy"
     )
 
@@ -557,13 +495,18 @@ def test_presentation_registry_covers_profiles_and_groups_all_bookbot_models() -
     }
 
     assert registered == profile_ids
-    assert registry["models"] == registry["inference_setups"]
     bookbot_ids = {
         "bookbot-orthographic-ctc",
         "bookbot-orthographic-ctc-5gram",
         "bookbot-phoneme-ctc",
         "zipformer-streaming-robust-sw-v4",
         "zipformer-streaming-robust-sw-v4-modified-beam4",
+        "zipformer-streaming-robust-sw-v4-onnx-int8",
+        "zipformer-streaming-robust-sw-v4-onnx-int8-modified-beam4",
+        "zipformer-streaming-robust-sw-v4-ort-int8",
+        "zipformer-streaming-robust-sw-v4-ort-int8-modified-beam4",
+        "zipformer-streaming-robust-sw-v4-torchscript",
+        "zipformer-streaming-robust-sw-v4-torchscript-modified-beam4",
     }
     assert {
         registry["inference_setups"][model_id]["model_group"]
@@ -585,7 +528,9 @@ def test_presentation_registry_covers_profiles_and_groups_all_bookbot_models() -
 def test_presentation_registry_requires_a_naming_format(tmp_path: Path) -> None:
     registry_path = tmp_path / "model_presentation.json"
     registry_path.write_text(
-        json.dumps({"schema_version": 1, "naming_format": "", "models": {}}),
+        json.dumps(
+            {"schema_version": 2, "naming_format": "", "inference_setups": {}}
+        ),
         encoding="utf-8",
     )
 
@@ -593,47 +538,20 @@ def test_presentation_registry_requires_a_naming_format(tmp_path: Path) -> None:
         load_model_presentation_registry(registry_path)
 
 
-def test_presentation_registry_v1_alias_normalizes_and_conflicts_fail(
+def test_presentation_registry_rejects_removed_schema_version(
     tmp_path: Path,
 ) -> None:
-    entry = {
-        "model_group": "Example",
-        "model_name": "example-model",
-        "variant": "",
-        "official_model_url": "https://example.com/model",
-        "official_model_url_note": "Example source",
-        "architecture": {
-            "label": "Example encoder",
-            "evidence_status": "owner_documented",
-            "source": "https://example.com/model",
-        },
-    }
     registry_path = tmp_path / "model_presentation.json"
     registry_path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "naming_format": "model_group · model_name",
-                "models": {"example-greedy": entry},
+                "inference_setups": {},
             }
         ),
         encoding="utf-8",
     )
 
-    normalized = load_model_presentation_registry(registry_path)
-    assert normalized["schema_version"] == 2
-    assert normalized["inference_setups"] == normalized["models"]
-
-    registry_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 2,
-                "naming_format": "model_group · model_name",
-                "inference_setups": {"example-greedy": entry},
-                "models": {"different-greedy": entry},
-            }
-        ),
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="conflicting inference_setups"):
+    with pytest.raises(ValueError, match="schema_version must be 2"):
         load_model_presentation_registry(registry_path)

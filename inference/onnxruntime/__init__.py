@@ -1,1 +1,1 @@
-"""PC validation runtime for mobile-target ONNX ASR artifacts."""
+"""PC validation implementation for mobile-target ONNX ASR artifacts."""

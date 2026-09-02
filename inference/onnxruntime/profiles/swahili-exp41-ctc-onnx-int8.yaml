@@ -37,4 +37,4 @@ parameter_evidence:
       - artifact
     level: project
     source: repo:inference/onnxruntime/README.md
-    rationale: This artifact is the matched desktop INT8 comparison and is not presented as an Android runtime proxy.
+    rationale: This artifact is the matched desktop INT8 comparison and is not presented as an Android-behaviour proxy.

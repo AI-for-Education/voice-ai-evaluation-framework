@@ -1,8 +1,7 @@
 import logging
-import math
-import re
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 from egra_eval2.eval_utils import (
     aggregate_error_rate,
@@ -62,14 +61,6 @@ def evaluate_rows(df_egra: pd.DataFrame) -> pd.DataFrame:
             "REF": ref,
             "HYP": hyp,
         }
-
-        # # Temp
-        # can = "ga u la e ka ha"
-        # ref = "ga ga u e ka hi hi"
-        # hyp = "ga u la i ka hi ho"
-        # print("CAN", can)
-        # print("REF", ref)
-        # print("HYP", hyp)
 
         # Reference vs hypothesis (required for WER)
         score_ref_hyp = score_error_rate(ref, hyp)

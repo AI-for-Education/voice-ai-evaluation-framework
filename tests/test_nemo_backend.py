@@ -12,8 +12,9 @@ from inference.profile import parse_profile
 def _profile():
     return parse_profile(
         {
-            "id": "nemo-characterization",
-            "framework": "nemo",
+            "profile_schema_version": 2,
+            "inference_setup_id": "nemo-characterization",
+            "inference_library": "nemo",
             "adapter": "nemo",
             "artifact": "model.nemo",
             "decoding": {"strategy": "ctc"},

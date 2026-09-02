@@ -48,6 +48,19 @@ services:
       - ./inference/sherpa_onnx/models:/models:ro
       - ./inference/sherpa_onnx/models:/work/inference/sherpa_onnx/models:ro
 
+  torch-asr:
+    <<: *egra_base
+    container_name: torch-asr
+    gpus: all
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/torch/models:/models:ro
+      - ./inference/torch/models:/work/inference/torch/models:ro
+
   onnxruntime-prepare:
     <<: *egra_base
     container_name: onnxruntime-prepare
@@ -164,4 +177,3 @@ services:
       - /tmp
     volumes:
       - ./input_output_data/output:/work/input_output_data/output:ro
-

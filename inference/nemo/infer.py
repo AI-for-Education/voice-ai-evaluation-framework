@@ -18,8 +18,8 @@ from inference.nemo.backend import (
     NemoBackend,
     build_override_cfg,
     configure_decoding_strategy,
-    configure_runtime,
-    require_nemo_runtime,
+    configure_execution,
+    require_nemo_dependencies,
     transcribe_batches,
     write_wav,
 )
@@ -35,10 +35,9 @@ def parse_profile_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Offline profile-driven NeMo transcription")
     parser.add_argument(
         "--inference_profile",
-        "--model_config",
         dest="inference_profile",
         required=True,
-        help="Tracked NeMo inference profile YAML (--model_config is deprecated).",
+        help="Tracked NeMo inference profile YAML.",
     )
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument(
@@ -241,9 +240,9 @@ def legacy_main(
         audio_manifest=args.audio_manifest,
     )
 
-    require_nemo_runtime()
+    require_nemo_dependencies()
     assert ASRModel is not None
-    device, num_workers = configure_runtime(args.cpu_workers)
+    device, num_workers = configure_execution(args.cpu_workers)
 
     model = ASRModel.restore_from(args.model, map_location=device)
     model.to(device).eval()

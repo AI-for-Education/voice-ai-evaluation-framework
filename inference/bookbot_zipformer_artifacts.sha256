@@ -1,0 +1,11 @@
+72ec041ab4f6030ba7f92b6a511d4c593b0685003ff72d594e5d91f3f1b205ef  inference/torch/models/zipformer-streaming-robust-sw-v4/exp-causal/jit_script_chunk_32_left_128.pt
+af75161ac89a5a2ae504cb0dabcc553fa93a2be65f9d1e12ed19f6cf42febdaa  inference/torch/models/zipformer-streaming-robust-sw-v4/data/lang_phone/tokens.txt
+e020cb80d7fb07f7c9bdd55614935904c144523f2b5739f93d3f6030369b7f46  inference/sherpa_onnx/models/sherpa-onnx-zipformer-streaming-robust-sw-v4/encoder-epoch-40-avg-7-chunk-16-left-128.int8.onnx
+534d22257dbd050f82a2e17df6c553aab156f92a0d6ef9224178bc90bfa4a6fe  inference/sherpa_onnx/models/sherpa-onnx-zipformer-streaming-robust-sw-v4/decoder-epoch-40-avg-7-chunk-16-left-128.int8.onnx
+86696f6e15fb7748dc92da81396d15b9009ecefbad3c0557106ec16d36f4b696  inference/sherpa_onnx/models/sherpa-onnx-zipformer-streaming-robust-sw-v4/joiner-epoch-40-avg-7-chunk-16-left-128.int8.onnx
+af75161ac89a5a2ae504cb0dabcc553fa93a2be65f9d1e12ed19f6cf42febdaa  inference/sherpa_onnx/models/sherpa-onnx-zipformer-streaming-robust-sw-v4/tokens.txt
+06bbfe2b1667c483b42d117dbacabd18be1145ecb7dc50ce3582bffdd4c3d9ec  inference/sherpa_onnx/models/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4/encoder-epoch-40-avg-7-chunk-16-left-128.int8.ort
+c90280eedba1599ead08da58cbaa9572445101d441c7af5143379222e004fb70  inference/sherpa_onnx/models/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4/decoder-epoch-40-avg-7-chunk-16-left-128.int8.ort
+5ca7e20d1ea283f46f0ba9124fd92318f78bc6cc844fcf5862a37c6225d96820  inference/sherpa_onnx/models/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4/joiner-epoch-40-avg-7-chunk-16-left-128.int8.ort
+af75161ac89a5a2ae504cb0dabcc553fa93a2be65f9d1e12ed19f6cf42febdaa  inference/sherpa_onnx/models/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4/tokens.txt
+f9e112f0b519e779e18f7041582a1e0bb456be1485953c96d7cb51ee04d82014  inference/sherpa_onnx/models/sherpa-onnx-ort-zipformer-streaming-robust-sw-v4/required_operators.config

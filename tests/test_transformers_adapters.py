@@ -11,13 +11,13 @@ from typing import Any
 import numpy as np
 import pytest
 
-from inference.profile import ModelProfile, parse_profile
+from inference.profile import InferenceProfile, parse_profile
 
 
 def _profile(
     *,
     adapter: str = "ctc",
-    profile_id: str = "test-ctc",
+    inference_setup_id: str = "test-ctc",
     artifact: str = "test-model",
     language: str | None = None,
     processor_mode: str = "auto",
@@ -26,11 +26,12 @@ def _profile(
     ctc_lm_kwargs: dict[str, Any] | None = None,
     long_form: dict[str, Any] | None = None,
     audio: dict[str, Any] | None = None,
-) -> ModelProfile:
+) -> InferenceProfile:
     return parse_profile(
         {
-            "id": profile_id,
-            "framework": "transformers",
+            "profile_schema_version": 2,
+            "inference_setup_id": inference_setup_id,
+            "inference_library": "transformers",
             "adapter": adapter,
             "artifact": artifact,
             "language": language,
@@ -59,7 +60,7 @@ def _profile(
     )
 
 
-# Shared fake Torch and Transformers runtime
+# Shared Torch and Transformers test doubles
 
 
 class _FakeDevice:
@@ -328,9 +329,9 @@ def _create_lm_snapshot(model_path: Path) -> None:
         path.write_bytes(b"lm" if path.suffix == ".bin" else b"{}")
 
 
-def _bookbot_lm_profile(*, decoder_workers: int = 0) -> ModelProfile:
+def _bookbot_lm_profile(*, decoder_workers: int = 0) -> InferenceProfile:
     return _profile(
-        profile_id="bookbot-orthographic-ctc-5gram",
+        inference_setup_id="bookbot-orthographic-ctc-5gram",
         artifact="bookbot-lm",
         language="sw",
         processor_mode="wav2vec2_with_lm",
@@ -375,14 +376,14 @@ def _prepare_bookbot_lm(tmp_path: Path) -> tuple[types.ModuleType, Path]:
 def test_factory_selects_profile_adapter(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    profile: ModelProfile,
+    profile: InferenceProfile,
     module_name: str,
     class_name: str,
 ) -> None:
-    calls: list[tuple[ModelProfile, Path]] = []
+    calls: list[tuple[InferenceProfile, Path]] = []
 
     class DummyBackend:
-        def __init__(self, selected_profile: ModelProfile, model_path: Path) -> None:
+        def __init__(self, selected_profile: InferenceProfile, model_path: Path) -> None:
             calls.append((selected_profile, model_path))
 
     adapter_module = types.ModuleType(module_name)
@@ -406,7 +407,7 @@ def test_bookbot_plain_mode_constructs_processor_without_auto_processor(
     model_path = tmp_path / "bookbot-ctc"
     model_path.mkdir()
     profile = _profile(
-        profile_id="bookbot-orthographic-ctc",
+        inference_setup_id="bookbot-orthographic-ctc",
         artifact="bookbot-ctc",
         processor_mode="wav2vec2_plain",
     )
@@ -440,7 +441,7 @@ def test_mms_configures_tokenizer_and_model_language_adapter(
     state.auto_processor_return = _FakeProcessor(tokenizer=tokenizer)
     state.auto_ctc_model_return = _FakeModel(state.torch.float32)
     profile = _profile(
-        profile_id="mms-1b-all-swh",
+        inference_setup_id="mms-1b-all-swh",
         artifact="mms-1b-all",
         language="swh",
     )
@@ -467,7 +468,7 @@ def test_mms_requires_language_before_loading_processor_or_model(
     model_path = tmp_path / "mms-1b-all"
     model_path.mkdir()
     profile = _profile(
-        profile_id="mms-1b-all",
+        inference_setup_id="mms-1b-all",
         artifact="mms-1b-all",
         language=None,
     )
@@ -496,7 +497,7 @@ def test_auto_ctc_loading_and_greedy_argmax_batch_decoding(
     state.auto_processor_return = processor
     state.auto_ctc_model_return = _FakeModel(state.torch.float32)
     profile = _profile(
-        profile_id="w2v-bert-2.0-swahili-asr",
+        inference_setup_id="w2v-bert-2.0-swahili-asr",
         artifact="w2v-bert-2.0-swahili",
         language="sw",
     )
@@ -755,7 +756,7 @@ def test_speech_seq2seq_generate_receives_language_task_and_no_timestamps(
     state.auto_seq2seq_model_return = _FakeModel(state.torch.float32)
     profile = _profile(
         adapter="speech_seq2seq",
-        profile_id="whisper-large-v2-sw",
+        inference_setup_id="whisper-large-v2-sw",
         artifact="whisper-large-v2",
         language="sw",
         generation_kwargs={"num_beams": 3},
@@ -811,7 +812,7 @@ def test_speech_seq2seq_long_form_uses_untruncated_timestamp_path(
     state.auto_seq2seq_model_return = _FakeModel(state.torch.float32)
     profile = _profile(
         adapter="speech_seq2seq",
-        profile_id="whisper-large-sw",
+        inference_setup_id="whisper-large-sw",
         artifact="whisper-large",
         language="sw",
         generation_kwargs={"do_sample": False, "return_timestamps": False},
@@ -859,7 +860,7 @@ def test_speech_seq2seq_routes_mixed_batch_and_preserves_original_order(
     model_path.mkdir()
     profile = _profile(
         adapter="speech_seq2seq",
-        profile_id="whisper-large-v2-sw",
+        inference_setup_id="whisper-large-v2-sw",
         artifact="whisper-large-v2",
         language="sw",
         generation_kwargs={"do_sample": False, "return_timestamps": False},
@@ -925,7 +926,7 @@ def test_speech_seq2seq_chunks_profile_scoped_long_audio_in_memory(
     model_path.mkdir()
     profile = _profile(
         adapter="speech_seq2seq",
-        profile_id="paza-whisper",
+        inference_setup_id="paza-whisper",
         artifact="paza-whisper",
         language="sw",
         generation_kwargs={"do_sample": False, "return_timestamps": False},
@@ -1049,7 +1050,7 @@ def test_whisper_returns_the_direct_decoded_prediction(
     state.auto_processor_return = processor
     profile = _profile(
         adapter="speech_seq2seq",
-        profile_id="whisper-large-sw",
+        inference_setup_id="whisper-large-sw",
         artifact="whisper-large",
         language="sw",
     )
@@ -1067,7 +1068,6 @@ def test_whisper_returns_the_direct_decoded_prediction(
     row = backend.transcribe_batch(["sample.wav"])[0]
 
     assert row.pred_text == processor.decoded[0]
-    assert row.raw_pred_text is None
     assert "raw_pred_text" not in row.to_row()
     metadata = backend.metadata()
     assert metadata["model_output_field"] == "pred_text"

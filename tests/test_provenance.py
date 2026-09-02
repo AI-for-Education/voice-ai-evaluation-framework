@@ -8,7 +8,7 @@ from inference.provenance import (
     canonical_json_sha256,
     generation_provenance,
     git_identity,
-    model_identity,
+    model_artifact_identity,
 )
 
 
@@ -42,7 +42,7 @@ def test_generation_provenance_distinguishes_defaults_requested_and_actual() -> 
     }
 
 
-def test_hub_model_identity_uses_pinned_source_manifests_and_etags(
+def test_hub_model_artifact_identity_uses_pinned_source_manifests_and_etags(
     tmp_path: Path,
 ) -> None:
     artifact = "whisper-large"
@@ -73,7 +73,7 @@ def test_hub_model_identity_uses_pinned_source_manifests_and_etags(
         encoding="utf-8",
     )
 
-    identity = model_identity(model_path, artifact=artifact)
+    identity = model_artifact_identity(model_path, artifact=artifact)
 
     assert identity["intended_source"] == {
         "repository": "openai/whisper-large",
@@ -90,15 +90,64 @@ def test_hub_model_identity_uses_pinned_source_manifests_and_etags(
         identity["configuration_files"]["config.json"]["sha256"]
         == hashlib.sha256(b'{"model_type":"whisper"}').hexdigest()
     )
+    assert "artifact_files" not in identity
 
 
-def test_local_export_identity_hashes_executable_artifacts(tmp_path: Path) -> None:
+def test_pinned_partial_hub_snapshot_hashes_unrepresented_executable_files(
+    tmp_path: Path,
+) -> None:
+    artifact = "sherpa-onnx-zipformer-streaming-robust-sw-v4"
+    revision = "0e52da6c03294fd983f3a8621b32ac6a71b4787d"
+    model_path = tmp_path / artifact
+    model_path.mkdir()
+    encoder = model_path / "encoder-epoch-40.int8.onnx"
+    encoder.write_bytes(b"bookbot-encoder")
+    unselected_encoder = model_path / "encoder-epoch-40.onnx"
+    unselected_encoder.write_bytes(b"unused-fp32-encoder")
+    tokens = model_path / "tokens.txt"
+    tokens.write_text("<eps> 0\na 1\n", encoding="utf-8")
+    metadata_path = (
+        model_path / ".cache" / "huggingface" / "download" / "tokens.txt.metadata"
+    )
+    metadata_path.parent.mkdir(parents=True)
+    metadata_path.write_text(f"{revision}\ntokens-etag\n", encoding="utf-8")
+
+    identity = model_artifact_identity(
+        model_path,
+        artifact=artifact,
+        selected_files=[encoder.name, tokens.name],
+    )
+
+    assert identity["local_hugging_face_metadata"]["files"] == {
+        "tokens.txt": {
+            "revision": revision,
+            "etag": "tokens-etag",
+            "size_bytes": tokens.stat().st_size,
+        }
+    }
+    assert identity["artifact_files"][encoder.name] == {
+        "size_bytes": encoder.stat().st_size,
+        "sha256": hashlib.sha256(b"bookbot-encoder").hexdigest(),
+    }
+    assert unselected_encoder.name not in identity["artifact_files"]
+    assert identity["selected_files"] == [encoder.name, tokens.name]
+    assert identity["configuration_files"]["tokens.txt"]["sha256"] == (
+        hashlib.sha256(tokens.read_bytes()).hexdigest()
+    )
+
+
+def test_local_model_artifact_identity_hashes_exported_files(
+    tmp_path: Path,
+) -> None:
     model_path = tmp_path / "zipformer-export"
     model_path.mkdir()
     (model_path / "encoder.int8.onnx").write_bytes(b"onnx-data")
     (model_path / "tokens.txt").write_text("<blk> 0\na 1\n", encoding="utf-8")
 
-    identity = model_identity(model_path, artifact="zipformer-export")
+    identity = model_artifact_identity(
+        model_path,
+        artifact="zipformer-export",
+    )
 
     expected = hashlib.sha256(b"onnx-data").hexdigest()
     assert identity["artifact_files"]["encoder.int8.onnx"]["sha256"] == expected

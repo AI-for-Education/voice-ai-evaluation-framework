@@ -39,7 +39,7 @@ def test_exp41_onnx_artifact_loads(profile_name: str, precision: str) -> None:
     )
     try:
         metadata = backend.metadata()
-        assert metadata["framework"] == "onnxruntime"
+        assert metadata["inference_library"] == "onnxruntime"
         assert metadata["provider"] == "CPUExecutionProvider"
         assert metadata["precision"] == precision
         assert metadata["same_trained_checkpoint"] is True

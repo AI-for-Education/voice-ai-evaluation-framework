@@ -34,7 +34,6 @@ ScoringRepresentation = Literal[
     "auto",
     "orthographic",
     "ipa",
-    "legacy_orthographic",
 ]
 PhonemizeBatch = Callable[[Sequence[str]], list[str]]
 
@@ -91,10 +90,10 @@ def _load_run_profile(manifest_in: str | Path) -> dict | None:
             f"{metadata_path}"
         )
     metadata = _load_json_object(metadata_path, "ASR run metadata")
-    profile = metadata.get("profile")
+    profile = metadata.get("inference_profile")
     if not isinstance(profile, dict):
         raise ScoringRepresentationError(
-            f"ASR run metadata has no profile: {metadata_path}"
+            f"ASR run metadata has no inference profile: {metadata_path}"
         )
     return profile
 
@@ -233,7 +232,6 @@ def prepare_scoring_texts(
         "auto",
         "orthographic",
         "ipa",
-        "legacy_orthographic",
     }:
         raise ScoringRepresentationError(
             f"Unsupported scoring representation: {scoring_representation}"
@@ -245,27 +243,9 @@ def prepare_scoring_texts(
                 "IPA scoring requires standard run metadata so model output units "
                 "are known"
             )
-        if scoring_representation == "legacy_orthographic":
-            logger.warning(
-                "Running legacy orthographic scoring without model representation "
-                "metadata. This result is retained for historical comparison only."
-            )
         return manifest_df, "orthographic"
 
     output_units = profile.get("output_units")
-    if scoring_representation == "legacy_orthographic":
-        if output_units != "phoneme":
-            raise ScoringRepresentationError(
-                "legacy_orthographic is only valid for native phoneme output or "
-                "an archived manifest without run metadata"
-            )
-        logger.warning(
-            "Running legacy orthographic scoring against %s model output. "
-            "The result is a historical diagnostic and is not a valid "
-            "cross-model quality metric.",
-            output_units or "unknown-unit",
-        )
-        return manifest_df, "orthographic"
     if scoring_representation == "orthographic":
         if output_units != "orthographic":
             raise ScoringRepresentationError(

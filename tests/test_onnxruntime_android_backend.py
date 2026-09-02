@@ -18,8 +18,9 @@ from inference.profile import parse_profile
 def _profile():
     return parse_profile(
         {
-            "id": "android-int8-test",
-            "framework": "onnxruntime",
+            "profile_schema_version": 2,
+            "inference_setup_id": "android-int8-test",
+            "inference_library": "onnxruntime",
             "adapter": "android_ctc",
             "artifact": "android/model.int8.onnx",
             "language": "sw",
@@ -45,7 +46,7 @@ def test_android_cli_enforces_single_item_and_single_thread_before_loading(
     with pytest.raises(SystemExit, match="--batch_size 1"):
         android_infer.main(
             [
-                "--model_config",
+                "--inference_profile",
                 "profile.yaml",
                 "--root_audio_dir",
                 "audio",
@@ -56,7 +57,7 @@ def test_android_cli_enforces_single_item_and_single_thread_before_loading(
     with pytest.raises(SystemExit, match="--num_threads 1"):
         android_infer.main(
             [
-                "--model_config",
+                "--inference_profile",
                 "profile.yaml",
                 "--root_audio_dir",
                 "audio",
@@ -144,4 +145,6 @@ def test_android_metadata_marks_controlled_shared_runtime() -> None:
     assert metadata["validation_scope"] == "pc_controlled_android_frontend"
     assert metadata["onnxruntime_version"] == "1.23.2"
     assert "onnxruntime_version_required" not in metadata
-    assert metadata["validation"]["runtime_version"] == "recorded_not_pinned"
+    assert metadata["validation"]["inference_engine_version"] == (
+        "recorded_not_pinned"
+    )

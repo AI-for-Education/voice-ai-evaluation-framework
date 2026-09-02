@@ -9,7 +9,8 @@ from typing import Sequence
 
 import pytest
 
-from egra_eval2.nemo_manifest import load_nemo_manifest
+import inference.runner as runner_module
+from egra_eval2.prediction_manifest import load_prediction_manifest
 from inference.contracts import TranscriptionResult
 from inference.profile import parse_profile
 from inference.runner import resolve_transcript_output_dir, run_backend
@@ -26,7 +27,7 @@ class FakeBackend:
         ]
 
     def metadata(self):
-        return {"framework": "fake", "device": "cpu"}
+        return {"inference_library": "fake", "device": "cpu"}
 
     def close(self) -> None:
         self.closed = True
@@ -48,7 +49,11 @@ class CompletedStateBackend(FakeBackend):
         return rows
 
     def metadata(self):
-        return {"framework": "fake", "device": "cpu", "processed": self.processed}
+        return {
+            "inference_library": "fake",
+            "device": "cpu",
+            "processed": self.processed,
+        }
 
 
 class DiagnosticBackend(FakeBackend):
@@ -67,13 +72,25 @@ class DiagnosticBackend(FakeBackend):
 
     def metadata(self):
         return {
-            "framework": "fake",
+            "inference_library": "fake",
             "device": "cpu",
             "provider": "MockExecutionProvider",
             "processor_class": "MockProcessor",
             "sampling_rate": 16000,
             "backend_version": "mock-1.0",
         }
+
+
+class ExplodingBackend(FakeBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def transcribe_batch(self, audio_paths: Sequence[str]) -> list[TranscriptionResult]:
+        self.calls += 1
+        if self.calls == 2:
+            raise RuntimeError("mock catastrophic backend failure")
+        return super().transcribe_batch(audio_paths)
 
 
 def _profile():
@@ -87,8 +104,9 @@ def _profile():
                     "rationale": "The source defines greedy decoding.",
                 }
             ],
-            "id": "runner-test",
-            "framework": "transformers",
+            "profile_schema_version": 2,
+            "inference_setup_id": "runner-test",
+            "inference_library": "transformers",
             "adapter": "ctc",
             "artifact": "model",
             "decoding": {"strategy": "greedy"},
@@ -162,47 +180,43 @@ def test_runner_preserves_schema_order_writes_metadata_and_reports_progress(
     assert metadata["inference_setup_id"] == "runner-test"
     assert metadata["run_id"] == output.parent.name
     assert metadata["inference_profile"]["inference_setup_id"] == "runner-test"
-    assert metadata["profile"]["id"] == "runner-test"
-    assert metadata["profile"]["framework"] == "transformers"
-    assert metadata["execution_stack"] == metadata["runtime"]
-    assert metadata["inference_adapter"] == metadata["backend"]
     assert metadata["pipeline_provenance"]["recording"]["mode"] == "run_time"
     assert "inference_setup" in metadata["pipeline_provenance"]
     assert "execution_stack" in metadata["pipeline_provenance"]
-    assert set(metadata["pipeline_provenance"]["stages"]) == {
-        "audio_preparation",
-        "inference",
-        "evaluation",
-    }
     assert (
-        metadata["pipeline_provenance"]["stages"]["audio_preparation"]
+        metadata["pipeline_provenance"]["inference_setup"]["audio_preparation"]
         ["input_audio"]["status"]
         == "not_available"
     )
-    assert metadata["profile"]["id"] == "runner-test"
     assert re.fullmatch(
-        r"[0-9a-f]{64}", metadata["profile_identity"]["canonical_content_sha256"]
+        r"[0-9a-f]{64}",
+        metadata["inference_profile_identity"]["canonical_content_sha256"],
     )
-    assert metadata["runtime"]["batch_size"] == 2
-    assert metadata["runtime"]["launch_context"]["compose_service"] == (
+    assert metadata["execution_stack"]["batch_size"] == 2
+    assert metadata["execution_stack"]["launch_context"]["compose_service"] == (
         "transformers-asr"
     )
     assert (
-        metadata["pipeline_provenance"]["stages"]["inference"]["runtime"]
-        ["observed"]["launch_context"]["launcher"]
+        metadata["pipeline_provenance"]["execution_stack"]["observed"]
+        ["environment"]["launch"]["launcher"]
         == "run_transformers_inference.sh"
     )
     assert len(metadata["warnings"]) == 1
     assert metadata["warnings"][0]["phase"] == "initialization"
     assert metadata["warnings"][0]["category"] == "RuntimeWarning"
     assert metadata["warnings"][0]["message"] == "model initialization fallback"
-    assert metadata["profile"]["parameter_evidence"][0]["level"] == "exact"
-    assert metadata["profile"]["parameter_evidence"][0]["applies_to"] == [
+    assert metadata["inference_profile"]["parameter_evidence"][0]["level"] == "exact"
+    assert metadata["inference_profile"]["parameter_evidence"][0]["applies_to"] == [
         "decoding.strategy"
     ]
     assert metadata["output"]["results"] == 3
     assert metadata["output"]["directory"] == str(output.parent)
     assert metadata["output"]["smoke_test"] is False
+    assert (
+        metadata["pipeline_provenance"]["links"]["transcriptions"]["path"]
+        == str(output)
+    )
+    assert metadata["pipeline_provenance"]["links"]["transcriptions"]["exists"]
     assert backend.closed is True
 
     captured = capsys.readouterr()
@@ -212,7 +226,7 @@ def test_runner_preserves_schema_order_writes_metadata_and_reports_progress(
     assert "3/3" in captured.err
 
     # This is the same loader used by manifest_pipeline.py for --prediction_manifest.
-    merged_input = load_nemo_manifest(str(output))
+    merged_input = load_prediction_manifest(str(output))
     assert merged_input["audio_path"].tolist() == [
         "first.wav",
         "second.wav",
@@ -252,11 +266,11 @@ def test_runner_captures_backend_metadata_after_all_batches(
     metadata = json.loads(
         (output.parent / "run_metadata.json").read_text(encoding="utf-8")
     )
-    assert metadata["backend"]["processed"] == 3
+    assert metadata["inference_adapter"]["processed"] == 3
     assert "postprocessing" not in metadata
 
 
-def test_mock_smoke_run_locates_row_errors_warnings_and_runtime_identity(
+def test_mock_smoke_run_records_errors_warnings_and_execution_stack(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -300,19 +314,121 @@ def test_mock_smoke_run_locates_row_errors_warnings_and_runtime_identity(
     assert metadata["warnings"][0]["message"] == (
         "mock recoverable decoder warning"
     )
-    assert metadata["backend"]["provider"] == "MockExecutionProvider"
-    assert metadata["runtime"]["launch_context"]["image"] == {
+    assert metadata["inference_adapter"]["provider"] == "MockExecutionProvider"
+    assert metadata["execution_stack"]["launch_context"]["image"] == {
         "reference": "voice-ai-evaluation-framework-asr:latest",
         "id": "sha256:mock-image",
         "repo_digests": [
             "voice-ai-evaluation-framework-asr@sha256:mock-digest"
         ],
     }
-    inference = metadata["pipeline_provenance"]["stages"]["inference"]
-    assert inference["frontend"]["observed"]["processor_class"] == "MockProcessor"
-    assert inference["runtime"]["observed"]["launch_context"] == (
-        metadata["runtime"]["launch_context"]
+    provenance = metadata["pipeline_provenance"]
+    assert provenance["inference_setup"]["input_processing"]["observed"][
+        "processor_class"
+    ] == "MockProcessor"
+    assert provenance["execution_stack"]["observed"]["environment"]["launch"] == (
+        metadata["execution_stack"]["launch_context"]
     )
+
+
+def test_fail_on_error_writes_metadata_then_exits_nonzero(tmp_path: Path) -> None:
+    manifest = tmp_path / "input.jsonl"
+    _manifest(manifest)
+    output_root = tmp_path / "output"
+
+    with pytest.raises(SystemExit, match="produced 1 per-file error"):
+        run_backend(
+            backend=DiagnosticBackend(),
+            profile=_profile(),
+            profile_path="profile.yaml",
+            model_path="model",
+            root_audio_dir=None,
+            audio_manifest=str(manifest),
+            output_root=str(output_root),
+            batch_size=2,
+            fail_on_error=True,
+        )
+
+    metadata_paths = list(output_root.glob("transcripts/*/run_metadata.json"))
+    assert len(metadata_paths) == 1
+    metadata = json.loads(metadata_paths[0].read_text(encoding="utf-8"))
+    assert metadata["output"]["errors"] == 1
+    assert metadata["output"]["fail_on_error"] is True
+
+
+def test_same_second_runs_publish_to_distinct_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "input.jsonl"
+    _manifest(manifest)
+    candidate = tmp_path / "output" / "transcripts" / "runner-test_fixed_UTC"
+    monkeypatch.setattr(
+        runner_module,
+        "resolve_transcript_output_dir",
+        lambda **_kwargs: candidate,
+    )
+
+    first = run_backend(
+        backend=FakeBackend(),
+        profile=_profile(),
+        profile_path="profile.yaml",
+        model_path="model",
+        root_audio_dir=None,
+        audio_manifest=str(manifest),
+        output_root=str(tmp_path / "output"),
+        batch_size=2,
+    )
+    first_contents = first.read_text(encoding="utf-8")
+    second = run_backend(
+        backend=FakeBackend(),
+        profile=_profile(),
+        profile_path="profile.yaml",
+        model_path="model",
+        root_audio_dir=None,
+        audio_manifest=str(manifest),
+        output_root=str(tmp_path / "output"),
+        batch_size=2,
+    )
+
+    assert first.parent == candidate
+    assert second.parent == candidate.with_name(f"{candidate.name}__2")
+    assert first.read_text(encoding="utf-8") == first_contents
+    assert not any(
+        path.name.endswith(".in_progress")
+        for path in candidate.parent.iterdir()
+    )
+
+
+def test_catastrophic_backend_failure_does_not_publish_partial_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "input.jsonl"
+    _manifest(manifest)
+    candidate = tmp_path / "output" / "transcripts" / "runner-test_fixed_UTC"
+    backend = ExplodingBackend()
+    monkeypatch.setattr(
+        runner_module,
+        "resolve_transcript_output_dir",
+        lambda **_kwargs: candidate,
+    )
+
+    with pytest.raises(RuntimeError, match="mock catastrophic backend failure"):
+        run_backend(
+            backend=backend,
+            profile=_profile(),
+            profile_path="profile.yaml",
+            model_path="model",
+            root_audio_dir=None,
+            audio_manifest=str(manifest),
+            output_root=str(tmp_path / "output"),
+            batch_size=2,
+        )
+
+    assert not candidate.exists()
+    assert not list(candidate.parent.iterdir())
+    assert backend.closed is True
 
 
 def test_standard_transcript_layout_supports_smoke_tests(tmp_path: Path) -> None:
@@ -320,13 +436,13 @@ def test_standard_transcript_layout_supports_smoke_tests(tmp_path: Path) -> None
 
     normal = resolve_transcript_output_dir(
         output_root=tmp_path,
-        profile_id="BookBot / orthographic",
+        inference_setup_id="BookBot / orthographic",
         smoke_test=False,
         started_at=started,
     )
     smoke = resolve_transcript_output_dir(
         output_root=tmp_path,
-        profile_id="BookBot / orthographic",
+        inference_setup_id="BookBot / orthographic",
         smoke_test=True,
         started_at=started,
     )

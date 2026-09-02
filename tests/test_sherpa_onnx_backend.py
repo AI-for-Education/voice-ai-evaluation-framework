@@ -6,18 +6,25 @@ import importlib.metadata
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from inference.profile import parse_profile
 
 
-def _profile(strategy: str = "greedy_search"):
+def _profile(
+    strategy: str = "greedy_search",
+    *,
+    artifact_format: str = "auto",
+    artifact_precision: str = "auto",
+):
     decoding: dict[str, object] = {"strategy": strategy}
     if strategy == "modified_beam_search":
         decoding["transducer_search_kwargs"] = {"max_active_paths": 4}
     return parse_profile(
         {
-            "id": "zipformer-streaming-robust-sw-v4",
-            "framework": "sherpa_onnx",
+            "profile_schema_version": 2,
+            "inference_setup_id": "zipformer-streaming-robust-sw-v4",
+            "inference_library": "sherpa_onnx",
             "adapter": "online_transducer",
             "artifact": "zipformer",
             "language": "sw",
@@ -30,6 +37,8 @@ def _profile(strategy: str = "greedy_search"):
                 "local_files_only": True,
                 "trust_remote_code": False,
                 "torch_dtype": "auto",
+                "artifact_format": artifact_format,
+                "artifact_precision": artifact_precision,
             },
             "decoding": decoding,
         }
@@ -40,6 +49,13 @@ def _model_files(path: Path) -> None:
     path.mkdir()
     for name in ("encoder-model.onnx", "decoder-model.onnx", "joiner-model.onnx"):
         (path / name).write_bytes(b"onnx")
+    (path / "tokens.txt").write_text("<eps> 0\na 1\n", encoding="utf-8")
+
+
+def _variant_model_files(path: Path, suffix: str) -> None:
+    path.mkdir()
+    for prefix in ("encoder", "decoder", "joiner"):
+        (path / f"{prefix}-model{suffix}").write_bytes(b"model")
     (path / "tokens.txt").write_text("<eps> 0\na 1\n", encoding="utf-8")
 
 
@@ -124,6 +140,12 @@ def test_sherpa_backend_uses_cuda_and_preserves_batch_order(
     ]
     assert all(stream.finished for stream in recognizer.streams)
     assert backend.metadata()["device"] == "cuda:0"
+    assert backend.metadata()["selected_artifact_files"] == [
+        "encoder-model.onnx",
+        "decoder-model.onnx",
+        "joiner-model.onnx",
+        "tokens.txt",
+    ]
 
 
 def test_sherpa_modified_beam_passes_search_config_to_runtime(
@@ -199,3 +221,51 @@ def test_sherpa_cuda_wheel_selects_cuda_without_provider_introspection(
 
     assert constructor_calls[0]["provider"] == "cuda"
     assert backend.metadata()["device"] == "cuda:0"
+
+
+@pytest.mark.parametrize(
+    ("artifact_format", "artifact_precision", "suffix"),
+    [
+        ("onnx", "int8", ".int8.onnx"),
+        ("ort", "int8", ".int8.ort"),
+    ],
+)
+def test_sherpa_backend_selects_profile_owned_artifact_variant(
+    monkeypatch,
+    tmp_path: Path,
+    artifact_format: str,
+    artifact_precision: str,
+    suffix: str,
+) -> None:
+    model_path = tmp_path / "zipformer"
+    _variant_model_files(model_path, suffix)
+    constructor_calls = []
+
+    class OnlineRecognizer:
+        @staticmethod
+        def from_transducer(**kwargs):
+            constructor_calls.append(kwargs)
+            return types.SimpleNamespace()
+
+    fake_module = types.SimpleNamespace(
+        __version__="test",
+        OnlineRecognizer=OnlineRecognizer,
+        get_available_providers=lambda: ["CPUExecutionProvider"],
+    )
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", fake_module)
+
+    from inference.sherpa_onnx import backend as backend_module
+
+    backend = backend_module.SherpaOnnxOnlineTransducerBackend(
+        _profile(
+            artifact_format=artifact_format,
+            artifact_precision=artifact_precision,
+        ),
+        model_path,
+    )
+
+    assert constructor_calls[0]["encoder"].endswith(f"encoder-model{suffix}")
+    assert constructor_calls[0]["decoder"].endswith(f"decoder-model{suffix}")
+    assert constructor_calls[0]["joiner"].endswith(f"joiner-model{suffix}")
+    assert backend.metadata()["artifact_format"] == artifact_format
+    assert backend.metadata()["artifact_precision"] == artifact_precision

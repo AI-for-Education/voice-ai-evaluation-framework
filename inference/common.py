@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Framework-independent audio input helpers for ASR inference backends."""
+"""Inference-library-neutral audio helpers used by ASR adapters."""
 
 from __future__ import annotations
 

@@ -563,7 +563,6 @@ class AndroidParityCtcBackend:
         controlled_frontend = expected_ort_version is None
         metadata = {
             "inference_library": "onnxruntime",
-            "framework": "onnxruntime",  # Deprecated metadata alias.
             "adapter": "android_ctc",
             "device": "cpu",
             "provider": "CPUExecutionProvider",
@@ -601,7 +600,7 @@ class AndroidParityCtcBackend:
                 "artifact_hash": "passed",
                 "onnx_contract": "passed",
                 "quantized_operators": "passed",
-                "runtime_version": (
+                "inference_engine_version": (
                     "recorded_not_pinned" if controlled_frontend else "passed"
                 ),
             },

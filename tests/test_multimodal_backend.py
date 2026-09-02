@@ -14,8 +14,9 @@ from inference.profile import parse_profile
 def _profile(*, seconds: int = 1):
     return parse_profile(
         {
-            "id": "gemma-test",
-            "framework": "multimodal",
+            "profile_schema_version": 2,
+            "inference_setup_id": "gemma-test",
+            "inference_library": "multimodal",
             "adapter": "gemma4_audio",
             "artifact": "gemma-model",
             "language": "sw",

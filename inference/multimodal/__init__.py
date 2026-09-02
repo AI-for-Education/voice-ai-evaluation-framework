@@ -1,1 +1,1 @@
-"""Multimodal audio-to-text inference backends."""
+"""Multimodal audio-to-text inference adapters."""

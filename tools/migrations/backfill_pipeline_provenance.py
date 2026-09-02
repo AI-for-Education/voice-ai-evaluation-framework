@@ -1,4 +1,9 @@
-"""Retrospectively add normalized provenance to existing run/evaluation metadata.
+"""Migration utility: add normalized provenance to historical run metadata.
+
+This script is intentionally outside the active inference package. It is retained
+for explicit, one-off metadata migration and is never invoked by current runs.
+
+Retrospectively add normalized provenance to existing run/evaluation metadata.
 
 The command is dry-run by default. Pass ``--apply`` to atomically update JSON
 metadata files. It never loads a model or decodes audio samples; optional audio
@@ -260,18 +265,31 @@ def backfill(
             if not refresh and isinstance(metadata.get("pipeline_provenance"), dict):
                 summary["run_metadata"]["skipped"] += 1
                 continue
-            profile = metadata.get("profile")
+            profile = metadata.get("inference_profile")
+            if not isinstance(profile, dict):
+                profile = metadata.get("profile")
             if not isinstance(profile, dict):
                 profile = {}
-            backend = metadata.get("backend")
-            if not isinstance(backend, dict):
-                backend = {}
-            runtime = metadata.get("runtime")
-            if not isinstance(runtime, dict):
-                runtime = {}
-            model_identity = metadata.get("model_identity")
-            if not isinstance(model_identity, dict):
-                model_identity = None
+            adapter_metadata = metadata.get("inference_adapter")
+            if not isinstance(adapter_metadata, dict):
+                adapter_metadata = metadata.get("backend")
+            if not isinstance(adapter_metadata, dict):
+                adapter_metadata = {}
+            execution_stack = metadata.get("execution_stack")
+            if not isinstance(execution_stack, dict):
+                execution_stack = metadata.get("runtime")
+            if not isinstance(execution_stack, dict):
+                execution_stack = {}
+            model_artifact = metadata.get("model_artifact")
+            model_artifact_identity = (
+                model_artifact.get("identity")
+                if isinstance(model_artifact, dict)
+                else None
+            )
+            if not isinstance(model_artifact_identity, dict):
+                model_artifact_identity = metadata.get("model_identity")
+            if not isinstance(model_artifact_identity, dict):
+                model_artifact_identity = None
             input_metadata = metadata.get("input")
             input_mapping = input_metadata if isinstance(input_metadata, dict) else {}
             cache_key = (
@@ -300,9 +318,9 @@ def backfill(
 
             pipeline = build_pipeline_provenance(
                 profile=profile,
-                backend=backend,
-                runtime=runtime,
-                model_identity=model_identity,
+                adapter_metadata=adapter_metadata,
+                execution_stack=execution_stack,
+                model_artifact_identity=model_artifact_identity,
                 profile_link=_profile_link(
                     metadata,
                     repository_root=repository,
@@ -351,7 +369,8 @@ def backfill(
             scoring_units = str(metadata.get("effective_scoring_units") or "not_available")
             namespace = str(metadata.get("output_namespace") or metadata_path.parent.name)
             limitations = [
-                "The exact historical reference-view metadata path was not recorded; the scored source manifest identity remains available."
+                "The exact historical reference-view metadata path was not "
+                "recorded; the scored source manifest identity remains available."
             ]
             source_run_path = evaluation_source_run_metadata_path(manifest_value)
             pipeline = build_evaluation_provenance(
@@ -402,7 +421,7 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--repository_root",
-        default=str(Path(__file__).resolve().parents[1]),
+        default=str(Path(__file__).resolve().parents[2]),
     )
     parser.add_argument(
         "--apply",

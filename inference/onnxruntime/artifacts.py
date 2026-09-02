@@ -336,7 +336,7 @@ def export_nemo_to_fp32_onnx(
                     "revision": ANDROID_SOURCE_REVISION,
                     "license_file_present_at_revision": False,
                 },
-                "desktop_runtime_reference": {
+                "desktop_inference_library_reference": {
                     "url": ONNX_ASR_SOURCE_URL,
                     "revision": ONNX_ASR_SOURCE_REVISION,
                     "package": "onnx-asr==0.12.0",

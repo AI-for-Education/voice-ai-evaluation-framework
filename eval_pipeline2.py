@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Run EGRA evaluation from a prebuilt cleaned manifest."""
 
-from datetime import datetime
-from pathlib import Path
-from typing import Any
 import argparse
 import json
 import logging
-import pandas as pd
 import re
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
 
 from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
 from egra_eval2.eval_utils import adjust_letter_canonical_text
@@ -64,21 +65,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--egra_csv", default=None)
     p.add_argument("--meta_csv", default=None)
     p.add_argument("--out_csv", default=None)
-    p.add_argument("--summary_can_ref_dir", default=None)
-    p.add_argument("--summary_can_hyp_dir", default=None)
-    p.add_argument("--summary_ref_hyp_dir", default=None)
     p.add_argument("--manifest_audio_key", default="audio_filepath")
     p.add_argument("--manifest_ref_key", default="ref_text")
     p.add_argument("--manifest_can_key", default="can_text")
     p.add_argument("--manifest_hyp_key", default="pred_text")
     p.add_argument(
         "--scoring_representation",
-        choices=["auto", "orthographic", "ipa", "legacy_orthographic"],
+        choices=["auto", "orthographic", "ipa"],
         default="auto",
         help=(
             "auto selects the model-native valid view; orthographic and ipa select "
-            "an explicit valid view; legacy_orthographic reproduces the historical "
-            "phoneme-vs-orthography diagnostic in an isolated folder"
+            "an explicit valid view"
         ),
     )
     p.add_argument("--detailed", action="store_true", default=False)
@@ -89,8 +86,6 @@ def _output_namespace(
     scoring_representation: str,
     scoring_units: str | None,
 ) -> str:
-    if scoring_representation == "legacy_orthographic":
-        return "orthographic_legacy"
     if scoring_units == "phoneme" or scoring_representation == "ipa":
         return "ipa"
     if scoring_units == "orthographic" or scoring_representation == "orthographic":
@@ -131,7 +126,7 @@ def resolve_outputs(
         run_root = _default_evaluation_root(args.manifest_in)
         logger.info("No --output_root supplied; using run root: %s", run_root)
 
-    known_namespaces = {"orthographic", "ipa", "orthographic_legacy"}
+    known_namespaces = {"orthographic", "ipa"}
     if run_root.name in known_namespaces:
         if run_root.name != namespace:
             raise SystemExit(
@@ -150,42 +145,15 @@ def resolve_outputs(
         base=base,
         label="--out_csv",
     )
-    can_ref = _representation_scoped_path(
-        args.summary_can_ref_dir,
-        base / "can_ref",
-        base=base,
-        label="--summary_can_ref_dir",
-    )
-    can_hyp = _representation_scoped_path(
-        args.summary_can_hyp_dir,
-        base / "can_hyp",
-        base=base,
-        label="--summary_can_hyp_dir",
-    )
-    ref_hyp = _representation_scoped_path(
-        args.summary_ref_hyp_dir,
-        base / "ref_hyp",
-        base=base,
-        label="--summary_ref_hyp_dir",
-    )
     args.out_csv = str(out_csv)
-    args.summary_can_ref_dir = str(can_ref)
-    args.summary_can_hyp_dir = str(can_hyp)
-    args.summary_ref_hyp_dir = str(ref_hyp)
 
-    summary_dirs = {
+    outputs = {
         "base": Path(base),
-        "can_ref": can_ref,
-        "can_hyp": can_hyp,
-        "ref_hyp": ref_hyp,
         "namespace": Path(namespace),
     }
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    for key, d in summary_dirs.items():
-        if key == "namespace":
-            continue
-        d.mkdir(parents=True, exist_ok=True)
-    return summary_dirs
+    base.mkdir(parents=True, exist_ok=True)
+    return outputs
 
 
 def write_evaluation_metadata(
@@ -197,7 +165,6 @@ def write_evaluation_metadata(
     namespace: str,
     reference_metadata_path: str | Path | None = None,
 ) -> Path:
-    legacy_mismatch = requested_representation == "legacy_orthographic"
     payload = {
         "schema_version": 2,
         "provenance_schema_version": PIPELINE_PROVENANCE_SCHEMA_VERSION,
@@ -207,8 +174,8 @@ def write_evaluation_metadata(
         "requested_scoring_representation": requested_representation,
         "effective_scoring_units": scoring_units,
         "output_namespace": namespace,
-        "representation_compatible": not legacy_mismatch,
-        "reference_integrity_enforced": not legacy_mismatch,
+        "representation_compatible": True,
+        "reference_integrity_enforced": True,
         "pipeline_provenance": build_evaluation_provenance(
             base=base,
             manifest_in=manifest_in,
@@ -218,12 +185,6 @@ def write_evaluation_metadata(
             reference_metadata_path=reference_metadata_path,
         ),
     }
-    if legacy_mismatch:
-        payload["warning"] = (
-            "Historical phoneme-vs-orthography diagnostic. Reference integrity "
-            "enforcement is disabled so archived source defects are preserved. Do "
-            "not compare this WER with representation-compatible model evaluations."
-        )
     path = base / "evaluation_metadata.json"
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(
@@ -242,7 +203,6 @@ def load_eval_manifest(
     can_key: str,
     hyp_key: str,
     logger: logging.Logger,
-    validate_references: bool = True,
 ) -> pd.DataFrame:
     rows = []
     total = 0
@@ -330,20 +290,15 @@ def load_eval_manifest(
                 "manifest_sub_rate",
             ]
         )
-    if validate_references:
-        try:
-            validate_reference_rows(
-                out.to_dict(orient="records"),
-                text_fields=("manifest_ref_text", "manifest_can_text"),
-                audio_field="audio_path",
-                source=str(in_path),
-            )
-        except ReferenceIntegrityError as exc:
-            raise SystemExit(str(exc)) from exc
-    else:
-        logger.warning(
-            "Reference integrity enforcement disabled for legacy recovery: %s", in_path
+    try:
+        validate_reference_rows(
+            out.to_dict(orient="records"),
+            text_fields=("manifest_ref_text", "manifest_can_text"),
+            audio_field="audio_path",
+            source=str(in_path),
         )
+    except ReferenceIntegrityError as exc:
+        raise SystemExit(str(exc)) from exc
     logger.info(
         "Loaded eval manifest %s | rows=%d | total_lines=%d | skipped=%d",
         in_path,
@@ -465,10 +420,6 @@ def build_eval_rows_from_manifest(
     out["nemo_del_rate"] = pd.to_numeric(out.get("manifest_del_rate"), errors="coerce")
     out["nemo_sub_rate"] = pd.to_numeric(out.get("manifest_sub_rate"), errors="coerce")
 
-    # Compatibility aliases expected by some metrics helpers.
-    out["reference_text"] = out["ref_text"]
-    out["hypothesis_text"] = out["hyp_text"]
-
     logger.info(
         "Prepared evaluation rows from manifest: rows=%d | non-empty REF=%d | non-empty CAN=%d | non-empty HYP=%d",
         len(out),
@@ -546,9 +497,6 @@ def main() -> None:
         can_key=args.manifest_can_key,
         hyp_key=args.manifest_hyp_key,
         logger=logger,
-        validate_references=(
-            args.scoring_representation != "legacy_orthographic"
-        ),
     )
     try:
         manifest_df, scoring_units = prepare_scoring_texts(
@@ -560,7 +508,7 @@ def main() -> None:
         )
     except ScoringRepresentationError as exc:
         raise SystemExit(str(exc)) from exc
-    summary_dirs = resolve_outputs(args, logger, scoring_units=scoring_units)
+    outputs = resolve_outputs(args, logger, scoring_units=scoring_units)
     df_eval = build_eval_rows_from_manifest(manifest_df, logger)
     if scoring_units == "orthographic":
         df_eval = adjust_letter_canonical_text(df_eval, logger)
@@ -582,7 +530,7 @@ def main() -> None:
     # Calculate per-row scores
     df_scores_per_row = evaluate_rows(df_eval)
 
-    # To-do: Attach meta-data
+    # Attach learner metadata to the scored rows.
     meta_cols = ["learner_id", "gender", "child_grade", "child_age", "region"]
     df_detailed = df_scores_per_row.merge(
         df_meta[meta_cols], on="learner_id", how="left"
@@ -594,13 +542,12 @@ def main() -> None:
     logger.info(f"Writing: {args.out_csv}")
     df_detailed.to_csv(args.out_csv)
 
-    # To-do: If we want finer-grained scores, e.g. per region, then we can just
-    # filter this row-wise data-frame
+    # The row-wise table can be filtered later for region or other cohort views.
 
     # Aggregate scores
     scores_dict = aggregate_row_scores(
         df_scores_per_row,
-        summary_dirs["base"],
+        outputs["base"],
         args.detailed,
         scoring_units=scoring_units,
     )
@@ -633,7 +580,7 @@ def main() -> None:
         manifest_in=args.manifest_in,
         requested_representation=args.scoring_representation,
         scoring_units=scoring_units,
-        namespace=summary_dirs["namespace"].name,
+        namespace=outputs["namespace"].name,
         reference_metadata_path=default_output_dir(layout.root) / METADATA_NAME,
     )
     logger.info("Writing: %s", metadata_path)

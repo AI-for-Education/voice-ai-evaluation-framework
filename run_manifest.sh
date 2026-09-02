@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_ROOT="$2"
       shift 2
       ;;
-    --audio_manifest|--manifest_base_in)
+    --audio_manifest)
       AUDIO_MANIFEST="$2"
       EXTRA_ARGS+=(--audio_manifest "$2")
       shift 2

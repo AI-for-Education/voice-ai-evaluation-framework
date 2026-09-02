@@ -32,7 +32,7 @@ def _paths(tmp_path: Path, profile: dict) -> tuple[Path, Path]:
     transcript_dir = tmp_path / "output" / "transcripts" / run_name
     transcript_dir.mkdir(parents=True)
     (transcript_dir / "run_metadata.json").write_text(
-        json.dumps({"profile": profile}),
+        json.dumps({"inference_profile": profile}),
         encoding="utf-8",
     )
     return dataset, manifest
@@ -110,9 +110,6 @@ def _evaluation_args(
         manifest_in=str(run_root / "manifests" / manifest_name),
         scoring_representation=scoring_representation,
         out_csv=str(out_csv) if out_csv is not None else None,
-        summary_can_ref_dir=None,
-        summary_can_hyp_dir=None,
-        summary_ref_hyp_dir=None,
     )
 
 
@@ -277,7 +274,7 @@ def test_standard_evaluation_manifest_requires_run_metadata(tmp_path: Path) -> N
         )
 
 
-def test_manual_manifest_keeps_legacy_orthographic_default(tmp_path: Path) -> None:
+def test_manual_manifest_defaults_to_orthographic_scoring(tmp_path: Path) -> None:
     dataset = tmp_path / "dataset"
     dataset.mkdir()
     source = _manifest_df()
@@ -360,49 +357,6 @@ def test_explicit_ipa_evaluation_uses_separate_output_folder(
     assert Path(args.out_csv) == run_root / "ipa" / "egra_eval_detailed.csv"
 
 
-def test_legacy_orthographic_preserves_phoneme_manifest_for_restoration(
-    tmp_path: Path,
-) -> None:
-    dataset, manifest = _paths(
-        tmp_path,
-        {
-            "output_units": "phoneme",
-            "output_notation": "ipa",
-            "output_inventory": "bookbot_gruut_sw_v1",
-        },
-    )
-    source = _manifest_df()
-
-    result, units = prepare_scoring_texts(
-        source,
-        dataset_root=dataset,
-        manifest_in=manifest,
-        logger=logging.getLogger("test_scoring_text"),
-        scoring_representation="legacy_orthographic",
-    )
-
-    assert units == "orthographic"
-    assert result is source
-
-
-def test_legacy_orthographic_rejects_orthographic_model_profile(
-    tmp_path: Path,
-) -> None:
-    dataset, manifest = _paths(tmp_path, {"output_units": "orthographic"})
-
-    with pytest.raises(
-        ScoringRepresentationError,
-        match="only valid for native phoneme output",
-    ):
-        prepare_scoring_texts(
-            _manifest_df(),
-            dataset_root=dataset,
-            manifest_in=manifest,
-            logger=logging.getLogger("test_scoring_text"),
-            scoring_representation="legacy_orthographic",
-        )
-
-
 @pytest.mark.parametrize(
     ("requested", "units", "folder"),
     [
@@ -410,7 +364,6 @@ def test_legacy_orthographic_rejects_orthographic_model_profile(
         ("orthographic", "orthographic", "orthographic"),
         ("auto", "phoneme", "ipa"),
         ("ipa", "phoneme", "ipa"),
-        ("legacy_orthographic", "orthographic", "orthographic_legacy"),
     ],
 )
 def test_evaluation_outputs_are_namespaced_by_representation(

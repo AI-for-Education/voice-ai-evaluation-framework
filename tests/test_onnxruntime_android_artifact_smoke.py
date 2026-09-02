@@ -45,7 +45,7 @@ def test_packaged_android_int8_artifact_contract_and_runtime() -> None:
             "artifact_hash": "passed",
             "onnx_contract": "passed",
             "quantized_operators": "passed",
-            "runtime_version": "passed",
+            "inference_engine_version": "passed",
         }
     finally:
         backend.close()

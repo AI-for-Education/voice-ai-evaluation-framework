@@ -152,7 +152,6 @@ class Gemma4AudioBackend:
         self._processor_class = type(self.processor).__name__
         self._metadata: dict[str, Any] = {
             "inference_library": "multimodal",
-            "framework": "multimodal",  # Deprecated metadata alias.
             "adapter": "gemma4_audio",
             "model_class": self._model_class,
             "processor_class": self._processor_class,
