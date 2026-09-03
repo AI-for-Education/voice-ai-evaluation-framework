@@ -37,6 +37,7 @@ AUDIT_ONLY_COLUMNS = (
     "official_model_url",
     "official_model_url_note",
     "architecture_evidence_status",
+    "g2p_identity_sha256",
 )
 
 
@@ -66,7 +67,6 @@ def display_frame(frame: pd.DataFrame, metric: str) -> pd.DataFrame:
 
     labels = {
         "model_label": "group · model · variant (decoder)",
-        "evaluation_status": "status",
         "run_id": "run",
         "inference_setup_id": "inference setup ID",
         "architecture": "architecture",
@@ -78,6 +78,10 @@ def display_frame(frame: pd.DataFrame, metric: str) -> pd.DataFrame:
         "context_evidence": "factor evidence",
         "native_output_units": "native output",
         "hypothesis_route": "scoring route",
+        "g2p_tool": "G2P tool",
+        "g2p_system_id": "G2P system ID",
+        "g2p_display_name": "G2P system",
+        "target_inventory": "target IPA inventory",
         "completed_at": "completed",
     }
     for section in RESULT_SECTIONS:

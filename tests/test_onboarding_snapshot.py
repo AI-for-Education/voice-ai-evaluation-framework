@@ -13,6 +13,9 @@ from tools.build_onboarding_leaderboard_snapshot import (
 )
 
 
+SYSTEM_ID = "africa_g2p-swh-fixture123456"
+
+
 def _write_csv(path: Path, fields: list[str], rows: list[dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as stream:
@@ -24,7 +27,7 @@ def _write_csv(path: Path, fields: list[str], rows: list[dict[str, str]]) -> Non
 def _leaderboard_row(
     rank: int, inference_setup_id: str, metric: str
 ) -> dict[str, str]:
-    return {
+    row = {
         "rank": str(rank),
         "inference_setup_id": inference_setup_id,
         "model_label": f"Group · {inference_setup_id} · variant (greedy)",
@@ -32,6 +35,9 @@ def _leaderboard_row(
         "global_mer": "8.9000",
         "hypothesis_route": "native orthographic",
     }
+    if metric == "per":
+        row["g2p_system_id"] = SYSTEM_ID
+    return row
 
 
 def _fixture(
@@ -56,7 +62,12 @@ def _fixture(
         common + ["global_wer"],
         orthographic_rows,
     )
-    _write_csv(root / "leaderboard_ipa.csv", common + ["global_per"], ipa_rows)
+    if ipa_rows:
+        _write_csv(
+            root / "ipa" / f"leaderboard_{SYSTEM_ID}.csv",
+            common + ["global_per", "g2p_system_id"],
+            ipa_rows,
+        )
     presentation = [
         {
             "inference_setup_id": "evaluated-model",
@@ -75,9 +86,14 @@ def _fixture(
         presentation,
     )
     metadata = {
-        "schema_version": 4,
+        "schema_version": 6,
         "generated_at": "2026-08-19T10:37:58+00:00",
         "latest_completed_run_per_inference_setup": True,
+        "eligibility_policy": {
+            "completed_evaluations_only": True,
+            "representation_compatible_only": True,
+            "smoke_tests_excluded": True,
+        },
         "presentation_naming": {
             "registry": {
                 "path": "D:\\private\\repo\\egra_eval2\\model_presentation.json"
@@ -90,11 +106,21 @@ def _fixture(
                 "ranking_metric": "wer",
                 "skipped": skipped,
             },
-            "ipa": {
-                "rows": len(ipa_rows),
-                "ranking_metric": "per",
-                "skipped": [],
-            },
+            "ipa_by_system": (
+                {
+                    SYSTEM_ID: {
+                        "rows": len(ipa_rows),
+                        "ranking_metric": "per",
+                        "skipped": [],
+                        "g2p_system": {
+                            "g2p_display_name": "Africa G2P",
+                            "target_inventory": "africa_g2p_swh_ipa_v1",
+                        },
+                    }
+                }
+                if ipa_rows
+                else {}
+            ),
         },
     }
     (root / "leaderboard_metadata.json").write_text(
@@ -119,12 +145,15 @@ def test_build_snapshot_writes_portable_status_and_exact_csvs(tmp_path: Path) ->
     assert "12.34%" in status
     for filename in (
         "leaderboard_orthographic.csv",
-        "leaderboard_ipa.csv",
         "leaderboard_model_presentation.csv",
     ):
         assert (package / "data" / filename).read_bytes() == (
             source / filename
         ).read_bytes()
+    ipa_filename = f"leaderboard_{SYSTEM_ID}.csv"
+    assert (package / "data" / "ipa" / ipa_filename).read_bytes() == (
+        source / "ipa" / ipa_filename
+    ).read_bytes()
 
     packaged_metadata = json.loads(
         (package / "data" / "leaderboard_metadata.json").read_text(encoding="utf-8")
@@ -144,7 +173,8 @@ def test_empty_and_skipped_status_is_explicit(tmp_path: Path) -> None:
     build_snapshot(source, package)
 
     status = (package / "05-current-leaderboard-status.md").read_text(encoding="utf-8")
-    assert status.count("No eligible completed results were found.") == 2
+    assert status.count("No eligible completed results were found.") == 1
+    assert "No exact-system IPA boards found." in status
     assert "Skipped orthographic results | 1" in status
     assert "incompatible example" in status
 
@@ -171,7 +201,9 @@ def test_snapshot_falls_back_when_windows_denies_replace(
     build_snapshot(source, package)
 
     assert "old snapshot" not in status.read_text(encoding="utf-8")
-    assert (package / "data" / "leaderboard_ipa.csv").is_file()
+    assert (
+        package / "data" / "ipa" / f"leaderboard_{SYSTEM_ID}.csv"
+    ).is_file()
 
 
 @pytest.mark.parametrize("failure", ["missing", "malformed", "row_mismatch"])
@@ -190,13 +222,15 @@ def test_invalid_inputs_do_not_replace_existing_status(
     status.write_text("existing snapshot", encoding="utf-8")
 
     if failure == "missing":
-        (source / "leaderboard_ipa.csv").unlink()
+        (
+            source / "ipa" / f"leaderboard_{SYSTEM_ID}.csv"
+        ).unlink()
     elif failure == "malformed":
         (source / "leaderboard_metadata.json").write_text("{", encoding="utf-8")
     else:
         metadata_path = source / "leaderboard_metadata.json"
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        metadata["leaderboards"]["ipa"]["rows"] = 2
+        metadata["leaderboards"]["ipa_by_system"][SYSTEM_ID]["rows"] = 2
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
     with pytest.raises(SnapshotError):
@@ -204,7 +238,48 @@ def test_invalid_inputs_do_not_replace_existing_status(
     assert status.read_text(encoding="utf-8") == "existing snapshot"
 
 
+def test_missing_eligibility_policy_does_not_replace_existing_status(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "leaderboards"
+    package = tmp_path / "package"
+    _fixture(
+        source,
+        orthographic_rows=[_leaderboard_row(1, "evaluated-model", "wer")],
+    )
+    package.mkdir()
+    status = package / "05-current-leaderboard-status.md"
+    status.write_text("existing snapshot", encoding="utf-8")
+    metadata_path = source / "leaderboard_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.pop("eligibility_policy")
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(SnapshotError, match="eligibility policy"):
+        build_snapshot(source, package)
+    assert status.read_text(encoding="utf-8") == "existing snapshot"
+
+
+def test_obsolete_run_status_data_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "leaderboards"
+    package = tmp_path / "package"
+    row = _leaderboard_row(1, "evaluated-model", "wer")
+    _fixture(source, orthographic_rows=[row])
+    row["evaluation_status"] = "scored (full run, 5,143 items)"
+    orthographic_path = source / "leaderboard_orthographic.csv"
+    _write_csv(
+        orthographic_path,
+        list(row),
+        [row],
+    )
+
+    with pytest.raises(SnapshotError, match="obsolete run-status data"):
+        build_snapshot(source, package)
+    assert not package.exists()
+
+
 def test_local_onboarding_package_is_self_contained_when_present() -> None:
+    # Optional local-development artifact; docs/* is ignored except vocabulary.md.
     package = Path("docs/shared-onboarding")
     if not package.is_dir():
         pytest.skip("The generated local onboarding package is not present")

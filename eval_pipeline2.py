@@ -15,8 +15,12 @@ from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
 from egra_eval2.eval_utils import adjust_letter_canonical_text
 from egra_eval2.evaluate import aggregate_row_scores, evaluate_rows
 from egra_eval2.manifest_integrity import ReferenceIntegrityError, validate_reference_rows
-from egra_eval2.scoring_text import ScoringRepresentationError, prepare_scoring_texts
-from egra_eval2.reference.views import METADATA_NAME, default_output_dir
+from egra_eval2.reference.g2p import SUPPORTED_G2P_TOOLS
+from egra_eval2.scoring_text import (
+    ScoringContext,
+    ScoringRepresentationError,
+    prepare_scoring_texts,
+)
 from inference.pipeline_provenance import (
     PIPELINE_PROVENANCE_SCHEMA_VERSION,
     build_evaluation_provenance,
@@ -78,6 +82,13 @@ def parse_args() -> argparse.Namespace:
             "an explicit valid view"
         ),
     )
+    p.add_argument(
+        "--g2p_tool",
+        "--g2p-tool",
+        choices=SUPPORTED_G2P_TOOLS,
+        default=None,
+        help="Required whenever the effective scoring representation is IPA.",
+    )
     p.add_argument("--detailed", action="store_true", default=False)
     return p.parse_args()
 
@@ -118,8 +129,16 @@ def resolve_outputs(
     logger: logging.Logger,
     *,
     scoring_units: str | None = None,
+    scoring_context: ScoringContext | None = None,
 ) -> dict[str, Path]:
     namespace = _output_namespace(args.scoring_representation, scoring_units)
+    g2p_system_id = None
+    if namespace == "ipa":
+        if scoring_context is None or scoring_context.g2p_system is None:
+            raise SystemExit(
+                "IPA output routing requires a resolved exact G2P system"
+            )
+        g2p_system_id = scoring_context.g2p_system.system_id
     if args.output_root:
         run_root = Path(args.output_root)
     else:
@@ -127,15 +146,33 @@ def resolve_outputs(
         logger.info("No --output_root supplied; using run root: %s", run_root)
 
     known_namespaces = {"orthographic", "ipa"}
-    if run_root.name in known_namespaces:
-        if run_root.name != namespace:
+    if namespace == "orthographic" and run_root.name in known_namespaces:
+        if run_root.name != "orthographic":
             raise SystemExit(
                 "Output path representation does not match scoring mode: "
                 f"{run_root} vs {namespace}"
             )
         base = run_root
+    elif namespace == "ipa" and run_root.name == "orthographic":
+        raise SystemExit(
+            "Output path representation does not match scoring mode: "
+            f"{run_root} vs {namespace}"
+        )
+    elif namespace == "ipa" and run_root.name == "ipa":
+        base = run_root / str(g2p_system_id)
+    elif namespace == "ipa" and run_root.parent.name == "ipa":
+        if run_root.name != g2p_system_id:
+            raise SystemExit(
+                "Output path G2P system does not match scoring mode: "
+                f"{run_root.name} vs {g2p_system_id}"
+            )
+        base = run_root
     else:
-        base = run_root / namespace
+        base = (
+            run_root / "ipa" / str(g2p_system_id)
+            if namespace == "ipa"
+            else run_root / "orthographic"
+        )
     args.output_root = str(base)
     logger.info("Writing %s evaluation under: %s", namespace, base)
 
@@ -151,6 +188,8 @@ def resolve_outputs(
         "base": Path(base),
         "namespace": Path(namespace),
     }
+    if g2p_system_id:
+        outputs["g2p_system_id"] = Path(g2p_system_id)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     base.mkdir(parents=True, exist_ok=True)
     return outputs
@@ -163,10 +202,23 @@ def write_evaluation_metadata(
     requested_representation: str,
     scoring_units: str,
     namespace: str,
+    scoring_context: ScoringContext | None = None,
     reference_metadata_path: str | Path | None = None,
 ) -> Path:
+    if scoring_context is None:
+        if namespace != "orthographic":
+            raise ValueError("IPA evaluation metadata requires a scoring context")
+        scoring_context = ScoringContext(
+            scoring_units="orthographic",
+            namespace="orthographic",
+            reference_metadata_path=(
+                Path(reference_metadata_path)
+                if reference_metadata_path is not None
+                else None
+            ),
+        )
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "provenance_schema_version": PIPELINE_PROVENANCE_SCHEMA_VERSION,
         "status": "complete",
         "completed_at": datetime.now().astimezone().isoformat(),
@@ -176,15 +228,26 @@ def write_evaluation_metadata(
         "output_namespace": namespace,
         "representation_compatible": True,
         "reference_integrity_enforced": True,
+        "hypothesis_route": scoring_context.hypothesis_route,
         "pipeline_provenance": build_evaluation_provenance(
             base=base,
             manifest_in=manifest_in,
             requested_representation=requested_representation,
             scoring_units=scoring_units,
             namespace=namespace,
-            reference_metadata_path=reference_metadata_path,
+            reference_metadata_path=scoring_context.reference_metadata_path,
+            reference_view_path=scoring_context.reference_view_path,
+            aligned_manifest_path=scoring_context.aligned_manifest_path,
+            g2p_system=(
+                scoring_context.g2p_system.metadata()
+                if scoring_context.g2p_system is not None
+                else None
+            ),
+            hypothesis_route=scoring_context.hypothesis_route,
         ),
     }
+    if scoring_context.g2p_system is not None:
+        payload["g2p_system"] = scoring_context.g2p_system.metadata()
     path = base / "evaluation_metadata.json"
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(
@@ -499,16 +562,23 @@ def main() -> None:
         logger=logger,
     )
     try:
-        manifest_df, scoring_units = prepare_scoring_texts(
+        prepared = prepare_scoring_texts(
             manifest_df,
             dataset_root=layout.root,
             manifest_in=args.manifest_in,
             logger=logger,
             scoring_representation=args.scoring_representation,
+            g2p_tool=args.g2p_tool,
         )
+        manifest_df, scoring_units = prepared
     except ScoringRepresentationError as exc:
         raise SystemExit(str(exc)) from exc
-    outputs = resolve_outputs(args, logger, scoring_units=scoring_units)
+    outputs = resolve_outputs(
+        args,
+        logger,
+        scoring_units=scoring_units,
+        scoring_context=prepared.context,
+    )
     df_eval = build_eval_rows_from_manifest(manifest_df, logger)
     if scoring_units == "orthographic":
         df_eval = adjust_letter_canonical_text(df_eval, logger)
@@ -581,7 +651,7 @@ def main() -> None:
         requested_representation=args.scoring_representation,
         scoring_units=scoring_units,
         namespace=outputs["namespace"].name,
-        reference_metadata_path=default_output_dir(layout.root) / METADATA_NAME,
+        scoring_context=prepared.context,
     )
     logger.info("Writing: %s", metadata_path)
 

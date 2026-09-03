@@ -81,6 +81,19 @@ class DiagnosticBackend(FakeBackend):
         }
 
 
+class LowCoverageBackend(FakeBackend):
+    def transcribe_batch(self, audio_paths: Sequence[str]) -> list[TranscriptionResult]:
+        values = {
+            "first.wav": "kept",
+            "second.wav": "",
+            "third.wav": "   ",
+        }
+        return [
+            TranscriptionResult(path, 1.23456, values[Path(path).name])
+            for path in audio_paths
+        ]
+
+
 class ExplodingBackend(FakeBackend):
     def __init__(self) -> None:
         super().__init__()
@@ -210,6 +223,16 @@ def test_runner_preserves_schema_order_writes_metadata_and_reports_progress(
         "decoding.strategy"
     ]
     assert metadata["output"]["results"] == 3
+    assert metadata["output"]["hypotheses"] == {
+        "counts": {"total": 3, "non_empty": 3, "blank": 0, "errors": 0},
+        "coverage": {
+            "status": "ok",
+            "warning_code": None,
+            "non_empty_fraction": 1.0,
+            "minimum_expected_non_empty_fraction": 0.5,
+            "affects_evaluation": False,
+        },
+    }
     assert metadata["output"]["directory"] == str(output.parent)
     assert metadata["output"]["smoke_test"] is False
     assert (
@@ -310,6 +333,13 @@ def test_mock_smoke_run_records_errors_warnings_and_execution_stack(
     assert rows[1]["audio_filepath"] == "second.wav"
     assert rows[1]["error"] == "mock audio decode failure"
     assert metadata["output"]["errors"] == 1
+    assert metadata["output"]["hypotheses"]["counts"] == {
+        "total": 3,
+        "non_empty": 2,
+        "blank": 1,
+        "errors": 1,
+    }
+    assert metadata["output"]["hypotheses"]["coverage"]["status"] == "ok"
     assert metadata["warnings"][0]["phase"] == "transcription"
     assert metadata["warnings"][0]["message"] == (
         "mock recoverable decoder warning"
@@ -329,6 +359,44 @@ def test_mock_smoke_run_records_errors_warnings_and_execution_stack(
     assert provenance["execution_stack"]["observed"]["environment"]["launch"] == (
         metadata["execution_stack"]["launch_context"]
     )
+
+
+def test_low_coverage_warning_is_structured_and_preserves_hypotheses(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest = tmp_path / "input.jsonl"
+    _manifest(manifest)
+
+    output = run_backend(
+        backend=LowCoverageBackend(),
+        profile=_profile(),
+        profile_path="profile.yaml",
+        model_path="model",
+        root_audio_dir=None,
+        audio_manifest=str(manifest),
+        output_root=str(tmp_path / "output"),
+        batch_size=2,
+    )
+
+    rows = [
+        json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()
+    ]
+    metadata = json.loads(
+        (output.parent / "run_metadata.json").read_text(encoding="utf-8")
+    )
+    assert [row["pred_text"] for row in rows] == ["kept", "", "   "]
+    assert metadata["output"]["hypotheses"] == {
+        "counts": {"total": 3, "non_empty": 1, "blank": 2, "errors": 0},
+        "coverage": {
+            "status": "warning",
+            "warning_code": "low_non_empty_hypothesis_coverage",
+            "non_empty_fraction": pytest.approx(1 / 3),
+            "minimum_expected_non_empty_fraction": 0.5,
+            "affects_evaluation": False,
+        },
+    }
+    assert "[WARNING] Low non-empty hypothesis coverage: 1/3" in capsys.readouterr().out
 
 
 def test_fail_on_error_writes_metadata_then_exits_nonzero(tmp_path: Path) -> None:

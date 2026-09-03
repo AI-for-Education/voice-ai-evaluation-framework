@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import math
 from dataclasses import dataclass
@@ -14,16 +15,19 @@ import pandas as pd
 from egra_eval2.reference.ipa_inventory_maps import (
     IPAInventoryMapError,
     build_ipa_aligner,
+    describe_ipa_inventory_route,
 )
+from egra_eval2.reference.g2p import G2PSystem, G2PSystemError, resolve_g2p_system
 from egra_eval2.reference.views import (
     METADATA_NAME,
     ReferenceViewError,
     default_output_dir,
-    phonemize_with_africa_g2p,
+    validate_reference_view_index,
 )
+from inference.pipeline_provenance import inference_profile_from_run_metadata
 
 
-ALIGNED_IPA_SUFFIX = ".ipa_aligned.jsonl"
+ALIGNED_IPA_SUFFIX = ".ipa_aligned"
 
 
 class ScoringRepresentationError(ValueError):
@@ -41,10 +45,45 @@ PhonemizeBatch = Callable[[Sequence[str]], list[str]]
 @dataclass(frozen=True)
 class IPAReferenceView:
     rows: dict[str, tuple[str, str]]
+    path: Path
+    metadata_path: Path
+    system_id: str
     inventory: str
     language: str
-    producer: str
-    producer_version: str
+    tool_id: str
+
+
+@dataclass(frozen=True)
+class ScoringContext:
+    """Resolved representation and exact-system provenance for one evaluation."""
+
+    scoring_units: str
+    namespace: str
+    g2p_system: G2PSystem | None = None
+    reference_view_path: Path | None = None
+    reference_metadata_path: Path | None = None
+    aligned_manifest_path: Path | None = None
+    hypothesis_route: str = "native orthographic"
+
+
+@dataclass(frozen=True)
+class PreparedScoringTexts:
+    """Backward-unpackable scoring result with explicit provenance context."""
+
+    frame: pd.DataFrame
+    context: ScoringContext
+
+    def __iter__(self):
+        yield self.frame
+        yield self.context.scoring_units
+
+
+def _orthographic_context(dataset_root: str | Path) -> ScoringContext:
+    return ScoringContext(
+        scoring_units="orthographic",
+        namespace="orthographic",
+        reference_metadata_path=default_output_dir(dataset_root) / METADATA_NAME,
+    )
 
 
 def align_ipa_inventory(text: object, *, source: str, target: str) -> str:
@@ -63,6 +102,14 @@ def _load_json_object(path: Path, label: str) -> dict:
     if not isinstance(payload, dict):
         raise ScoringRepresentationError(f"Invalid {label}: {path}")
     return payload
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _run_metadata_path(manifest_in: str | Path) -> Path | None:
@@ -90,15 +137,18 @@ def _load_run_profile(manifest_in: str | Path) -> dict | None:
             f"{metadata_path}"
         )
     metadata = _load_json_object(metadata_path, "ASR run metadata")
-    profile = metadata.get("inference_profile")
-    if not isinstance(profile, dict):
+    profile = inference_profile_from_run_metadata(metadata)
+    if not profile:
         raise ScoringRepresentationError(
             f"ASR run metadata has no inference profile: {metadata_path}"
         )
     return profile
 
 
-def _load_ipa_reference(dataset_root: str | Path) -> IPAReferenceView:
+def _load_ipa_reference(
+    dataset_root: str | Path,
+    g2p_system: G2PSystem,
+) -> IPAReferenceView:
     view_dir = default_output_dir(dataset_root)
     metadata_path = view_dir / METADATA_NAME
     if not metadata_path.is_file():
@@ -107,16 +157,32 @@ def _load_ipa_reference(dataset_root: str | Path) -> IPAReferenceView:
             "Run run_manifest.sh first."
         )
     metadata = _load_json_object(metadata_path, "IPA reference metadata")
-    ipa = metadata.get("ipa")
+    if metadata.get("schema_version") != 2:
+        raise ScoringRepresentationError(
+            f"IPA reference metadata is not exact-system schema 2: {metadata_path}. "
+            "Rebuild the selected G2P reference view."
+        )
+    try:
+        validate_reference_view_index(view_dir, metadata)
+    except ReferenceViewError as exc:
+        raise ScoringRepresentationError(str(exc)) from exc
+    ipa_views = metadata.get("ipa_views")
+    if not isinstance(ipa_views, dict):
+        raise ScoringRepresentationError(
+            f"IPA reference metadata has no ipa_views index: {metadata_path}"
+        )
+    ipa = ipa_views.get(g2p_system.system_id)
     if not isinstance(ipa, dict):
         raise ScoringRepresentationError(
-            f"IPA reference metadata is incomplete: {metadata_path}"
+            f"IPA reference view for {g2p_system.system_id} is not indexed: "
+            f"{metadata_path}. Build it with --g2p-tool {g2p_system.tool_id}."
         )
     view_name = ipa.get("path")
     inventory = ipa.get("inventory")
     language = ipa.get("language")
-    producer = ipa.get("producer")
-    producer_version = ipa.get("producer_version")
+    tool_id = ipa.get("tool_id")
+    identity_sha256 = ipa.get("identity_sha256")
+    identity = ipa.get("identity")
     if not isinstance(view_name, str) or not view_name.strip():
         raise ScoringRepresentationError(
             f"IPA reference metadata has no path: {metadata_path}"
@@ -125,15 +191,23 @@ def _load_ipa_reference(dataset_root: str | Path) -> IPAReferenceView:
         raise ScoringRepresentationError(
             f"IPA reference metadata has no inventory: {metadata_path}"
         )
-    for label, value in (
-        ("language", language),
-        ("producer", producer),
-        ("producer_version", producer_version),
-    ):
+    for label, value in (("language", language), ("tool_id", tool_id)):
         if not isinstance(value, str) or not value.strip():
             raise ScoringRepresentationError(
                 f"IPA reference metadata has no {label}: {metadata_path}"
             )
+    expected = g2p_system.metadata()
+    if (
+        identity_sha256 != expected["identity_sha256"]
+        or identity != expected["identity"]
+        or tool_id != expected["tool_id"]
+        or language != expected["language"]
+        or inventory != expected["inventory"]
+    ):
+        raise ScoringRepresentationError(
+            "Indexed IPA reference identity does not match the selected installed "
+            f"G2P system: {g2p_system.system_id}"
+        )
 
     view_path = (view_dir / view_name).resolve()
     try:
@@ -144,6 +218,10 @@ def _load_ipa_reference(dataset_root: str | Path) -> IPAReferenceView:
         ) from exc
     if not view_path.is_file():
         raise ScoringRepresentationError(f"IPA reference view not found: {view_path}")
+    if ipa.get("sha256") != _sha256(view_path):
+        raise ScoringRepresentationError(
+            f"IPA reference view hash does not match metadata: {view_path}"
+        )
 
     rows: dict[str, tuple[str, str]] = {}
     with view_path.open("r", encoding="utf-8") as source:
@@ -176,10 +254,12 @@ def _load_ipa_reference(dataset_root: str | Path) -> IPAReferenceView:
             rows[item_id] = (row["can_text"], row["ref_text"])
     return IPAReferenceView(
         rows=rows,
+        path=view_path,
+        metadata_path=metadata_path,
+        system_id=g2p_system.system_id,
         inventory=inventory.strip(),
         language=language.strip(),
-        producer=producer.strip(),
-        producer_version=producer_version.strip(),
+        tool_id=tool_id.strip(),
     )
 
 
@@ -194,11 +274,15 @@ def _text_values(values: pd.Series) -> list[str]:
 
 
 def _write_aligned_ipa_manifest(
-    manifest_df: pd.DataFrame, manifest_in: str | Path
+    manifest_df: pd.DataFrame,
+    manifest_in: str | Path,
+    g2p_system_id: str,
 ) -> Path:
     """Persist segment-level IPA values derived from the scoring manifest."""
     source_path = Path(manifest_in)
-    output_path = source_path.with_name(f"{source_path.stem}{ALIGNED_IPA_SUFFIX}")
+    output_path = source_path.with_name(
+        f"{source_path.stem}{ALIGNED_IPA_SUFFIX}.{g2p_system_id}.jsonl"
+    )
     temporary = output_path.with_name(f".{output_path.name}.tmp")
     try:
         with temporary.open("w", encoding="utf-8", newline="\n") as output:
@@ -225,8 +309,10 @@ def prepare_scoring_texts(
     manifest_in: str | Path,
     logger: logging.Logger,
     scoring_representation: ScoringRepresentation = "auto",
+    g2p_tool: str | None = None,
     phonemize: PhonemizeBatch | None = None,
-) -> tuple[pd.DataFrame, str]:
+    g2p_system: G2PSystem | None = None,
+) -> PreparedScoringTexts:
     """Resolve one orthographic or IPA scoring view before shared metrics."""
     if scoring_representation not in {
         "auto",
@@ -243,7 +329,14 @@ def prepare_scoring_texts(
                 "IPA scoring requires standard run metadata so model output units "
                 "are known"
             )
-        return manifest_df, "orthographic"
+        if g2p_tool or g2p_system:
+            raise ScoringRepresentationError(
+                "--g2p-tool is only valid for an IPA evaluation"
+            )
+        return PreparedScoringTexts(
+            manifest_df,
+            _orthographic_context(dataset_root),
+        )
 
     output_units = profile.get("output_units")
     if scoring_representation == "orthographic":
@@ -251,15 +344,46 @@ def prepare_scoring_texts(
             raise ScoringRepresentationError(
                 "Orthographic scoring cannot consume a native phoneme hypothesis"
             )
-        return manifest_df, "orthographic"
+        if g2p_tool or g2p_system:
+            raise ScoringRepresentationError(
+                "--g2p-tool is only valid for an IPA evaluation"
+            )
+        return PreparedScoringTexts(
+            manifest_df,
+            _orthographic_context(dataset_root),
+        )
     if output_units == "orthographic" and scoring_representation == "auto":
-        return manifest_df, "orthographic"
+        if g2p_tool or g2p_system:
+            raise ScoringRepresentationError(
+                "--g2p-tool is only valid for an IPA evaluation"
+            )
+        return PreparedScoringTexts(
+            manifest_df,
+            _orthographic_context(dataset_root),
+        )
     if output_units not in {"orthographic", "phoneme"}:
         raise ScoringRepresentationError(
             f"Unsupported or missing model output units: {output_units}"
         )
 
-    reference_view = _load_ipa_reference(dataset_root)
+    if g2p_system is None and not g2p_tool:
+        raise ScoringRepresentationError(
+            "IPA scoring requires an explicit --g2p-tool"
+        )
+    if (
+        g2p_system is not None
+        and g2p_tool is not None
+        and g2p_tool.strip().lower() != g2p_system.tool_id
+    ):
+        raise ScoringRepresentationError(
+            "Selected --g2p-tool does not match the supplied exact G2P system"
+        )
+    try:
+        system = g2p_system or resolve_g2p_system(str(g2p_tool))
+    except G2PSystemError as exc:
+        raise ScoringRepresentationError(str(exc)) from exc
+
+    reference_view = _load_ipa_reference(dataset_root, system)
     required_columns = {"audio_path", "manifest_hyp_text"}
     missing_columns = sorted(required_columns - set(manifest_df.columns))
     if missing_columns:
@@ -302,21 +426,14 @@ def prepare_scoring_texts(
         except IPAInventoryMapError as exc:
             raise ScoringRepresentationError(str(exc)) from exc
         out["manifest_hyp_text"] = out["manifest_hyp_text"].map(align_hypothesis)
-        hypothesis_route = f"native IPA {source_inventory} -> {reference_view.inventory}"
-    else:
-        if reference_view.producer != "africa-g2p":
-            raise ScoringRepresentationError(
-                "Orthographic-to-IPA hypothesis conversion requires an Africa G2P "
-                f"reference view, found: {reference_view.producer}"
-            )
-        phonemize_batch = phonemize or (
-            lambda texts: phonemize_with_africa_g2p(
-                texts, language=reference_view.language
-            )
+        hypothesis_route = describe_ipa_inventory_route(
+            source_inventory, reference_view.inventory
         )
+    else:
+        phonemize_batch = phonemize or system.phonemize
         try:
             converted = phonemize_batch(_text_values(out["manifest_hyp_text"]))
-        except ReferenceViewError as exc:
+        except (G2PSystemError, ReferenceViewError) as exc:
             raise ScoringRepresentationError(str(exc)) from exc
         if len(converted) != len(out):
             raise ScoringRepresentationError(
@@ -324,15 +441,25 @@ def prepare_scoring_texts(
             )
         out["manifest_hyp_text"] = [str(value).strip() for value in converted]
         hypothesis_route = (
-            f"orthographic -> {reference_view.producer} "
-            f"{reference_view.producer_version} ({reference_view.language})"
+            f"orthographic -> {system.display_name} ({system.system_id})"
         )
 
-    aligned_path = _write_aligned_ipa_manifest(out, manifest_in)
+    aligned_path = _write_aligned_ipa_manifest(out, manifest_in, system.system_id)
     logger.info(
         "Scoring IPA in canonical inventory %s; hypothesis route: %s",
         reference_view.inventory,
         hypothesis_route,
     )
     logger.info("Wrote aligned IPA scoring manifest: %s", aligned_path)
-    return out, "phoneme"
+    return PreparedScoringTexts(
+        out,
+        ScoringContext(
+            scoring_units="phoneme",
+            namespace="ipa",
+            g2p_system=system,
+            reference_view_path=reference_view.path,
+            reference_metadata_path=reference_view.metadata_path,
+            aligned_manifest_path=aligned_path,
+            hypothesis_route=hypothesis_route,
+        ),
+    )

@@ -58,8 +58,9 @@ Profiles also reference the tracked pipeline definitions in
 `inference/pipeline_contracts.json`. New metadata resolves them into four
 readable evidence groups: model artifact, inference setup, execution stack,
 and evaluation. Unavailable observations use an explicit `not_available`
-value with a reason instead of guessing; see
-`docs/pipeline-provenance.md`.
+value with a reason instead of guessing. Extended notes may be kept locally in
+`docs/pipeline-provenance.md`; that file is local-development documentation and
+is not versioned.
 New inference runs score the direct adapter hypothesis in `pred_text`; no
 duration or repetition rule truncates model output after decoding.
 
@@ -80,10 +81,11 @@ input_output_data/output/
 │     │  ├─ egra_eval_detailed.csv
 │     │  ├─ egra_eval_summary.txt
 │     │  └─ evaluation_metadata.json
-│     ├─ ipa/                      # Valid IPA/PER result
-│     │  ├─ egra_eval_detailed.csv
-│     │  ├─ egra_eval_summary.txt
-│     │  └─ evaluation_metadata.json
+│     ├─ ipa/                      # IPA results stay isolated by exact G2P identity
+│     │  └─ <g2p_system_id>/
+│     │     ├─ egra_eval_detailed.csv
+│     │     ├─ egra_eval_summary.txt
+│     │     └─ evaluation_metadata.json
 └─ smoke_tests/
    ├─ transcripts/
    │  └─ <inference-setup-id>_<YYYY_MM_DD_HH_MM_SS_UTC>/
@@ -100,7 +102,8 @@ derives the matching evaluation directory from the standard
 `--prediction_manifest` path. `run_eval2.sh` writes each scoring representation into
 its own child directory, so WER and PER results cannot replace one another.
 `auto` writes orthographic models under `orthographic/` and native phoneme
-models under `ipa/`. Cross-representation phoneme-vs-orthography WER is not a
+models under `ipa/<g2p_system_id>/`. Cross-representation
+phoneme-vs-orthography WER is not a
 valid evaluation route and is rejected.
 Use `--smoke_test` on any current inference launcher for the smoke-test branch.
 `--output_root` remains available when a different output base or an explicit
@@ -160,7 +163,7 @@ CPU image build plus removal or override of that Compose GPU reservation.
 
 | Model | Required preparation |
 |---|---|
-| BookBot Zipformer six-row matrix | Use `bash ./run_bookbot_zipformer_matrix.sh`. It validates the pinned native/INT8 ONNX/INT8 ORT artifacts by SHA-256, rebuilds the shared ASR image, and then runs rows 30–35 in order. See `docs/bookbot-zipformer-runbook.md`. Actual model execution is intentionally deferred. |
+| BookBot Zipformer six-row matrix | Use `bash ./run_bookbot_zipformer_matrix.sh`. It validates the pinned native/INT8 ONNX/INT8 ORT artifacts by SHA-256, rebuilds the shared ASR image, and then runs rows 30–35 in order. The optional `docs/bookbot-zipformer-runbook.md` is a local-development runbook and is not versioned. |
 | HuBERT large-ls960-ft | Download the missing pinned snapshot. The existing CTC adapter and `hubert-large-ls960-ft-en.yaml` profile can then run it in the current image. This is English-only. |
 
 ### Requires another execution environment or additional model artifacts
@@ -299,19 +302,22 @@ CPU image build plus removal or override of that Compose GPU reservation.
    ./run_eval2.sh \
      --dataset_root input_output_data/input/<dataset_name> \
      --manifest_in input_output_data/output/evaluations/$RUN_ID/manifests/ref_manifest.clean.jsonl \
-     --scoring_representation ipa
+     --scoring_representation ipa \
+     --g2p-tool babygruut
    ```
 
    Native IPA hypotheses use their reviewed inventory adapter. Orthographic
-   hypotheses are converted with the same pinned Africa G2P language and IPA
-   inventory as CAN/REF. This writes a separate PER view under
-   `input_output_data/output/evaluations/$RUN_ID/ipa/`; it does not replace WER.
+   hypotheses are converted with the same explicitly selected G2P system as
+   CAN/REF. Choose either `africa_g2p` or `babygruut`; babygruut uses its pinned
+   local SQLite lexicon with CRF fallback and never Turso. This writes PER under
+   `input_output_data/output/evaluations/$RUN_ID/ipa/<g2p_system_id>/`; results
+   produced by different exact G2P identities are never combined.
 
 8. **Inspect the outputs** under `input_output_data/output/evaluations/$RUN_ID/`:
    - `orthographic/egra_eval_detailed.csv` and
      `orthographic/egra_eval_summary.txt` for valid WER scoring.
-   - `ipa/egra_eval_detailed.csv` and `ipa/egra_eval_summary.txt` for valid PER
-     scoring.
+   - `ipa/<g2p_system_id>/egra_eval_detailed.csv` and
+     `ipa/<g2p_system_id>/egra_eval_summary.txt` for valid PER scoring.
    - `evaluation_metadata.json` inside each completed representation directory,
      recording its source manifest and representation status.
 9. **Explore results interactively**  
@@ -320,6 +326,11 @@ CPU image build plus removal or override of that Compose GPU reservation.
    - Run: `streamlit run egra_dashboard2.py -- --csv <path/to/egra_eval_detailed.csv>`  
      - Specific example: ` . .venv_streamlit/bin/activate && streamlit run egra_dashboard2.py -- --csv input_output_data/output/evaluations/$RUN_ID/orthographic/egra_eval_detailed.csv`
    - Open the browser tab (Streamlit serves on `http://localhost:8501` by default) to sort, group and aggregate metrics.
+
+   Leaderboard generation admits only completed, representation-compatible
+   evaluations and rejects smoke-test runs before writing any CSV, dashboard, or
+   shareable HTML output. Because every displayed row has already passed that
+   rule, the leaderboard does not show a redundant per-run completion label.
 
 Everything runs in Docker setup (CPU-only or GPU-enabled).
 
@@ -649,7 +660,7 @@ directory and enriches them with per-sample NeMo WER scores. Pass either `--outp
 By default, all evaluation outputs land in
 `input_output_data/output/evaluations/<inference_setup_id>_<timestamp>/` (or the parallel
 `smoke_tests/evaluations/` path). Each representation is written separately
-under `orthographic/` or `ipa/` and contains:
+under `orthographic/` or `ipa/<g2p_system_id>/` and contains:
 
 1. **`egra_eval_detailed.csv`** — one row per merged EGRA item. It contains
    `learner_id`, `audio_type`, `audio_file`, normalized `CAN`/`REF`/`HYP`,
@@ -732,7 +743,7 @@ appears as `NaN` in the summary.
 - **Model storage**: place artifacts below the owning inference library's `models/` directory. `ASR_MODEL_ROOT` overrides that default root; Compose sets it to the read-only `/models` mount.
 - **Input**: provide exactly one of `--audio_manifest <segments.jsonl>` or `--root_audio_dir <audio-directory>`. NeMo retains `--dataset_root` and `--dataset_annotator` for legacy dataset discovery and optional TextGrid segmentation.
 - **Output base**: inference defaults to `input_output_data/output`; `--output_root <directory>` changes that base. The runner creates `transcripts/<inference_setup_id>_<UTC timestamp>/` below it, or `smoke_tests/transcripts/...` with `--smoke_test`.
-- **Execution controls**: NeMo retains its CPU worker, temporary-segment, decoder, and debug controls; Transformers retains `--batch_size`; Sherpa-ONNX adds `--num_threads`. Sources, evidence strength, hardware assumptions, and historical gaps are recorded beside the relevant launcher and in [inference execution-parameter provenance](docs/inference-execution-parameter-provenance.md).
+- **Execution controls**: NeMo retains its CPU worker, temporary-segment, decoder, and debug controls; Transformers retains `--batch_size`; Sherpa-ONNX adds `--num_threads`. Sources, evidence strength, and hardware assumptions are recorded beside the relevant launcher. Optional extended notes in `docs/inference-execution-parameter-provenance.md` are local-development documentation and are not versioned.
 - **Offline operation**: profiles require local artifacts and `local_files_only: true`; downloading a model is a separate preparation step.
 
 Root `infer.py` is the only legacy NeMo API and continues to accept `--model`
@@ -755,8 +766,9 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - `--manifest_in /io/output/<experiment>/manifests/ref_manifest.segment.clean.jsonl` — required.
 - `--output_root /io/output/evaluations/<inference_setup_id>_<timestamp>` — optional run
   destination; otherwise the owning evaluation run is derived from
-  `--manifest_in`. The evaluator appends `orthographic/` or `ipa/`. A custom
-  `--out_csv` path is rejected if it escapes that representation directory.
+  `--manifest_in`. The evaluator appends `orthographic/` or
+  `ipa/<g2p_system_id>/`. A custom `--out_csv` path is rejected if it escapes
+  that representation directory.
 
 ---
 
@@ -821,7 +833,9 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 
 - **`egra_eval2/reporting_candidates.py`**
   Inactive migration material for richer historical reports. The supported
-  evaluator does not import it; see `docs/legacy-code-migration.md`.
+  evaluator does not import it. Optional notes in
+  `docs/legacy-code-migration.md` are local-development documentation and are
+  not versioned.
 
 - **`egra_eval2/segmenter.py`**
   Shared TextGrid segmentation module used by inference; parses interval blocks and cuts audio without label/tier filtering.

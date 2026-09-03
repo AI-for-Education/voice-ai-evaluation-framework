@@ -106,10 +106,51 @@ BOOKBOT_GRUUT_TO_AFRICA_G2P = IPAInventoryAdapter(
     unresolved={},
 )
 
+# babygruut's pinned Swahili lexicon uses the same atomic BookBot/gruut phone
+# convention. Keep a distinct target identity so its scores can never be mixed
+# with Africa G2P, while still tokenizing native model output deterministically.
+BOOKBOT_GRUUT_TO_BABYGRUUT = IPAInventoryAdapter(
+    source="bookbot_gruut_sw_v1",
+    target="babygruut_sw_ipa_v1",
+    status="approved",
+    source_tokens=BOOKBOT_GRUUT_TO_AFRICA_G2P.source_tokens,
+    replacements={},
+    unresolved={},
+)
+
 
 IPA_INVENTORY_ADAPTERS: dict[tuple[str, str], IPAInventoryAdapter] = {
     BOOKBOT_GRUUT_TO_AFRICA_G2P.key: BOOKBOT_GRUUT_TO_AFRICA_G2P,
+    BOOKBOT_GRUUT_TO_BABYGRUUT.key: BOOKBOT_GRUUT_TO_BABYGRUUT,
 }
+
+
+def _approved_adapter(source: str, target: str) -> IPAInventoryAdapter:
+    adapter = IPA_INVENTORY_ADAPTERS.get((source, target))
+    if adapter is None:
+        raise IPAInventoryMapError(
+            f"No IPA inventory adapter is registered: {source} -> {target}"
+        )
+    if adapter.status != "approved" or adapter.unresolved:
+        decisions = ", ".join(adapter.unresolved) or "status review"
+        raise IPAInventoryMapError(
+            f"IPA inventory adapter is not approved: {source} -> {target}; "
+            f"unresolved: {decisions}"
+        )
+    return adapter
+
+
+def describe_ipa_inventory_route(source: str, target: str) -> str:
+    """Describe whether native IPA is unchanged or converted for scoring."""
+    if source == target:
+        return f"native IPA {source} — no phoneme conversion"
+    adapter = _approved_adapter(source, target)
+    if not adapter.replacements:
+        return (
+            f"native IPA {source} — already compatible with {target} "
+            "(no phoneme conversion)"
+        )
+    return f"native IPA {source} -> {target}"
 
 
 def _normalize_ipa(text: object) -> str:
@@ -123,17 +164,7 @@ def build_ipa_aligner(source: str, target: str) -> Callable[[object], str]:
     if source == target:
         return _normalize_ipa
 
-    adapter = IPA_INVENTORY_ADAPTERS.get((source, target))
-    if adapter is None:
-        raise IPAInventoryMapError(
-            f"No IPA inventory adapter is registered: {source} -> {target}"
-        )
-    if adapter.status != "approved" or adapter.unresolved:
-        decisions = ", ".join(adapter.unresolved) or "status review"
-        raise IPAInventoryMapError(
-            f"IPA inventory adapter is not approved: {source} -> {target}; "
-            f"unresolved: {decisions}"
-        )
+    adapter = _approved_adapter(source, target)
     if not adapter.source_tokens or "" in adapter.source_tokens:
         raise IPAInventoryMapError(
             f"IPA inventory adapter has an invalid source vocabulary: {source}"

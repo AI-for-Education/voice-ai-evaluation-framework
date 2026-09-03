@@ -119,6 +119,23 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def inference_profile_from_run_metadata(
+    run_metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Read current or historical embedded profiles into current field names."""
+    raw = run_metadata.get("inference_profile")
+    if not isinstance(raw, Mapping):
+        raw = run_metadata.get("profile")
+    profile = _mapping(raw)
+    if "inference_setup_id" not in profile and isinstance(profile.get("id"), str):
+        profile["inference_setup_id"] = profile["id"]
+    if "inference_library" not in profile and isinstance(
+        profile.get("framework"), str
+    ):
+        profile["inference_library"] = profile["framework"]
+    return profile
+
+
 def _contract_refs(value: Any) -> dict[str, Any] | None:
     raw = _mapping(value)
     if raw.get("schema_version") != 2:
@@ -626,6 +643,17 @@ def evaluation_source_run_metadata_path(manifest_in: str | Path) -> Path | None:
     return run_dir.parent.parent / "transcripts" / run_dir.name / "run_metadata.json"
 
 
+def _mutable_reference_index_link(path: str | Path) -> dict[str, Any]:
+    """Link a shared mutable index without treating its current bytes as identity."""
+    index_path = Path(path)
+    return {
+        "path": str(index_path),
+        "exists": index_path.is_file(),
+        "identity_scope": "mutable_shared_index",
+        "content_hash_recorded": False,
+    }
+
+
 def build_evaluation_provenance(
     *,
     base: str | Path,
@@ -634,6 +662,10 @@ def build_evaluation_provenance(
     scoring_units: str,
     namespace: str,
     reference_metadata_path: str | Path | None = None,
+    reference_view_path: str | Path | None = None,
+    aligned_manifest_path: str | Path | None = None,
+    g2p_system: Mapping[str, Any] | None = None,
+    hypothesis_route: str = "native orthographic",
     recording_mode: str = "evaluation_time",
     limitations: Iterable[str] = (),
     run_metadata_override: Mapping[str, Any] | None = None,
@@ -654,7 +686,7 @@ def build_evaluation_provenance(
             pass
     run_pipeline = _mapping(run_metadata.get("pipeline_provenance"))
     run_evaluation_stage = _mapping(run_pipeline.get("evaluation"))
-    profile = _mapping(run_metadata.get("inference_profile"))
+    profile = inference_profile_from_run_metadata(run_metadata)
     source_run_link: Any
     if run_metadata_path is not None and run_metadata_path.is_file():
         source_run_link = file_identity(run_metadata_path)
@@ -663,6 +695,8 @@ def build_evaluation_provenance(
     profile_link = _mapping(_mapping(run_pipeline.get("links")).get("profile"))
     if not profile_link:
         recorded_profile = run_metadata.get("inference_profile")
+        if not isinstance(recorded_profile, dict):
+            recorded_profile = run_metadata.get("profile")
         if isinstance(recorded_profile, dict):
             profile_link = {
                 "embedded_profile_sha256": canonical_json_sha256(recorded_profile),
@@ -685,7 +719,38 @@ def build_evaluation_provenance(
         "Reference-view metadata path was not recorded for this evaluation"
     )
     if reference_metadata_path is not None:
-        reference_link = file_identity(reference_metadata_path)
+        reference_link = _mutable_reference_index_link(reference_metadata_path)
+    reference_view_link: Any = not_available(
+        "No exact G2P reference view applies to this evaluation"
+    )
+    if reference_view_path is not None:
+        reference_view_link = file_identity(reference_view_path)
+    aligned_manifest_link: Any = not_available(
+        "No aligned IPA manifest applies to this evaluation"
+    )
+    if aligned_manifest_path is not None:
+        aligned_manifest_link = file_identity(aligned_manifest_path)
+    source_manifest_link = file_identity(manifest_in)
+    if g2p_system is not None:
+        reference_identity: dict[str, Any] = {
+            "kind": "exact_g2p_reference_view",
+            "system_id": g2p_system.get(
+                "system_id", not_available("G2P system ID was not recorded")
+            ),
+            "g2p_identity_sha256": g2p_system.get(
+                "identity_sha256",
+                not_available("G2P identity hash was not recorded"),
+            ),
+            "inventory": g2p_system.get(
+                "inventory", not_available("G2P inventory was not recorded")
+            ),
+            "reference_view": reference_view_link,
+        }
+    else:
+        reference_identity = {
+            "kind": "evaluation_source_manifest",
+            "source_manifest": source_manifest_link,
+        }
     return {
         "schema_version": PIPELINE_PROVENANCE_SCHEMA_VERSION,
         "recording": {
@@ -703,15 +768,26 @@ def build_evaluation_provenance(
             "effective_scoring_units": scoring_units,
             "output_namespace": namespace,
             "hypothesis_field": "pred_text",
-            "text_postprocessing": "none",
+            "text_postprocessing": (
+                hypothesis_route if g2p_system is not None else "none"
+            ),
             "representation_compatible": True,
             "reference_integrity_enforced": True,
+            "hypothesis_route": hypothesis_route,
+            "reference_identity": reference_identity,
+            "g2p_system": (
+                dict(g2p_system)
+                if g2p_system is not None
+                else not_applicable("Orthographic scoring does not use G2P")
+            ),
         },
         "links": {
-            "source_manifest": file_identity(manifest_in),
+            "source_manifest": source_manifest_link,
             "source_run_metadata": source_run_link,
             "source_profile": profile_link,
             "reference_view_metadata": reference_link,
+            "reference_view": reference_view_link,
+            "aligned_ipa_manifest": aligned_manifest_link,
             "detailed_scores": file_identity(base_path / "egra_eval_detailed.csv"),
             "summary": file_identity(base_path / "egra_eval_summary.txt"),
         },

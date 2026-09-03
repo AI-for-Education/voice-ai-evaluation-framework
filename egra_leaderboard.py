@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -28,7 +29,7 @@ def parse_args() -> argparse.Namespace:
 def load_leaderboards(
     evaluations_root: str,
     latest_only: bool,
-) -> tuple[dict[str, pd.DataFrame], dict[str, list[str]]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     return build_leaderboards(evaluations_root, latest_only=latest_only)
 
 
@@ -39,6 +40,7 @@ def render_leaderboard(
     namespace: str,
     metric: str,
     description: str,
+    download_name: str | None = None,
 ) -> None:
     st.caption(
         description
@@ -59,9 +61,9 @@ def render_leaderboard(
         st.download_button(
             f"Download {namespace} leaderboard (CSV)",
             data=frame.to_csv(index=False, float_format="%.4f").encode("utf-8"),
-            file_name=f"leaderboard_{namespace}.csv",
+            file_name=download_name or f"leaderboard_{namespace}.csv",
             mime="text/csv",
-            key=f"download_{namespace}_leaderboard",
+            key=f"download_{namespace}_{download_name or 'leaderboard'}",
         )
 
     if skipped:
@@ -73,8 +75,10 @@ def render_leaderboard(
 st.set_page_config(page_title="EGRA ASR Leaderboards", layout="wide")
 st.title("EGRA ASR Leaderboards")
 st.write(
-    "Orthographic word scoring and IPA phoneme scoring are ranked separately. "
-    "Archived and representation-incompatible evaluations are never included."
+    "Orthographic word scoring is separate from IPA phoneme scoring. Every IPA "
+    "leaderboard is also isolated by the exact G2P tool, version, resources, and "
+    "configuration used to create it. Archived, incompatible, and smoke-test "
+    "evaluations are never included."
 )
 
 args = parse_args()
@@ -91,7 +95,14 @@ except LeaderboardError as exc:
     st.error(str(exc))
     st.stop()
 
-orthographic_tab, ipa_tab = st.tabs(["Orthographic (WER)", "IPA (PER)"])
+ipa_system_ids = list(frames["ipa_by_system"])
+tab_labels = ["Orthographic (WER)"] + [
+    f"IPA · {system_id} (PER)" for system_id in ipa_system_ids
+]
+if not ipa_system_ids:
+    tab_labels.append("IPA (PER)")
+tabs = st.tabs(tab_labels)
+orthographic_tab = tabs[0]
 with orthographic_tab:
     render_leaderboard(
         frames["orthographic"],
@@ -104,14 +115,27 @@ with orthographic_tab:
         ),
     )
 
-with ipa_tab:
-    render_leaderboard(
-        frames["ipa"],
-        skipped_runs["ipa"],
-        namespace="ipa",
-        metric="per",
-        description=(
-            "Native IPA hypotheses and orthographic hypotheses converted through "
-            "the approved Africa G2P route, scored by phoneme error rate."
-        ),
-    )
+if not ipa_system_ids:
+    with tabs[1]:
+        st.info("No exact-system IPA evaluations found.")
+else:
+    for tab, system_id in zip(tabs[1:], ipa_system_ids):
+        frame = frames["ipa_by_system"][system_id]
+        system_name = (
+            str(frame.iloc[0]["g2p_display_name"])
+            if not frame.empty
+            else system_id
+        )
+        with tab:
+            render_leaderboard(
+                frame,
+                skipped_runs["ipa_by_system"][system_id],
+                namespace=f"IPA / {system_id}",
+                metric="per",
+                description=(
+                    f"Phoneme error rate using only {system_name}. Native IPA "
+                    "hypotheses are admitted only through an approved inventory "
+                    "adapter for this exact target system."
+                ),
+                download_name=f"leaderboard_{system_id}.csv",
+            )

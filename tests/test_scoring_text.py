@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import sys
 import types
@@ -13,10 +14,14 @@ import pytest
 from egra_eval2.eval_utils import text_normalize
 from egra_eval2.reference.ipa_inventory_maps import (
     BOOKBOT_GRUUT_TO_AFRICA_G2P,
+    BOOKBOT_GRUUT_TO_BABYGRUUT,
     IPAInventoryAdapter,
     IPA_INVENTORY_ADAPTERS,
+    describe_ipa_inventory_route,
 )
+from egra_eval2.reference.g2p import G2PSystem, make_test_system
 from egra_eval2.scoring_text import (
+    ScoringContext,
     ScoringRepresentationError,
     align_ipa_inventory,
     prepare_scoring_texts,
@@ -51,11 +56,30 @@ def _manifest_df() -> pd.DataFrame:
     )
 
 
-def _write_ipa_view(dataset: Path, inventory: str) -> None:
+def _test_system(
+    *,
+    tool_id: str = "africa_g2p",
+    inventory: str = "africa_g2p_swh_ipa_v1",
+    phonemize=lambda values: [str(value) for value in values],
+) -> G2PSystem:
+    return make_test_system(
+        tool_id=tool_id,
+        display_name="babygruut" if tool_id == "babygruut" else "Africa G2P",
+        language="sw" if tool_id == "babygruut" else "swh",
+        inventory=inventory,
+        version_value="0.1.0-test",
+        phonemize=phonemize,
+    )
+
+
+def _write_ipa_view(dataset: Path, system: G2PSystem) -> Path:
     view_dir = dataset / "_derived" / "reference_views"
     view_dir.mkdir(parents=True)
-    view_name = "ipa.jsonl"
-    (view_dir / view_name).write_text(
+    orthographic_path = view_dir / "orthographic.sw.v1.jsonl"
+    orthographic_path.write_text("{}\n", encoding="utf-8")
+    view_name = f"phonemic.ipa.{system.system_id}.jsonl"
+    view_path = view_dir / view_name
+    view_path.write_text(
         json.dumps(
             {
                 "audio_filepath": "segments/one.wav",
@@ -70,16 +94,31 @@ def _write_ipa_view(dataset: Path, inventory: str) -> None:
     (view_dir / "reference_views.metadata.json").write_text(
         json.dumps(
             {
-                "ipa": {
+                "schema_version": 2,
+                "orthographic": {
+                    "path": orthographic_path.name,
+                    "sha256": hashlib.sha256(
+                        orthographic_path.read_bytes()
+                    ).hexdigest(),
+                },
+                "ipa_views": {
+                    system.system_id: {
+                    **system.metadata(),
                     "path": view_name,
-                    "inventory": inventory,
-                    "language": "swh",
-                    "producer": "africa-g2p",
-                    "producer_version": "0.1.0-test",
+                    "sha256": hashlib.sha256(view_path.read_bytes()).hexdigest(),
+                    }
                 }
             }
         ),
         encoding="utf-8",
+    )
+    return view_path
+
+
+def _ipa_context(system: G2PSystem | None = None) -> ScoringContext:
+    selected = system or _test_system()
+    return ScoringContext(
+        scoring_units="phoneme", namespace="ipa", g2p_system=selected
     )
 
 
@@ -135,38 +174,37 @@ def test_orthographic_profile_can_be_scored_through_shared_g2p_ipa(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    inventory = "africa_g2p_swh_ipa_v1"
     dataset, manifest = _paths(
         tmp_path,
         {"output_units": "orthographic", "language": "en"},
     )
-    _write_ipa_view(dataset, inventory)
     source = _manifest_df()
     source.loc[0, "manifest_hyp_text"] = "kijiko"
-    calls: list[tuple[list[str], str]] = []
+    calls: list[list[str]] = []
 
-    def fake_phonemize(texts, *, language):
-        calls.append((list(texts), language))
+    def fake_phonemize(texts):
+        calls.append(list(texts))
         return ["k i j i k o" for _ in texts]
 
-    monkeypatch.setattr(
-        "egra_eval2.scoring_text.phonemize_with_africa_g2p",
-        fake_phonemize,
-    )
+    system = _test_system(phonemize=fake_phonemize)
+    _write_ipa_view(dataset, system)
     result, units = prepare_scoring_texts(
         source,
         dataset_root=dataset,
         manifest_in=manifest,
         logger=logging.getLogger("test_scoring_text"),
         scoring_representation="ipa",
+        g2p_system=system,
     )
 
     assert units == "phoneme"
-    assert calls == [(["kijiko"], "swh")]
+    assert calls == [["kijiko"]]
     assert result.loc[0, "manifest_can_text"] == "k a n"
     assert result.loc[0, "manifest_ref_text"] == "r e f"
     assert result.loc[0, "manifest_hyp_text"] == "k i j i k o"
-    aligned = manifest.with_name("clean.ipa_aligned.jsonl")
+    aligned = manifest.with_name(
+        f"clean.ipa_aligned.{system.system_id}.jsonl"
+    )
     assert json.loads(aligned.read_text(encoding="utf-8")) == {
         "audio_filepath": "segments/one.wav",
         "can_text": "k a n",
@@ -184,20 +222,28 @@ def test_phoneme_profile_uses_matching_ipa_reference(tmp_path: Path) -> None:
             "output_inventory": inventory,
         },
     )
-    _write_ipa_view(dataset, inventory)
+    system = _test_system(inventory=inventory)
+    _write_ipa_view(dataset, system)
 
-    result, units = prepare_scoring_texts(
+    prepared = prepare_scoring_texts(
         _manifest_df(),
         dataset_root=dataset,
         manifest_in=manifest,
         logger=logging.getLogger("test_scoring_text"),
+        g2p_system=system,
     )
+    result, units = prepared
 
     assert units == "phoneme"
     assert result.loc[0, "manifest_can_text"] == "k a n"
     assert result.loc[0, "manifest_ref_text"] == "r e f"
     assert result.loc[0, "manifest_hyp_text"] == "ɑ m"
-    aligned = manifest.with_name("clean.ipa_aligned.jsonl")
+    assert prepared.context.hypothesis_route == (
+        "native IPA africa_g2p_swh_ipa_v1 — no phoneme conversion"
+    )
+    aligned = manifest.with_name(
+        f"clean.ipa_aligned.{system.system_id}.jsonl"
+    )
     assert [json.loads(line) for line in aligned.read_text(encoding="utf-8").splitlines()] == [
         {
             "audio_filepath": "segments/one.wav",
@@ -219,6 +265,27 @@ def test_reviewed_bookbot_ipa_inventory_mapping() -> None:
         source="bookbot_gruut_sw_v1",
         target="africa_g2p_swh_ipa_v1",
     ) == "ʧ r ᵐb ᵑɡ ⁿd ⁿdʒ ɲ n j"
+
+
+def test_reviewed_bookbot_to_babygruut_identity_mapping() -> None:
+    assert BOOKBOT_GRUUT_TO_BABYGRUUT.status == "approved"
+    assert align_ipa_inventory(
+        "t͡ʃ ɾ ᵐɓ",
+        source="bookbot_gruut_sw_v1",
+        target="babygruut_sw_ipa_v1",
+    ) == "t͡ʃ ɾ ᵐɓ"
+    assert describe_ipa_inventory_route(
+        "bookbot_gruut_sw_v1", "babygruut_sw_ipa_v1"
+    ) == (
+        "native IPA bookbot_gruut_sw_v1 — already compatible with "
+        "babygruut_sw_ipa_v1 (no phoneme conversion)"
+    )
+
+
+def test_changed_ipa_inventory_route_keeps_directional_arrow() -> None:
+    assert describe_ipa_inventory_route(
+        "bookbot_gruut_sw_v1", "africa_g2p_swh_ipa_v1"
+    ) == "native IPA bookbot_gruut_sw_v1 -> africa_g2p_swh_ipa_v1"
 
 
 def test_bookbot_ipa_inventory_mapping_rejects_unknown_symbols() -> None:
@@ -300,9 +367,15 @@ def test_rejects_non_object_ipa_reference_row(tmp_path: Path) -> None:
             "output_inventory": inventory,
         },
     )
-    _write_ipa_view(dataset, inventory)
-    view = dataset / "_derived" / "reference_views" / "ipa.jsonl"
+    system = _test_system(inventory=inventory)
+    view = _write_ipa_view(dataset, system)
     view.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+    metadata_path = view.parent / "reference_views.metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["ipa_views"][system.system_id]["sha256"] = hashlib.sha256(
+        view.read_bytes()
+    ).hexdigest()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
     with pytest.raises(ScoringRepresentationError, match="is not an object"):
         prepare_scoring_texts(
@@ -310,6 +383,37 @@ def test_rejects_non_object_ipa_reference_row(tmp_path: Path) -> None:
             dataset_root=dataset,
             manifest_in=manifest,
             logger=logging.getLogger("test_scoring_text"),
+            g2p_system=system,
+        )
+
+
+def test_scoring_rejects_a_broken_unselected_reference_view(tmp_path: Path) -> None:
+    inventory = "africa_g2p_swh_ipa_v1"
+    dataset, manifest = _paths(
+        tmp_path,
+        {
+            "output_units": "phoneme",
+            "output_notation": "ipa",
+            "output_inventory": inventory,
+        },
+    )
+    system = _test_system(inventory=inventory)
+    view = _write_ipa_view(dataset, system)
+    metadata_path = view.parent / "reference_views.metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["ipa_views"]["unselected-system"] = {
+        "path": "missing.jsonl",
+        "sha256": "0" * 64,
+    }
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ScoringRepresentationError, match="unselected-system"):
+        prepare_scoring_texts(
+            _manifest_df(),
+            dataset_root=dataset,
+            manifest_in=manifest,
+            logger=logging.getLogger("test_scoring_text"),
+            g2p_system=system,
         )
 
 
@@ -325,7 +429,8 @@ def test_phoneme_manifest_requires_audio_and_hypothesis_columns(
             "output_inventory": inventory,
         },
     )
-    _write_ipa_view(dataset, inventory)
+    system = _test_system(inventory=inventory)
+    _write_ipa_view(dataset, system)
 
     with pytest.raises(ScoringRepresentationError, match="manifest_hyp_text"):
         prepare_scoring_texts(
@@ -333,6 +438,7 @@ def test_phoneme_manifest_requires_audio_and_hypothesis_columns(
             dataset_root=dataset,
             manifest_in=manifest,
             logger=logging.getLogger("test_scoring_text"),
+            g2p_system=system,
         )
 
 # Representation-specific output routing
@@ -351,10 +457,17 @@ def test_explicit_ipa_evaluation_uses_separate_output_folder(
         derive_output_root=True,
     )
 
-    outputs = resolve_outputs(args, logging.getLogger("test_scoring_text"))
+    system = _test_system()
+    outputs = resolve_outputs(
+        args,
+        logging.getLogger("test_scoring_text"),
+        scoring_context=_ipa_context(system),
+    )
 
-    assert outputs["base"] == run_root / "ipa"
-    assert Path(args.out_csv) == run_root / "ipa" / "egra_eval_detailed.csv"
+    assert outputs["base"] == run_root / "ipa" / system.system_id
+    assert Path(args.out_csv) == (
+        run_root / "ipa" / system.system_id / "egra_eval_detailed.csv"
+    )
 
 
 @pytest.mark.parametrize(
@@ -381,13 +494,21 @@ def test_evaluation_outputs_are_namespaced_by_representation(
         scoring_representation=requested,
     )
 
+    system = _test_system()
+    context = _ipa_context(system) if units == "phoneme" else None
     outputs = resolve_outputs(
         args,
         logging.getLogger("test_scoring_text"),
         scoring_units=units,
+        scoring_context=context,
     )
-    assert outputs["base"] == run_root / folder
-    assert Path(args.out_csv) == run_root / folder / "egra_eval_detailed.csv"
+    expected = (
+        run_root / folder / system.system_id
+        if folder == "ipa"
+        else run_root / folder
+    )
+    assert outputs["base"] == expected
+    assert Path(args.out_csv) == expected / "egra_eval_detailed.csv"
 
 
 def test_evaluation_rejects_custom_output_outside_representation_folder(

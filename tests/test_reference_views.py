@@ -91,7 +91,9 @@ def test_builds_dataset_adjacent_views_with_provenance(tmp_path: Path) -> None:
     assert paths.output_dir == dataset / "_derived" / "reference_views"
     assert paths.reused is False
     assert paths.orthographic.name == "orthographic.sw.v1.jsonl"
-    assert paths.ipa.name == "phonemic.ipa.africa_g2p.swh.0.1.0-test.jsonl"
+    assert paths.ipa.name == (
+        f"phonemic.ipa.{paths.g2p_system.system_id}.jsonl"
+    )
 
     orthographic = _read_jsonl(paths.orthographic)
     ipa = _read_jsonl(paths.ipa)
@@ -103,12 +105,25 @@ def test_builds_dataset_adjacent_views_with_provenance(tmp_path: Path) -> None:
     assert ipa[0]["can_text"] == "ɪ p a kijiko"
 
     metadata = json.loads(paths.metadata.read_text(encoding="utf-8"))
-    assert set(metadata) == {"schema_version", "source", "orthographic", "ipa"}
+    assert set(metadata) == {
+        "schema_version",
+        "source",
+        "orthographic",
+        "ipa_views",
+    }
+    assert metadata["schema_version"] == 2
     assert metadata["source"]["rows"] == 2
-    assert metadata["orthographic"] == {"path": "orthographic.sw.v1.jsonl"}
-    assert metadata["ipa"]["producer"] == "africa-g2p"
-    assert metadata["ipa"]["producer_version"] == "0.1.0-test"
-    assert metadata["ipa"]["inventory"] == "africa_g2p_swh_ipa_v1"
+    assert metadata["orthographic"]["path"] == "orthographic.sw.v1.jsonl"
+    assert metadata["orthographic"]["rows"] == 2
+    assert len(metadata["orthographic"]["sha256"]) == 64
+    ipa_metadata = metadata["ipa_views"][paths.g2p_system.system_id]
+    assert ipa_metadata["tool_id"] == "africa_g2p"
+    assert ipa_metadata["identity"]["packages"] == {
+        "africa-g2p": "0.1.0-test"
+    }
+    assert ipa_metadata["inventory"] == "africa_g2p_swh_ipa_v1"
+    assert ipa_metadata["rows"] == 2
+    assert len(ipa_metadata["sha256"]) == 64
 
 
 def test_reuses_only_an_exact_matching_cache(tmp_path: Path) -> None:
@@ -171,10 +186,20 @@ def test_rejects_duplicate_item_ids(tmp_path: Path) -> None:
         )
 
 
-def test_cli_defaults_to_swahili_and_dataset_adjacent_output() -> None:
-    args = parse_args(["--dataset_root", "dataset", "--manifest_in", "manifest.jsonl"])
+def test_cli_requires_a_tool_and_defaults_to_swahili_output() -> None:
+    args = parse_args(
+        [
+            "--dataset_root",
+            "dataset",
+            "--manifest_in",
+            "manifest.jsonl",
+            "--g2p-tool",
+            "babygruut",
+        ]
+    )
 
     assert args.language == "swh"
+    assert args.g2p_tool == "babygruut"
     assert args.output_dir is None
     assert args.force is False
 
@@ -214,6 +239,7 @@ def test_manifest_pipeline_prepares_cache_for_all_declared_model_outputs(
     class Views:
         reused = False
         ipa = tmp_path / "view.jsonl"
+        g2p_system = SimpleNamespace(system_id="test-system")
 
     monkeypatch.setattr(
         "egra_eval2.reference.views.build_reference_views",
@@ -225,6 +251,7 @@ def test_manifest_pipeline_prepares_cache_for_all_declared_model_outputs(
         audio_manifest="base.jsonl",
         prediction_manifests=[str(transcript)],
         logger=logging.getLogger("test_reference_views"),
+        g2p_tool="africa_g2p",
     )
 
     assert calls == [
@@ -232,6 +259,7 @@ def test_manifest_pipeline_prepares_cache_for_all_declared_model_outputs(
             "dataset_root": tmp_path,
             "manifest_in": "base.jsonl",
             "language": "swh",
+            "g2p_tool": "africa_g2p",
         }
     ]
 
@@ -245,11 +273,89 @@ def test_manifest_pipeline_prepares_cache_for_all_declared_model_outputs(
         audio_manifest="base.jsonl",
         prediction_manifests=[str(transcript)],
         logger=logging.getLogger("test_reference_views"),
+        g2p_tool="babygruut",
     )
     assert calls == [
         {
             "dataset_root": tmp_path,
             "manifest_in": "base.jsonl",
             "language": "swh",
+            "g2p_tool": "babygruut",
         }
     ]
+
+
+def test_reference_cache_keeps_two_exact_g2p_systems(tmp_path: Path) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    manifest = tmp_path / "references.jsonl"
+    _write_manifest(manifest)
+
+    africa = build_reference_views(
+        dataset_root=dataset,
+        manifest_in=manifest,
+        g2p_tool="africa_g2p",
+        phonemize=_fake_ipa,
+        phonemizer_version="africa-test",
+    )
+    baby = build_reference_views(
+        dataset_root=dataset,
+        manifest_in=manifest,
+        g2p_tool="babygruut",
+        phonemize=lambda values: [f"baby {value}" for value in values],
+        phonemizer_version="baby-test",
+    )
+
+    assert africa.ipa != baby.ipa
+    assert africa.ipa.is_file() and baby.ipa.is_file()
+    metadata = json.loads(baby.metadata.read_text(encoding="utf-8"))
+    assert set(metadata["ipa_views"]) == {
+        africa.g2p_system.system_id,
+        baby.g2p_system.system_id,
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("path", "missing.jsonl", "file does not exist"),
+        ("sha256", "0" * 64, "SHA-256 does not match"),
+    ],
+)
+def test_rejects_any_broken_indexed_reference_view(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    manifest = tmp_path / "references.jsonl"
+    _write_manifest(manifest)
+
+    africa = build_reference_views(
+        dataset_root=dataset,
+        manifest_in=manifest,
+        g2p_tool="africa_g2p",
+        phonemize=_fake_ipa,
+        phonemizer_version="africa-test",
+    )
+    baby = build_reference_views(
+        dataset_root=dataset,
+        manifest_in=manifest,
+        g2p_tool="babygruut",
+        phonemize=lambda values: [f"baby {value}" for value in values],
+        phonemizer_version="baby-test",
+    )
+    metadata = json.loads(baby.metadata.read_text(encoding="utf-8"))
+    metadata["ipa_views"][africa.g2p_system.system_id][field] = value
+    baby.metadata.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ReferenceViewError, match=message):
+        build_reference_views(
+            dataset_root=dataset,
+            manifest_in=manifest,
+            g2p_tool="babygruut",
+            phonemize=lambda _: pytest.fail("invalid index must not be reused"),
+            phonemizer_version="baby-test",
+        )

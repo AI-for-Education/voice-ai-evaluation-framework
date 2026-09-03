@@ -9,7 +9,6 @@ def test_display_orders_analysis_before_configuration_details() -> None:
     row: dict[str, object] = {
         "rank": 1,
         "model_label": "Bookbot · XLS-R 300M · orthographic (greedy)",
-        "evaluation_status": "scored",
         "architecture": "XLS-R",
         "run_id": "example_run",
         "inference_setup_id": "bookbot-orthographic-ctc",
@@ -52,6 +51,5 @@ def test_display_orders_analysis_before_configuration_details() -> None:
         "rank",
         "group · model · variant (decoder)",
         *expected_results,
-        "status",
         "architecture",
     ]

@@ -24,6 +24,7 @@ from egra_eval2.manifest_builder import (
 from egra_eval2.manifest_cleaner import clean_manifest_jsonl
 from egra_eval2.eval_utils import adjust_letter_canonical_text
 from egra_eval2.manifest_integrity import ReferenceIntegrityError, validate_reference_rows
+from egra_eval2.reference.g2p import SUPPORTED_G2P_TOOLS
 from egra_eval2.reference.views import ReferenceViewError, prepare_ipa_reference_view
 
 
@@ -80,6 +81,16 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=None,
         help="Prediction transcriptions.jsonl to attach; repeat for multiple manifests.",
+    )
+    p.add_argument(
+        "--g2p_tool",
+        "--g2p-tool",
+        choices=SUPPORTED_G2P_TOOLS,
+        default=None,
+        help=(
+            "Build this exact G2P tool's IPA reference view. Any later IPA "
+            "evaluation must name the same tool explicitly."
+        ),
     )
     p.add_argument("--manifest_audio_key", default="audio_filepath")
     p.add_argument("--manifest_hyp_key", default="pred_text")
@@ -246,6 +257,7 @@ def main() -> None:
             audio_manifest=args.audio_manifest,
             prediction_manifests=args.prediction_manifests,
             logger=logger,
+            g2p_tool=args.g2p_tool,
         )
     except ReferenceViewError as exc:
         raise SystemExit(str(exc)) from exc

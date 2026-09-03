@@ -6,8 +6,28 @@ from pathlib import Path
 import pytest
 
 from egra_eval2.model_presentation import load_model_presentation_registry
-from egra_eval2.leaderboard import build_leaderboards, write_leaderboards
+from egra_eval2.leaderboard import (
+    _g2p_display_name,
+    build_leaderboards,
+    write_leaderboards,
+)
+from egra_eval2.reference.g2p import G2PSystem, make_test_system
 from inference.profile import load_profile
+
+
+def _system(tool_id: str = "africa_g2p") -> G2PSystem:
+    return make_test_system(
+        tool_id=tool_id,
+        display_name="babygruut" if tool_id == "babygruut" else "Africa G2P",
+        language="sw" if tool_id == "babygruut" else "swh",
+        inventory=(
+            "babygruut_sw_ipa_v1"
+            if tool_id == "babygruut"
+            else "africa_g2p_swh_ipa_v1"
+        ),
+        version_value="leaderboard-test",
+        phonemize=lambda values: [str(value) for value in values],
+    )
 
 
 def _write_run_metadata(
@@ -18,34 +38,42 @@ def _write_run_metadata(
 ) -> None:
     destination = output_root / "transcripts" / run_name
     destination.mkdir(parents=True)
+    profile = {
+        "profile_schema_version": 2,
+        "inference_setup_id": inference_setup_id,
+        "inference_library": "transformers",
+        "adapter": "ctc",
+        "artifact": "model",
+        "output_units": output_units,
+        "pipeline_contract": {
+            "schema_version": 2,
+            "audio_preparation": "shared_soundfile_librosa_16khz",
+            "model_artifact": "canonical_checkpoint",
+            "input_processing": "canonical_transformers_auto_processor",
+            "execution_stack": "shared_transformers_image",
+            "chunking": "none",
+            "evaluation": "direct_pred_text_by_output_units",
+            "observation_policy": "observed_effective_values_v2",
+        },
+        "decoding": {
+            "strategy": "greedy",
+            "generation_kwargs": {},
+        },
+    }
+    if output_units == "phoneme":
+        profile.update(
+            {
+                "output_notation": "ipa",
+                "output_inventory": "africa_g2p_swh_ipa_v1",
+            }
+        )
     (destination / "run_metadata.json").write_text(
         json.dumps(
             {
                 "metadata_schema_version": 2,
                 "inference_setup_id": inference_setup_id,
                 "run_id": run_name,
-                "inference_profile": {
-                    "profile_schema_version": 2,
-                    "inference_setup_id": inference_setup_id,
-                    "inference_library": "transformers",
-                    "adapter": "ctc",
-                    "artifact": "model",
-                    "output_units": output_units,
-                    "pipeline_contract": {
-                        "schema_version": 2,
-                        "audio_preparation": "shared_soundfile_librosa_16khz",
-                        "model_artifact": "canonical_checkpoint",
-                        "input_processing": "canonical_transformers_auto_processor",
-                        "execution_stack": "shared_transformers_image",
-                        "chunking": "none",
-                        "evaluation": "direct_pred_text_by_output_units",
-                        "observation_policy": "observed_effective_values_v2",
-                    },
-                    "decoding": {
-                        "strategy": "greedy",
-                        "generation_kwargs": {},
-                    },
-                }
+                "inference_profile": profile,
             }
         ),
         encoding="utf-8",
@@ -61,21 +89,34 @@ def _write_evaluation(
     completed_at: str,
     *,
     compatible: bool = True,
+    g2p_system: G2PSystem | None = None,
 ) -> None:
+    selected_system = g2p_system or _system()
     destination = output_root / "evaluations" / run_name / namespace
+    if namespace == "ipa":
+        destination /= selected_system.system_id
     destination.mkdir(parents=True)
     scoring_units = "phoneme" if namespace == "ipa" else "orthographic"
-    (destination / "evaluation_metadata.json").write_text(
-        json.dumps(
+    metadata = {
+        "schema_version": 3,
+        "status": "complete",
+        "completed_at": completed_at,
+        "effective_scoring_units": scoring_units,
+        "output_namespace": namespace,
+        "representation_compatible": compatible,
+    }
+    if namespace == "ipa":
+        metadata.update(
             {
-                "schema_version": 2,
-                "status": "complete",
-                "completed_at": completed_at,
-                "effective_scoring_units": scoring_units,
-                "output_namespace": namespace,
-                "representation_compatible": compatible,
+                "g2p_system": selected_system.metadata(),
+                "hypothesis_route": (
+                    f"orthographic -> {selected_system.display_name} "
+                    f"({selected_system.system_id})"
+                ),
             }
-        ),
+        )
+    (destination / "evaluation_metadata.json").write_text(
+        json.dumps(metadata),
         encoding="utf-8",
     )
     (destination / "egra_eval_summary.txt").write_text(
@@ -102,6 +143,11 @@ def _write_evaluation(
 
 
 # Representation separation and result eligibility
+
+
+def test_babygruut_uses_canonical_public_name_for_historical_metadata() -> None:
+    assert _g2p_display_name("babygruut", "BabyGroot") == "babygruut"
+    assert _g2p_display_name("africa_g2p", "Africa G2P") == "Africa G2P"
 
 
 def test_builds_separate_wer_and_per_leaderboards(tmp_path: Path) -> None:
@@ -167,7 +213,6 @@ def test_builds_separate_wer_and_per_leaderboards(tmp_path: Path) -> None:
     assert orthographic["context_evidence"].tolist() == [
         "inference-profile contract"
     ]
-    assert orthographic["evaluation_status"].tolist() == ["scored"]
     assert orthographic["model_label"].tolist() == [
         "Uncatalogued · orthographic-model · Unspecified (greedy)"
     ]
@@ -181,17 +226,64 @@ def test_builds_separate_wer_and_per_leaderboards(tmp_path: Path) -> None:
     assert orthographic["letters_isolated_accuracy"].tolist() == [88.0]
     assert "global_per" not in orthographic.columns
 
-    ipa = frames["ipa"]
+    system_id = _system().system_id
+    ipa = frames["ipa_by_system"][system_id]
     assert ipa["inference_setup_id"].tolist() == [
         "orthographic-model",
         "phoneme-model",
     ]
     assert ipa["global_per"].tolist() == [10.0, 15.0]
     assert ipa["hypothesis_route"].tolist() == [
-        "orthographic -> IPA (Africa G2P)",
-        "native IPA -> canonical IPA",
+        f"orthographic -> Africa G2P ({system_id})",
+        "native IPA africa_g2p_swh_ipa_v1 — no phoneme conversion",
     ]
-    assert skipped == {"orthographic": [], "ipa": []}
+    assert skipped == {
+        "orthographic": [],
+        "ipa_by_system": {system_id: []},
+    }
+
+
+def test_same_run_is_ranked_only_inside_each_exact_g2p_system(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "output"
+    evaluations_root = output_root / "evaluations"
+    africa = _system("africa_g2p")
+    baby = _system("babygruut")
+    _write_run_metadata(output_root, "same_run", "same-model", "orthographic")
+    _write_evaluation(
+        output_root,
+        "same_run",
+        "ipa",
+        "per",
+        12.0,
+        "2026-01-02T00:00:00+00:00",
+        g2p_system=africa,
+    )
+    _write_evaluation(
+        output_root,
+        "same_run",
+        "ipa",
+        "per",
+        8.0,
+        "2026-01-02T00:01:00+00:00",
+        g2p_system=baby,
+    )
+
+    frames, skipped = build_leaderboards(evaluations_root)
+
+    assert set(frames["ipa_by_system"]) == {africa.system_id, baby.system_id}
+    assert frames["ipa_by_system"][africa.system_id]["global_per"].tolist() == [
+        12.0
+    ]
+    assert frames["ipa_by_system"][baby.system_id]["global_per"].tolist() == [
+        8.0
+    ]
+    assert all(
+        set(frame["g2p_system_id"]) == {system_id}
+        for system_id, frame in frames["ipa_by_system"].items()
+    )
+    assert set(skipped["ipa_by_system"]) == {africa.system_id, baby.system_id}
 
 
 def test_excludes_incompatible_and_archived_results(tmp_path: Path) -> None:
@@ -214,14 +306,60 @@ def test_excludes_incompatible_and_archived_results(tmp_path: Path) -> None:
     (archive / "egra_eval_summary.txt").write_text(
         "GLOBAL\n  per: 0.01%\n", encoding="utf-8"
     )
+    diagnostic = evaluations_root / run_name / "ipa" / "can_hyp"
+    diagnostic.mkdir(parents=True)
+    (diagnostic / "egra_eval_summary.txt").write_text(
+        "GLOBAL\n  per: 0.01%\n", encoding="utf-8"
+    )
 
     frames, skipped = build_leaderboards(evaluations_root)
 
     assert frames["orthographic"].empty
-    assert frames["ipa"].empty
+    assert frames["ipa_by_system"] == {}
     assert len(skipped["orthographic"]) == 1
     assert "representation_compatible=true" in skipped["orthographic"][0]
-    assert skipped["ipa"] == []
+    assert skipped["ipa_by_system"] == {}
+
+
+def test_excludes_smoke_test_runs(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    evaluations_root = output_root / "evaluations"
+    run_name = "smoke_run"
+    _write_run_metadata(output_root, run_name, "smoke-model", "orthographic")
+    metadata_path = output_root / "transcripts" / run_name / "run_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["output"] = {"smoke_test": True, "results": 1}
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _write_evaluation(
+        output_root,
+        run_name,
+        "orthographic",
+        "wer",
+        1.0,
+        "2026-01-02T00:00:00+00:00",
+    )
+    system = _system()
+    _write_evaluation(
+        output_root,
+        run_name,
+        "ipa",
+        "per",
+        2.0,
+        "2026-01-02T00:00:00+00:00",
+        g2p_system=system,
+    )
+
+    frames, skipped = build_leaderboards(evaluations_root)
+
+    assert frames["orthographic"].empty
+    assert len(skipped["orthographic"]) == 1
+    assert "Smoke-test run cannot enter" in skipped["orthographic"][0]
+    assert frames["ipa_by_system"][system.system_id].empty
+    assert len(skipped["ipa_by_system"][system.system_id]) == 1
+    assert (
+        "Smoke-test run cannot enter"
+        in skipped["ipa_by_system"][system.system_id][0]
+    )
 
 
 def test_excludes_retired_bookbot_orthographic_models(tmp_path: Path) -> None:
@@ -275,10 +413,16 @@ def test_excludes_retired_bookbot_orthographic_models(tmp_path: Path) -> None:
     assert frames["orthographic"][["rank", "inference_setup_id"]].values.tolist() == [
         [1, "active-model"]
     ]
-    assert frames["ipa"][["rank", "inference_setup_id"]].values.tolist() == [
+    system_id = _system().system_id
+    assert frames["ipa_by_system"][system_id][
+        ["rank", "inference_setup_id"]
+    ].values.tolist() == [
         [1, "active-model"]
     ]
-    assert skipped == {"orthographic": [], "ipa": []}
+    assert skipped == {
+        "orthographic": [],
+        "ipa_by_system": {system_id: []},
+    }
 
 
 # Run selection and generated outputs
@@ -311,7 +455,7 @@ def test_latest_completed_run_per_inference_setup_is_selected(tmp_path: Path) ->
     ]
 
 
-def test_writes_two_csvs_and_generation_metadata(tmp_path: Path) -> None:
+def test_writes_isolated_csvs_and_generation_metadata(tmp_path: Path) -> None:
     output_root = tmp_path / "output"
     _write_run_metadata(output_root, "model_run", "model", "orthographic")
     _write_evaluation(
@@ -336,16 +480,29 @@ def test_writes_two_csvs_and_generation_metadata(tmp_path: Path) -> None:
     )
 
     assert paths["orthographic"].name == "leaderboard_orthographic.csv"
-    assert paths["ipa"].name == "leaderboard_ipa.csv"
+    system_id = _system().system_id
+    assert paths["ipa_by_system"][system_id].name == (
+        f"leaderboard_{system_id}.csv"
+    )
+    assert paths["ipa_by_system"][system_id].parent.name == "ipa"
     assert paths["presentation"].name == "leaderboard_model_presentation.csv"
     assert paths["metadata"].name == "leaderboard_metadata.json"
-    assert all(path.is_file() for path in paths.values())
+    assert paths["orthographic"].is_file()
+    assert paths["ipa_by_system"][system_id].is_file()
+    assert paths["presentation"].is_file()
+    assert paths["metadata"].is_file()
     orthographic_csv = paths["orthographic"].read_text(encoding="utf-8")
     assert "passage_passage_corr" in orthographic_csv.splitlines()[0]
     assert "model_label" in orthographic_csv.splitlines()[0]
+    assert "evaluation_status" not in orthographic_csv.splitlines()[0]
     assert "0.9123" in orthographic_csv
     metadata = json.loads(paths["metadata"].read_text(encoding="utf-8"))
-    assert metadata["schema_version"] == 5
+    assert metadata["schema_version"] == 6
+    assert metadata["eligibility_policy"] == {
+        "completed_evaluations_only": True,
+        "representation_compatible_only": True,
+        "smoke_tests_excluded": True,
+    }
     assert metadata["presentation_naming"]["format"] == (
         "model_group · official_model_name [· variant] (decoder)"
     )
@@ -366,8 +523,13 @@ def test_writes_two_csvs_and_generation_metadata(tmp_path: Path) -> None:
         "execution_stack",
     ]
     assert metadata["leaderboards"]["orthographic"]["ranking_metric"] == "wer"
-    assert metadata["leaderboards"]["ipa"]["ranking_metric"] == "per"
-    assert skipped == {"orthographic": [], "ipa": []}
+    assert metadata["leaderboards"]["ipa_by_system"][system_id][
+        "ranking_metric"
+    ] == "per"
+    assert skipped == {
+        "orthographic": [],
+        "ipa_by_system": {system_id: []},
+    }
 
 
 def test_controlled_onnx_comparison_keeps_three_factors_separate(

@@ -12,6 +12,15 @@ from typing import Any, Sequence
 
 import pandas as pd
 
+from egra_eval2.reference.g2p import (
+    canonical_identity_sha256,
+    system_id_for_identity,
+)
+from egra_eval2.reference.ipa_inventory_maps import (
+    IPAInventoryMapError,
+    describe_ipa_inventory_route,
+)
+from inference.pipeline_provenance import inference_profile_from_run_metadata
 from egra_eval2.leaderboard_context import (
     model_artifact_label,
     contract_references as _contract_references,
@@ -19,9 +28,9 @@ from egra_eval2.leaderboard_context import (
     execution_stack_context as _execution_stack_context,
     execution_target_label as _execution_target_label,
     inference_engine_version as _inference_engine_version,
-    nonnegative_int as _nonnegative_int,
     input_processing_label,
 )
+from egra_eval2.leaderboard_policy import REQUIRED_ELIGIBILITY_POLICY
 from egra_eval2.model_presentation import (
     MODEL_PRESENTATION_COLUMNS,
     MODEL_PRESENTATION_REGISTRY_PATH,
@@ -65,7 +74,6 @@ REPRESENTATIONS = {
     "ipa": {
         "scoring_units": "phoneme",
         "error_metric": "per",
-        "filename": "leaderboard_ipa.csv",
     },
 }
 
@@ -82,10 +90,18 @@ _METRIC_RE = re.compile(
     r"^\s+([a-z][a-z0-9_]*):\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+)|nan)%?\s*$",
     re.IGNORECASE,
 )
+_G2P_SYSTEM_ID_RE = re.compile(r"^[a-z0-9_-]+-[0-9a-f]{12}$")
 
 
 class LeaderboardError(ValueError):
     """Raised when a leaderboard input cannot be parsed safely."""
+
+
+def _g2p_display_name(tool_id: object, recorded_name: object) -> str:
+    """Use the canonical public name while accepting historical metadata."""
+    if tool_id == "babygruut":
+        return "babygruut"
+    return str(recorded_name or "")
 
 
 def _load_json_object(path: Path, label: str) -> dict[str, Any]:
@@ -137,23 +153,10 @@ def _run_metadata_for_run(
     return _load_json_object(transcript_metadata, "ASR run metadata")
 
 
-def _hypothesis_route(namespace: str, native_output_units: str) -> str:
+def _hypothesis_route(namespace: str) -> str:
     if namespace == "orthographic":
         return "native orthographic"
-    if native_output_units == "phoneme":
-        return "native IPA -> canonical IPA"
-    return "orthographic -> IPA (Africa G2P)"
-
-
-def _evaluation_status(run_metadata: dict[str, Any]) -> str:
-    output = run_metadata.get("output")
-    if not isinstance(output, dict):
-        return "scored"
-    results = _nonnegative_int(output.get("results"))
-    scope = "smoke test" if output.get("smoke_test") is True else "full run"
-    if results:
-        return f"scored ({scope}, {results:,} items)"
-    return f"scored ({scope})"
+    raise LeaderboardError("IPA hypothesis route must come from evaluation metadata")
 
 
 def _flatten_summary(
@@ -182,9 +185,14 @@ def _candidate_row(
     evaluations_root: Path,
     run_dir: Path,
     namespace: str,
+    g2p_system_id: str | None = None,
 ) -> dict[str, Any]:
     config = REPRESENTATIONS[namespace]
-    representation_dir = run_dir / namespace
+    representation_dir = (
+        run_dir / "ipa" / str(g2p_system_id)
+        if namespace == "ipa"
+        else run_dir / "orthographic"
+    )
     evaluation_metadata_path = representation_dir / "evaluation_metadata.json"
     summary_path = representation_dir / "egra_eval_summary.txt"
 
@@ -212,8 +220,16 @@ def _candidate_row(
         )
 
     run_metadata = _run_metadata_for_run(evaluations_root, run_dir.name)
-    profile = run_metadata.get("inference_profile")
-    if not isinstance(profile, dict):
+    output_metadata = run_metadata.get("output")
+    if (
+        isinstance(output_metadata, dict)
+        and output_metadata.get("smoke_test") is True
+    ):
+        raise LeaderboardError(
+            f"Smoke-test run cannot enter the leaderboard: {run_dir.name}"
+        )
+    profile = inference_profile_from_run_metadata(run_metadata)
+    if not profile:
         metadata_path = (
             evaluations_root.parent
             / "transcripts"
@@ -235,6 +251,67 @@ def _candidate_row(
         raise LeaderboardError(
             f"Native phoneme run cannot enter the orthographic leaderboard: {run_dir.name}"
         )
+
+    g2p_metadata: dict[str, Any] | None = None
+    hypothesis_route = _hypothesis_route(namespace) if namespace == "orthographic" else ""
+    if namespace == "ipa":
+        raw_g2p = evaluation_metadata.get("g2p_system")
+        if not isinstance(raw_g2p, dict):
+            raise LeaderboardError(
+                f"IPA evaluation has no exact G2P identity: {representation_dir}"
+            )
+        g2p_metadata = raw_g2p
+        identity = g2p_metadata.get("identity")
+        if not isinstance(identity, dict):
+            raise LeaderboardError(
+                f"IPA evaluation has invalid G2P identity: {representation_dir}"
+            )
+        recorded_id = g2p_metadata.get("system_id")
+        recorded_sha = g2p_metadata.get("identity_sha256")
+        computed_id = system_id_for_identity(identity)
+        computed_sha = canonical_identity_sha256(identity)
+        identity_fields_match = all(
+            g2p_metadata.get(field) == identity.get(field)
+            for field in ("tool_id", "language", "inventory")
+        )
+        if (
+            recorded_id != g2p_system_id
+            or computed_id != g2p_system_id
+            or recorded_sha != computed_sha
+            or representation_dir.name != g2p_system_id
+            or not identity_fields_match
+        ):
+            raise LeaderboardError(
+                f"IPA evaluation G2P identity/path mismatch: {representation_dir}"
+            )
+        hypothesis_route = evaluation_metadata.get("hypothesis_route")
+        if not isinstance(hypothesis_route, str) or not hypothesis_route.strip():
+            raise LeaderboardError(
+                f"IPA evaluation has no hypothesis route: {representation_dir}"
+            )
+        display_name = _g2p_display_name(
+            g2p_metadata.get("tool_id"), g2p_metadata.get("display_name")
+        )
+        recorded_display_name = str(g2p_metadata.get("display_name", ""))
+        if native_output_units == "phoneme":
+            source_inventory = profile.get("output_inventory")
+            target_inventory = g2p_metadata.get("inventory")
+            if not isinstance(source_inventory, str) or not isinstance(
+                target_inventory, str
+            ):
+                raise LeaderboardError(
+                    f"Native IPA inventory is not recorded: {representation_dir}"
+                )
+            try:
+                hypothesis_route = describe_ipa_inventory_route(
+                    source_inventory.strip(), target_inventory.strip()
+                )
+            except IPAInventoryMapError as exc:
+                raise LeaderboardError(str(exc)) from exc
+        elif recorded_display_name and recorded_display_name != display_name:
+            hypothesis_route = hypothesis_route.replace(
+                recorded_display_name, display_name
+            )
 
     summary = parse_summary(summary_path)
     error_metric = str(config["error_metric"])
@@ -282,12 +359,23 @@ def _candidate_row(
         "inference_setup": inference_setup,
         "execution_stack": execution_stack,
         "context_evidence": context_evidence,
-        "evaluation_status": _evaluation_status(run_metadata),
         "native_output_units": native_output_units,
-        "hypothesis_route": _hypothesis_route(namespace, native_output_units),
+        "hypothesis_route": hypothesis_route,
         "completed_at": completed_at,
         "summary_path": str(summary_path),
     }
+    if g2p_metadata is not None:
+        row.update(
+            {
+                "g2p_tool": str(g2p_metadata.get("tool_id", "")),
+                "g2p_system_id": str(g2p_metadata.get("system_id", "")),
+                "g2p_display_name": display_name,
+                "g2p_identity_sha256": str(
+                    g2p_metadata.get("identity_sha256", "")
+                ),
+                "target_inventory": str(g2p_metadata.get("inventory", "")),
+            }
+        )
     row["model_label"] = structured_model_label(presentation, decoding)
     row.update(_flatten_summary(summary, error_metric))
     return row
@@ -298,7 +386,6 @@ def _columns_for(namespace: str) -> list[str]:
     columns = [
         "rank",
         "model_label",
-        "evaluation_status",
         "model_group",
         "model_name",
         "model_variant",
@@ -316,9 +403,18 @@ def _columns_for(namespace: str) -> list[str]:
         "context_evidence",
         "native_output_units",
         "hypothesis_route",
-        f"global_{metric}",
-        "global_mer",
     ]
+    if namespace == "ipa":
+        columns.extend(
+            [
+                "g2p_tool",
+                "g2p_system_id",
+                "g2p_display_name",
+                "g2p_identity_sha256",
+                "target_inventory",
+            ]
+        )
+    columns.extend([f"global_{metric}", "global_mer"])
     for section in TASK_SECTIONS:
         columns.extend([f"{section}_{metric}", f"{section}_mer"])
         if section in CORRELATION_SECTIONS:
@@ -333,11 +429,16 @@ def build_leaderboard(
     evaluations_root: str | Path,
     namespace: str,
     *,
+    g2p_system_id: str | None = None,
     latest_only: bool = True,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Discover valid completed runs for one scoring representation."""
     if namespace not in REPRESENTATIONS:
         raise ValueError(f"Unsupported leaderboard namespace: {namespace}")
+    if namespace == "ipa" and not g2p_system_id:
+        raise ValueError("IPA leaderboards require an exact g2p_system_id")
+    if namespace == "orthographic" and g2p_system_id is not None:
+        raise ValueError("Orthographic leaderboards do not use a G2P system")
     root = Path(evaluations_root)
     if not root.is_dir():
         raise LeaderboardError(f"Evaluations root not found: {root}")
@@ -345,11 +446,17 @@ def build_leaderboard(
     rows: list[dict[str, Any]] = []
     skipped: list[str] = []
     for run_dir in sorted((path for path in root.iterdir() if path.is_dir())):
-        representation_dir = run_dir / namespace
+        representation_dir = (
+            run_dir / "ipa" / str(g2p_system_id)
+            if namespace == "ipa"
+            else run_dir / "orthographic"
+        )
         if not representation_dir.is_dir():
             continue
         try:
-            row = _candidate_row(root, run_dir, namespace)
+            row = _candidate_row(
+                root, run_dir, namespace, g2p_system_id=g2p_system_id
+            )
             if str(row["inference_setup_id"]) in RETIRED_LEADERBOARD_INFERENCE_SETUP_IDS:
                 continue
             rows.append(row)
@@ -379,28 +486,61 @@ def build_leaderboard(
     return frame[columns], skipped
 
 
+def discover_g2p_system_ids(evaluations_root: str | Path) -> list[str]:
+    """Discover exact G2P-system namespaces present below completed runs."""
+    root = Path(evaluations_root)
+    if not root.is_dir():
+        raise LeaderboardError(f"Evaluations root not found: {root}")
+    system_ids: set[str] = set()
+    for run_dir in root.iterdir():
+        ipa_dir = run_dir / "ipa"
+        if not run_dir.is_dir() or not ipa_dir.is_dir():
+            continue
+        system_ids.update(
+            path.name
+            for path in ipa_dir.iterdir()
+            if path.is_dir() and _G2P_SYSTEM_ID_RE.fullmatch(path.name)
+        )
+    return sorted(system_ids)
+
+
 def build_leaderboards(
     evaluations_root: str | Path,
     *,
     latest_only: bool = True,
-) -> tuple[dict[str, pd.DataFrame], dict[str, list[str]]]:
-    """Build the valid orthographic/WER and IPA/PER leaderboards."""
-    frames: dict[str, pd.DataFrame] = {}
-    skipped: dict[str, list[str]] = {}
-    for namespace in REPRESENTATIONS:
-        frames[namespace], skipped[namespace] = build_leaderboard(
-            evaluations_root,
-            namespace,
-            latest_only=latest_only,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build orthographic plus one isolated IPA board per exact G2P system."""
+    orthographic, orthographic_skipped = build_leaderboard(
+        evaluations_root, "orthographic", latest_only=latest_only
+    )
+    ipa_by_system: dict[str, pd.DataFrame] = {}
+    ipa_skipped_by_system: dict[str, list[str]] = {}
+    for system_id in discover_g2p_system_ids(evaluations_root):
+        ipa_by_system[system_id], ipa_skipped_by_system[system_id] = (
+            build_leaderboard(
+                evaluations_root,
+                "ipa",
+                g2p_system_id=system_id,
+                latest_only=latest_only,
+            )
         )
+    frames: dict[str, Any] = {
+        "orthographic": orthographic,
+        "ipa_by_system": ipa_by_system,
+    }
+    skipped: dict[str, Any] = {
+        "orthographic": orthographic_skipped,
+        "ipa_by_system": ipa_skipped_by_system,
+    }
     return frames, skipped
 
 
 def _latest_evaluated_rows(
-    frames: dict[str, pd.DataFrame],
+    frames: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
     """Index the newest row per inference setup across namespaces."""
-    evaluated = pd.concat(frames.values(), ignore_index=True)
+    source_frames = [frames["orthographic"], *frames["ipa_by_system"].values()]
+    evaluated = pd.concat(source_frames, ignore_index=True)
     if evaluated.empty:
         return {}
     latest = evaluated.sort_values(
@@ -439,8 +579,8 @@ def write_leaderboards(
     output_dir: str | Path,
     *,
     latest_only: bool = True,
-) -> tuple[dict[str, Path], dict[str, list[str]]]:
-    """Write separate orthographic and IPA leaderboard CSV files."""
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Write orthographic and exact-system-isolated IPA leaderboard CSVs."""
     from inference.provenance import file_identity
 
     frames, skipped = build_leaderboards(
@@ -449,13 +589,25 @@ def write_leaderboards(
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
 
-    paths: dict[str, Path] = {}
-    for namespace, frame in frames.items():
-        path = destination / str(REPRESENTATIONS[namespace]["filename"])
+    paths: dict[str, Any] = {}
+    path = destination / str(REPRESENTATIONS["orthographic"]["filename"])
+    frame = frames["orthographic"]
+    temporary = path.with_name(f".{path.name}.tmp")
+    frame.to_csv(temporary, index=False, float_format="%.4f")
+    temporary.replace(path)
+    paths["orthographic"] = path
+
+    ipa_paths: dict[str, Path] = {}
+    ipa_destination = destination / "ipa"
+    if frames["ipa_by_system"]:
+        ipa_destination.mkdir(parents=True, exist_ok=True)
+    for system_id, frame in frames["ipa_by_system"].items():
+        path = ipa_destination / f"leaderboard_{system_id}.csv"
         temporary = path.with_name(f".{path.name}.tmp")
         frame.to_csv(temporary, index=False, float_format="%.4f")
         temporary.replace(path)
-        paths[namespace] = path
+        ipa_paths[system_id] = path
+    paths["ipa_by_system"] = ipa_paths
 
     registry = default_model_presentation_registry()
     presentation_rows = build_presentation_rows(
@@ -478,10 +630,11 @@ def write_leaderboards(
     paths["presentation"] = presentation_path
 
     metadata = {
-        "schema_version": 5,
+        "schema_version": 6,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "evaluations_root": str(Path(evaluations_root)),
         "latest_completed_run_per_inference_setup": latest_only,
+        "eligibility_policy": dict(REQUIRED_ELIGIBILITY_POLICY),
         "presentation_naming": {
             "format": registry["naming_format"],
             "registry": file_identity(MODEL_PRESENTATION_REGISTRY_PATH),
@@ -518,14 +671,36 @@ def write_leaderboards(
             ],
         },
         "leaderboards": {
-            namespace: {
-                "path": str(paths[namespace]),
-                "rows": len(frames[namespace]),
-                "scoring_units": config["scoring_units"],
-                "ranking_metric": config["error_metric"],
-                "skipped": skipped[namespace],
-            }
-            for namespace, config in REPRESENTATIONS.items()
+            "orthographic": {
+                "path": str(paths["orthographic"]),
+                "rows": len(frames["orthographic"]),
+                "scoring_units": "orthographic",
+                "ranking_metric": "wer",
+                "skipped": skipped["orthographic"],
+            },
+            "ipa_by_system": {
+                system_id: {
+                    "path": str(paths["ipa_by_system"][system_id]),
+                    "rows": len(frame),
+                    "scoring_units": "phoneme",
+                    "ranking_metric": "per",
+                    "g2p_system": (
+                        frame.iloc[0][
+                            [
+                                "g2p_tool",
+                                "g2p_system_id",
+                                "g2p_display_name",
+                                "g2p_identity_sha256",
+                                "target_inventory",
+                            ]
+                        ].to_dict()
+                        if not frame.empty
+                        else {"g2p_system_id": system_id}
+                    ),
+                    "skipped": skipped["ipa_by_system"][system_id],
+                }
+                for system_id, frame in frames["ipa_by_system"].items()
+            },
         },
     }
     metadata_path = destination / "leaderboard_metadata.json"
@@ -572,9 +747,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.output_dir,
         latest_only=not args.all_runs,
     )
-    for namespace in REPRESENTATIONS:
-        print(f"{namespace}: {paths[namespace]}")
-        for reason in skipped[namespace]:
+    print(f"orthographic: {paths['orthographic']}")
+    for reason in skipped["orthographic"]:
+        print(f"[SKIP] {reason}")
+    for system_id, path in paths["ipa_by_system"].items():
+        print(f"ipa/{system_id}: {path}")
+        for reason in skipped["ipa_by_system"][system_id]:
             print(f"[SKIP] {reason}")
     print(f"model presentation: {paths['presentation']}")
     print(f"metadata: {paths['metadata']}")

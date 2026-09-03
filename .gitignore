@@ -27,6 +27,7 @@ input_output_data/input/**
 *.ckpt
 
 # Temporary / generated files
+/output/
 /outputs/
 inference/nemo/tmp/**
 !inference/nemo/tmp/.gitkeep

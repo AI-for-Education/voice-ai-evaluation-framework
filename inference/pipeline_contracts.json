@@ -309,7 +309,7 @@
         "authority": "project",
         "evidence": {
           "level": "project",
-          "source": "repo:docs/inference-setup-evidence.md",
+          "source": "repo:inference/multimodal/adapters/common.py",
           "rationale": "The need or hardware constraint may come from the model family, but the exact duration and zero-overlap stitching policy are project choices unless separately evidenced."
         }
       }
@@ -324,7 +324,7 @@
       "authority": "project",
       "evidence": {
         "level": "exact",
-        "source": "repo:docs/project-onboarding-guide.md",
+          "source": "repo:inference/runner.py",
         "rationale": "The workflow contract fixes the inference-to-evaluation handoff and representation compatibility rules."
       }
     }

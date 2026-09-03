@@ -1,4 +1,4 @@
-"""Build the shareable onboarding leaderboard status and data snapshot."""
+"""Build a local-development onboarding leaderboard status and data snapshot."""
 
 from __future__ import annotations
 
@@ -9,10 +9,16 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from egra_eval2.leaderboard_policy import has_required_eligibility_policy
 
 
 class SnapshotError(ValueError):
@@ -21,7 +27,6 @@ class SnapshotError(ValueError):
 
 FILES = {
     "orthographic": "leaderboard_orthographic.csv",
-    "ipa": "leaderboard_ipa.csv",
     "presentation": "leaderboard_model_presentation.csv",
     "metadata": "leaderboard_metadata.json",
 }
@@ -169,7 +174,7 @@ def _skipped(metadata: Mapping[str, Any], namespace: str) -> list[str]:
 def _render_status(
     metadata: Mapping[str, Any],
     orthographic: Sequence[Mapping[str, str]],
-    ipa: Sequence[Mapping[str, str]],
+    ipa_by_system: Mapping[str, Sequence[Mapping[str, str]]],
     presentation: Sequence[Mapping[str, str]],
 ) -> str:
     statuses: dict[str, int] = {}
@@ -182,7 +187,14 @@ def _render_status(
         if row.get("leaderboard_status") == "profile_only"
     ]
     skipped_orthographic = _skipped(metadata, "orthographic")
-    skipped_ipa = _skipped(metadata, "ipa")
+    leaderboard_metadata = metadata.get("leaderboards") or {}
+    raw_ipa_metadata = leaderboard_metadata.get("ipa_by_system") or {}
+    skipped_ipa = {
+        system_id: [str(item) for item in details.get("skipped", [])]
+        for system_id, details in raw_ipa_metadata.items()
+        if isinstance(details, dict)
+    }
+    ipa_rows = sum(len(rows) for rows in ipa_by_system.values())
     generated = _markdown(metadata.get("generated_at", "not available"))
     latest_only = metadata.get("latest_completed_run_per_inference_setup") is True
 
@@ -201,9 +213,10 @@ def _render_status(
         f"| Evaluated setups | {statuses.get('evaluated', 0)} |",
         f"| Profile-only setups | {statuses.get('profile_only', 0)} |",
         f"| Eligible orthographic/WER rows | {len(orthographic)} |",
-        f"| Eligible IPA/PER rows | {len(ipa)} |",
+        f"| Exact G2P systems with IPA/PER boards | {len(ipa_by_system)} |",
+        f"| Eligible IPA/PER rows across isolated boards | {ipa_rows} |",
         f"| Skipped orthographic results | {len(skipped_orthographic)} |",
-        f"| Skipped IPA results | {len(skipped_ipa)} |",
+        f"| Skipped IPA results | {sum(map(len, skipped_ipa.values()))} |",
         "",
         (
             "The generated view keeps the newest completed run for each stable "
@@ -219,19 +232,28 @@ def _render_status(
         "",
         *_top_table(orthographic, "wer"),
         "",
-        "## Leading IPA results",
-        "",
-        (
-            "Lower global PER is better. Orthographic hypotheses are converted "
-            "with the recorded Africa G2P route; native IPA hypotheses require "
-            "an approved inventory mapping."
-        ),
-        "",
-        *_top_table(ipa, "per"),
-        "",
-        "## Registered but not yet evaluated",
-        "",
     ]
+    if ipa_by_system:
+        for system_id, ipa_rows_for_system in ipa_by_system.items():
+            system_details = raw_ipa_metadata.get(system_id, {})
+            system_identity = system_details.get("g2p_system", {})
+            system_name = system_identity.get("g2p_display_name", system_id)
+            inventory = system_identity.get("target_inventory", "not available")
+            lines.extend(
+                [
+                    f"## Leading IPA results — {_markdown(system_name)}",
+                    "",
+                    f"Exact system ID: `{_markdown(system_id)}`; target inventory: "
+                    f"`{_markdown(inventory)}`. Lower global PER is better. This "
+                    "ranking is not combined with any other G2P system.",
+                    "",
+                    *_top_table(ipa_rows_for_system, "per"),
+                    "",
+                ]
+            )
+    else:
+        lines.extend(["## Leading IPA results", "", "No exact-system IPA boards found.", ""])
+    lines.extend(["## Registered but not yet evaluated", ""])
     if profile_only:
         for row in profile_only:
             name = row.get("presentation_name") or row.get("inference_setup_id")
@@ -240,15 +262,15 @@ def _render_status(
         lines.append("All registered profiles currently have an eligible evaluation.")
 
     lines.extend(["", "## Skipped-result status", ""])
-    if not skipped_orthographic and not skipped_ipa:
+    if not skipped_orthographic and not any(skipped_ipa.values()):
         lines.append(
             "No discovered completed result was skipped in either leaderboard."
         )
     else:
-        for namespace, items in (
-            ("Orthographic", skipped_orthographic),
-            ("IPA", skipped_ipa),
-        ):
+        for namespace, items in [("Orthographic", skipped_orthographic), *[
+            (f"IPA / {system_id}", items)
+            for system_id, items in skipped_ipa.items()
+        ]]:
             for item in items:
                 lines.append(f"- **{namespace}:** {_markdown(item)}")
 
@@ -259,6 +281,10 @@ def _render_status(
             "",
             (
                 "- WER and PER are different representations and are never "
+                "combined into one rank."
+            ),
+            (
+                "- PER results produced by different exact G2P systems are never "
                 "combined into one rank."
             ),
             (
@@ -274,7 +300,8 @@ def _render_status(
             "## Attached data",
             "",
             "- `data/leaderboard_orthographic.csv` — complete ranked WER rows.",
-            "- `data/leaderboard_ipa.csv` — complete ranked PER rows.",
+            "- `data/ipa/leaderboard_<g2p_system_id>.csv` — one complete PER "
+            "ranking per exact G2P system.",
             (
                 "- `data/leaderboard_model_presentation.csv` — registered and "
                 "profile-only inference setups."
@@ -302,12 +329,18 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
     generated_at = metadata.get("generated_at")
     if not isinstance(generated_at, str) or not generated_at.strip():
         raise SnapshotError("Leaderboard metadata has no generated_at timestamp")
+    if not has_required_eligibility_policy(metadata):
+        raise SnapshotError(
+            "Leaderboard metadata does not guarantee the required eligibility policy"
+        )
 
     rows: dict[str, list[dict[str, str]]] = {}
     headers: dict[str, list[str]] = {}
-    for namespace in ("orthographic", "ipa"):
+    for namespace in ("orthographic",):
         path = source_paths[namespace]
         headers[namespace], rows[namespace] = _read_csv(path)
+        if "evaluation_status" in headers[namespace]:
+            raise SnapshotError(f"CSV contains obsolete run-status data: {path}")
         metric = METRIC_BY_NAMESPACE[namespace]
         _require_columns(
             path,
@@ -330,6 +363,48 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
         if board_metadata.get("ranking_metric") != metric:
             raise SnapshotError(f"Unexpected {namespace} ranking metric")
 
+    leaderboards_metadata = metadata.get("leaderboards")
+    if not isinstance(leaderboards_metadata, dict):
+        raise SnapshotError("Missing leaderboard metadata")
+    ipa_metadata = leaderboards_metadata.get("ipa_by_system")
+    if not isinstance(ipa_metadata, dict):
+        raise SnapshotError("Missing ipa_by_system leaderboard metadata")
+    ipa_paths: dict[str, Path] = {}
+    ipa_rows: dict[str, list[dict[str, str]]] = {}
+    for system_id, board_metadata in sorted(ipa_metadata.items()):
+        if not isinstance(system_id, str) or not re.fullmatch(r"[a-z0-9_-]+", system_id):
+            raise SnapshotError(f"Unsafe G2P system ID in metadata: {system_id!r}")
+        if not isinstance(board_metadata, dict):
+            raise SnapshotError(f"Invalid IPA leaderboard metadata: {system_id}")
+        path = leaderboards_root / "ipa" / f"leaderboard_{system_id}.csv"
+        if not path.is_file():
+            raise SnapshotError(f"Missing leaderboard file: {path}")
+        columns, system_rows = _read_csv(path)
+        if "evaluation_status" in columns:
+            raise SnapshotError(f"CSV contains obsolete run-status data: {path}")
+        _require_columns(
+            path,
+            columns,
+            {
+                "rank",
+                "inference_setup_id",
+                "model_label",
+                "global_per",
+                "global_mer",
+                "hypothesis_route",
+                "g2p_system_id",
+            },
+        )
+        _validate_ranks(path, system_rows)
+        if any(row.get("g2p_system_id") != system_id for row in system_rows):
+            raise SnapshotError(f"IPA CSV mixes G2P systems: {path}")
+        if board_metadata.get("rows") != len(system_rows):
+            raise SnapshotError(f"IPA CSV row count disagrees with metadata: {system_id}")
+        if board_metadata.get("ranking_metric") != "per":
+            raise SnapshotError(f"Unexpected IPA ranking metric: {system_id}")
+        ipa_paths[system_id] = path
+        ipa_rows[system_id] = system_rows
+
     presentation_header, presentation_rows = _read_csv(source_paths["presentation"])
     _require_columns(
         source_paths["presentation"],
@@ -349,7 +424,7 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
         "portable_paths": True,
     }
     status = _render_status(
-        metadata, rows["orthographic"], rows["ipa"], presentation_rows
+        metadata, rows["orthographic"], ipa_rows, presentation_rows
     )
 
     package_root.mkdir(parents=True, exist_ok=True)
@@ -361,8 +436,12 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
         staging = Path(temporary)
         staged_status = staging / "05-current-leaderboard-status.md"
         staged_status.write_text(status, encoding="utf-8", newline="\n")
-        for namespace in ("orthographic", "ipa", "presentation"):
+        for namespace in ("orthographic", "presentation"):
             shutil.copyfile(source_paths[namespace], staging / FILES[namespace])
+        staged_ipa = staging / "ipa"
+        staged_ipa.mkdir()
+        for system_id, source in ipa_paths.items():
+            shutil.copyfile(source, staged_ipa / source.name)
         staged_metadata = staging / FILES["metadata"]
         staged_metadata.write_text(
             json.dumps(portable, indent=2, ensure_ascii=False) + "\n",
@@ -371,8 +450,16 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
         )
 
         _install_staged_file(staged_status, package_root / staged_status.name)
-        for name in ("orthographic", "ipa", "presentation", "metadata"):
+        for name in ("orthographic", "presentation", "metadata"):
             _install_staged_file(staging / FILES[name], data_root / FILES[name])
+        data_ipa = data_root / "ipa"
+        data_ipa.mkdir(exist_ok=True)
+        expected_ipa_names = {source.name for source in ipa_paths.values()}
+        for existing in data_ipa.glob("leaderboard_*.csv"):
+            if existing.name not in expected_ipa_names:
+                existing.unlink()
+        for system_id, source in ipa_paths.items():
+            _install_staged_file(staged_ipa / source.name, data_ipa / source.name)
 
     return {
         "generated_at": generated_at,
@@ -382,7 +469,8 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
             for row in presentation_rows
         ),
         "orthographic_rows": len(rows["orthographic"]),
-        "ipa_rows": len(rows["ipa"]),
+        "ipa_rows": sum(len(system_rows) for system_rows in ipa_rows.values()),
+        "ipa_systems": len(ipa_rows),
         "package_root": str(package_root),
     }
 
@@ -398,6 +486,7 @@ def main() -> None:
     parser.add_argument(
         "--package-root",
         default="docs/shared-onboarding",
+        help="Local-development output directory (Git-ignored by default).",
     )
     args = parser.parse_args()
     result = build_snapshot(Path(args.leaderboards_root), Path(args.package_root))

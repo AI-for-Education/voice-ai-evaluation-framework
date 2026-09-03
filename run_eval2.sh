@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Prevent Git Bash/MSYS from rewriting Linux container paths such as /work.
+export MSYS_NO_PATHCONV="${MSYS_NO_PATHCONV:-1}"
+
 usage() {
   cat <<'EOF' >&2
 Usage:
@@ -9,14 +12,16 @@ Usage:
 Example:
   ./run_eval2.sh \
     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
-    --manifest_in input_output_data/output/evaluations/<model>_<timestamp>/manifests/ref_manifest.clean.jsonl
+    --manifest_in input_output_data/output/evaluations/<model>_<timestamp>/manifests/ref_manifest.clean.jsonl \
+    [--scoring_representation ipa --g2p-tool {africa_g2p|babygruut}]
 
 The default model-native evaluation is written under one of:
   input_output_data/output/evaluations/<model>_<timestamp>/orthographic/
-  input_output_data/output/evaluations/<model>_<timestamp>/ipa/
+  input_output_data/output/evaluations/<model>_<timestamp>/ipa/<g2p_system_id>/
 
-Add --scoring_representation ipa for the parallel IPA/PER view under:
-  input_output_data/output/evaluations/<model>_<timestamp>/ipa/
+Every IPA evaluation, including an auto-selected native-phoneme run, requires
+exactly one --g2p-tool. Results from different exact systems never share a
+directory or leaderboard.
 
 EOF
   exit 1

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Prevent Git Bash/MSYS from rewriting Linux container paths such as /work.
+export MSYS_NO_PATHCONV="${MSYS_NO_PATHCONV:-1}"
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 source "$SCRIPT_DIR/inference/execution_environment_identity.sh"

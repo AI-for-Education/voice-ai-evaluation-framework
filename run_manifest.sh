@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Prevent Git Bash/MSYS from rewriting Linux container paths such as /work.
+export MSYS_NO_PATHCONV="${MSYS_NO_PATHCONV:-1}"
+
 usage() {
   cat <<'EOF' >&2
 Usage:
@@ -10,12 +13,14 @@ Example:
   ./run_manifest.sh \
     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
     --audio_manifest input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.raw_segments.jsonl \
-    --prediction_manifest input_output_data/output/transcripts/<model>_<timestamp>/transcriptions.jsonl
+    --prediction_manifest input_output_data/output/transcripts/<model>_<timestamp>/transcriptions.jsonl \
+    [--g2p-tool {africa_g2p|babygruut}]
 
 With the standard transcript path, output is inferred as:
   input_output_data/output/evaluations/<model>_<timestamp>/manifests/
 
-Any model run with declared output units triggers generation/reuse of the dataset IPA reference view.
+Supplying --g2p-tool generates or reuses that exact system's dataset IPA
+reference view. Omit it when only orthographic scoring is needed.
 EOF
   exit 1
 }

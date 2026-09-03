@@ -32,6 +32,9 @@ from inference.provenance import (
 )
 
 
+LOW_NON_EMPTY_HYPOTHESIS_FRACTION = 0.5
+
+
 def _chunks(items: list[str], size: int):
     for start in range(0, len(items), size):
         yield items[start : start + size]
@@ -56,6 +59,37 @@ def _warning_rows(
         }
         for item in items
     ]
+
+
+def _hypothesis_output_diagnostics(
+    *, total: int, non_empty: int, errors: int
+) -> dict[str, Any]:
+    """Summarize adapter output without changing or gating its hypotheses."""
+    blank = total - non_empty
+    non_empty_fraction = non_empty / total if total else None
+    is_low = (
+        non_empty_fraction is not None
+        and non_empty_fraction < LOW_NON_EMPTY_HYPOTHESIS_FRACTION
+    )
+    return {
+        "counts": {
+            "total": total,
+            "non_empty": non_empty,
+            "blank": blank,
+            "errors": errors,
+        },
+        "coverage": {
+            "status": "warning" if is_low else ("ok" if total else "not_assessed"),
+            "warning_code": (
+                "low_non_empty_hypothesis_coverage" if is_low else None
+            ),
+            "non_empty_fraction": non_empty_fraction,
+            "minimum_expected_non_empty_fraction": (
+                LOW_NON_EMPTY_HYPOTHESIS_FRACTION
+            ),
+            "affects_evaluation": False,
+        },
+    }
 
 
 def resolve_transcript_output_dir(
@@ -121,6 +155,7 @@ def run_backend(
         raise SystemExit("--batch_size must be at least 1")
     started = datetime.now(timezone.utc)
     result_count = 0
+    non_empty_result_count = 0
     error_count = 0
     backend_metadata: dict[str, Any] = {}
     observed_warnings = _warning_rows(startup_warnings, phase="initialization")
@@ -182,6 +217,7 @@ def run_backend(
                             json.dumps(result.to_row(), ensure_ascii=False) + "\n"
                         )
                         result_count += 1
+                        non_empty_result_count += int(bool(result.pred_text.strip()))
                         error_count += int(result.error is not None)
                     output.flush()
                     progress.update(len(batch_paths))
@@ -227,6 +263,11 @@ def run_backend(
             input_audio_summary=input_audio_summary,
             recording_mode="run_time",
         )
+        output_diagnostics = _hypothesis_output_diagnostics(
+            total=result_count,
+            non_empty=non_empty_result_count,
+            errors=error_count,
+        )
         metadata: dict[str, Any] = {
             "metadata_schema_version": 2,
             "provenance_schema_version": PIPELINE_PROVENANCE_SCHEMA_VERSION,
@@ -255,6 +296,7 @@ def run_backend(
                 "smoke_test": smoke_test,
                 "results": result_count,
                 "errors": error_count,
+                "hypotheses": output_diagnostics,
                 "fail_on_error": fail_on_error,
             },
             "started_at": started.isoformat(),
@@ -269,6 +311,13 @@ def run_backend(
         )
         staging_destination.rename(destination)
         staging_destination = None
+        if output_diagnostics["coverage"]["status"] == "warning":
+            print(
+                "[WARNING] Low non-empty hypothesis coverage: "
+                f"{non_empty_result_count}/{result_count} "
+                f"({output_diagnostics['coverage']['non_empty_fraction']:.1%}); "
+                "hypotheses were preserved unchanged"
+            )
         print(
             f"[INFO] Completed: {result_count} file(s), {error_count} error(s) | "
             f"{published_output_manifest}"

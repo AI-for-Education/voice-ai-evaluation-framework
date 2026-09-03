@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from inference.pipeline_provenance import (
+    build_evaluation_provenance,
     build_pipeline_provenance,
     execution_environment_from_environment,
     infer_contract_references,
@@ -269,11 +270,84 @@ def test_evaluation_metadata_links_the_source_run_and_outputs(
     )
     payload = json.loads(path.read_text(encoding="utf-8"))
 
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     pipeline = payload["pipeline_provenance"]
     assert pipeline["stage"] == "evaluation"
     assert pipeline["recording"]["mode"] == "evaluation_time"
     assert pipeline["links"]["source_run_metadata"]["exists"] is True
     assert pipeline["links"]["source_manifest"]["exists"] is True
     assert pipeline["links"]["reference_view_metadata"]["exists"] is True
+    assert pipeline["links"]["reference_view_metadata"]["identity_scope"] == (
+        "mutable_shared_index"
+    )
+    assert (
+        pipeline["links"]["reference_view_metadata"]["content_hash_recorded"]
+        is False
+    )
+    assert "sha256" not in pipeline["links"]["reference_view_metadata"]
+    assert pipeline["effective"]["reference_identity"] == {
+        "kind": "evaluation_source_manifest",
+        "source_manifest": pipeline["links"]["source_manifest"],
+    }
     assert pipeline["links"]["summary"]["exists"] is True
+
+
+def test_evaluation_reference_identity_does_not_hash_the_mutable_shared_index(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text("{}\n", encoding="utf-8")
+    reference_index = tmp_path / "reference_views.metadata.json"
+    reference_index.write_text('{"revision": 1}\n', encoding="utf-8")
+    reference_view = tmp_path / "phonemic.ipa.exact.jsonl"
+    reference_view.write_text("{}\n", encoding="utf-8")
+    aligned_manifest = tmp_path / "aligned.jsonl"
+    aligned_manifest.write_text("{}\n", encoding="utf-8")
+    base = tmp_path / "evaluation"
+    base.mkdir()
+    (base / "egra_eval_detailed.csv").write_text("a\n", encoding="utf-8")
+    (base / "egra_eval_summary.txt").write_text("GLOBAL\n", encoding="utf-8")
+    g2p_system = {
+        "system_id": "g2p-system-exact",
+        "identity_sha256": "a" * 64,
+        "inventory": "target_ipa_v1",
+    }
+
+    first = build_evaluation_provenance(
+        base=base,
+        manifest_in=manifest,
+        requested_representation="ipa",
+        scoring_units="phoneme",
+        namespace="ipa",
+        reference_metadata_path=reference_index,
+        reference_view_path=reference_view,
+        aligned_manifest_path=aligned_manifest,
+        g2p_system=g2p_system,
+    )
+    reference_index.write_text('{"revision": 2}\n', encoding="utf-8")
+    second = build_evaluation_provenance(
+        base=base,
+        manifest_in=manifest,
+        requested_representation="ipa",
+        scoring_units="phoneme",
+        namespace="ipa",
+        reference_metadata_path=reference_index,
+        reference_view_path=reference_view,
+        aligned_manifest_path=aligned_manifest,
+        g2p_system=g2p_system,
+    )
+
+    assert first["links"]["reference_view_metadata"] == second["links"][
+        "reference_view_metadata"
+    ]
+    assert "sha256" not in first["links"]["reference_view_metadata"]
+    assert first["effective"]["reference_identity"] == second["effective"][
+        "reference_identity"
+    ]
+    assert first["effective"]["reference_identity"] == {
+        "kind": "exact_g2p_reference_view",
+        "system_id": "g2p-system-exact",
+        "g2p_identity_sha256": "a" * 64,
+        "inventory": "target_ipa_v1",
+        "reference_view": first["links"]["reference_view"],
+    }

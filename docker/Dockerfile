@@ -57,6 +57,13 @@ RUN pip3 install \
     africa-g2p==0.1.0 \
     jiwer==3.1.0
 
+# babygruut and the Swahili lexicon/CRF resources are pinned to one upstream
+# revision. Evaluation always passes turso_config=None, so these local assets
+# are the only pronunciation source (SQLite lexicon first, CRF fallback).
+RUN pip3 install \
+    "babygruut @ git+https://github.com/bookbot-hive/babygruut.git@85eadf1743455ba57ccb1baccf39485dc8628c33" \
+    "gruut-lang-sw @ git+https://github.com/bookbot-hive/babygruut.git@85eadf1743455ba57ccb1baccf39485dc8628c33#subdirectory=gruut-lang-sw"
+
 # BookBot's packaged 5-gram CTC decoder. These are additive: greedy CTC,
 # speech-seq2seq, NeMo, and evaluation code do not import them.
 RUN pip3 install \

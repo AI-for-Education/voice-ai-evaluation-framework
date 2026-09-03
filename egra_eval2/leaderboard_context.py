@@ -79,6 +79,22 @@ def contract_references(
         recording = recording if isinstance(recording, dict) else {}
         mode = str(recording.get("mode") or "recording mode not available")
         return references, f"pipeline contract ({mode.replace('_', ' ')})"
+    if isinstance(references, dict) and references.get("schema_version") == 1:
+        inference = references.get("inference")
+        if isinstance(inference, dict):
+            recording = pipeline.get("recording")
+            recording = recording if isinstance(recording, dict) else {}
+            mode = str(recording.get("mode") or "recording mode not available")
+            return {
+                "schema_version": 2,
+                "audio_preparation": references.get("audio_preparation", ""),
+                "model_artifact": inference.get("artifact", ""),
+                "input_processing": inference.get("frontend", ""),
+                "execution_stack": inference.get("runtime", ""),
+                "chunking": inference.get("chunking", ""),
+                "evaluation": references.get("evaluation", ""),
+                "observation_policy": references.get("runtime_resolution", ""),
+            }, f"pipeline contract ({mode.replace('_', ' ')}; schema 1)"
 
     recovered = infer_contract_references(profile)
     if recovered is not None:
