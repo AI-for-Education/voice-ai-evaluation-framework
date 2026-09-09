@@ -8,7 +8,7 @@ import wave
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from inference.provenance import canonical_json_sha256, file_identity
 
@@ -666,6 +666,7 @@ def build_evaluation_provenance(
     aligned_manifest_path: str | Path | None = None,
     g2p_system: Mapping[str, Any] | None = None,
     hypothesis_route: str = "native orthographic",
+    hypothesis_route_evidence: Sequence[str] = (),
     recording_mode: str = "evaluation_time",
     limitations: Iterable[str] = (),
     run_metadata_override: Mapping[str, Any] | None = None,
@@ -774,6 +775,15 @@ def build_evaluation_provenance(
             "representation_compatible": True,
             "reference_integrity_enforced": True,
             "hypothesis_route": hypothesis_route,
+            **(
+                {
+                    "hypothesis_route_evidence": list(
+                        hypothesis_route_evidence
+                    )
+                }
+                if hypothesis_route_evidence
+                else {}
+            ),
             "reference_identity": reference_identity,
             "g2p_system": (
                 dict(g2p_system)

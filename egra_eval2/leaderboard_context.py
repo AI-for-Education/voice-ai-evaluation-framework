@@ -117,6 +117,8 @@ def model_artifact_label(
         "canonical_checkpoint": "canonical model-owner artifact",
         "project_export": "project-exported ONNX artifact",
         "published_deployment_artifact": "published Android deployment artifact",
+        "openrouter_remote_model_slug": "OpenRouter-hosted model slug",
+        "fairseq2_asset_card_checkpoint": "Fairseq2 model-owner asset card",
     }
     if artifact in labels:
         return labels[artifact]
@@ -141,6 +143,7 @@ def input_processing_label(references: dict[str, Any]) -> str:
     audio_labels = {
         "shared_soundfile_librosa_16khz": "shared SoundFile/librosa 16 kHz audio",
         "android_pcm16_linear_16khz": "Android PCM16/linear 16 kHz audio",
+        "openrouter_original_wav_upload": "original WAV uploaded as base64 JSON",
     }
     frontend_labels = {
         "canonical_transformers_auto_processor": "canonical Transformers frontend",
@@ -148,6 +151,12 @@ def input_processing_label(references: dict[str, Any]) -> str:
         "compatible_onnx_asr_nemo_frontend": "compatible onnx-asr NeMo frontend",
         "deployment_parity_android_frontend": "Android deployment-parity frontend",
         "canonical_sherpa_online_frontend": "canonical Sherpa-ONNX frontend",
+        "openrouter_provider_managed_audio_frontend": (
+            "OpenRouter provider-managed audio frontend"
+        ),
+        "omnilingual_reference_inference_pipeline": (
+            "Omnilingual reference audio frontend"
+        ),
     }
     chunking_labels = {
         "none": "no chunking",
@@ -188,6 +197,26 @@ def inference_engine_version(run_metadata: dict[str, Any]) -> tuple[str, str]:
     return str(observed or ""), str(required or "")
 
 
+def _openrouter_region(
+    profile: dict[str, Any],
+    run_metadata: dict[str, Any],
+    references: dict[str, Any],
+) -> str | None:
+    backend = run_metadata.get("inference_adapter")
+    backend = backend if isinstance(backend, dict) else {}
+    enforcement = backend.get("region_enforcement")
+    enforcement = enforcement if isinstance(enforcement, dict) else {}
+    api = profile.get("api")
+    api = api if isinstance(api, dict) else {}
+    for region in (enforcement.get("gateway"), api.get("routing_region")):
+        if region in ("eu", "global"):
+            return region
+    return {
+        "openrouter_eu_api": "eu",
+        "openrouter_global_zdr_api": "global",
+    }.get(_inference_reference(references, "execution_stack"))
+
+
 def execution_stack_context(
     profile: dict[str, Any],
     run_metadata: dict[str, Any],
@@ -205,6 +234,7 @@ def execution_stack_context(
         required_version = ""
 
     adapter = profile.get("adapter")
+    openrouter_region = _openrouter_region(profile, run_metadata, references)
     route_labels = {
         "transformers": "Transformers → PyTorch",
         "nemo": "NeMo → PyTorch",
@@ -215,6 +245,14 @@ def execution_stack_context(
             else "onnx-asr → ONNX Runtime"
         ),
         "multimodal": "multimodal Transformers adapter → PyTorch",
+        "openrouter": (
+            "OpenRouter API → eligible EU/ZDR provider"
+            if openrouter_region == "eu"
+            else "OpenRouter API → global ZDR routing"
+            if openrouter_region == "global"
+            else "OpenRouter API → eligible ZDR provider"
+        ),
+        "omnilingual": "Omnilingual ASR → Fairseq2 → PyTorch",
     }
     route = route_labels.get(
         str(inference_library),
@@ -223,6 +261,7 @@ def execution_stack_context(
 
     if launch.get("status") == "observed":
         service = launch.get("compose_service")
+        service = service if isinstance(service, str) else None
         image = launch.get("image")
         image = image if isinstance(image, dict) else {}
         image_reference = image.get("reference")
@@ -237,6 +276,8 @@ def execution_stack_context(
             "multimodal-asr": "shared ASR container",
             "phi4-multimodal-asr": "dedicated Phi-4 container",
             "qwen-omni-asr": "dedicated Qwen Omni container",
+            "openrouter-asr": "lightweight OpenRouter client container",
+            "omnilingual-asr": "dedicated Omnilingual container",
         }
         label = service_labels.get(
             service,
@@ -257,6 +298,11 @@ def execution_stack_context(
         return f"{route} → {environment}", True
 
     execution_stack_reference = _inference_reference(references, "execution_stack")
+    openrouter_environment = (
+        "OpenRouter fail-closed EU API"
+        if openrouter_region == "eu"
+        else "OpenRouter fail-closed global ZDR API"
+    )
     labels = {
         "shared_transformers_image": "shared ASR container",
         "multimodal_image": "model-family multimodal container",
@@ -266,6 +312,9 @@ def execution_stack_context(
             "dedicated Android-parity container on PC"
         ),
         "sherpa_onnx_image": "shared ASR container",
+        "openrouter_eu_api": openrouter_environment,
+        "openrouter_global_zdr_api": openrouter_environment,
+        "omnilingual_fairseq2_image": "dedicated Omnilingual container",
     }
     if execution_stack_reference in labels:
         label = labels[execution_stack_reference]
@@ -302,6 +351,13 @@ def execution_target_label(
     launch = execution_stack.get("launch_context")
     launch = launch if isinstance(launch, dict) else {}
     service = launch.get("compose_service")
+    service = service if isinstance(service, str) else None
+    openrouter_region = _openrouter_region(profile, run_metadata, references)
+    openrouter_target = (
+        f"openrouter-{openrouter_region}-zdr"
+        if openrouter_region is not None
+        else "openrouter-zdr"
+    )
     service_labels = {
         "nemo-asr": "nemo",
         "transformers-asr": "transformers",
@@ -311,6 +367,8 @@ def execution_target_label(
         "multimodal-asr": "multimodal-shared",
         "phi4-multimodal-asr": "multimodal-phi4",
         "qwen-omni-asr": "multimodal-qwen-omni",
+        "openrouter-asr": openrouter_target,
+        "omnilingual-asr": "omnilingual-fairseq2",
     }
     if service in service_labels:
         return service_labels[service]
@@ -324,6 +382,9 @@ def execution_target_label(
             "onnxruntime-android-proxy"
         ),
         "sherpa_onnx_image": "sherpa-onnx",
+        "openrouter_eu_api": openrouter_target,
+        "openrouter_global_zdr_api": openrouter_target,
+        "omnilingual_fairseq2_image": "omnilingual-fairseq2",
     }
     if execution_stack_reference in execution_stack_labels:
         return execution_stack_labels[execution_stack_reference]
@@ -338,6 +399,8 @@ def execution_target_label(
         return multimodal_labels[adapter]
 
     inference_library = profile.get("inference_library")
+    if inference_library == "openrouter":
+        return openrouter_target
     if isinstance(inference_library, str) and inference_library:
         return inference_library.strip().lower().replace("_", "-")
     return "execution-target-not-recorded"

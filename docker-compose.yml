@@ -151,6 +151,53 @@ services:
       - ./inference/multimodal/models:/models:ro
       - ./inference/multimodal/models:/work/inference/multimodal/models:ro
 
+  omnilingual-prepare:
+    image: voice-ai-evaluation-framework-omnilingual:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.omnilingual
+    container_name: omnilingual-prepare
+    working_dir: /work
+    gpus: all
+    shm_size: "8gb"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:ro
+      - ./inference/omnilingual/models:/models:rw
+
+  omnilingual-asr:
+    image: voice-ai-evaluation-framework-omnilingual:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.omnilingual
+    container_name: omnilingual-asr
+    working_dir: /work
+    network_mode: none
+    gpus: all
+    shm_size: "8gb"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/omnilingual/models:/models:ro
+
+  openrouter-asr:
+    image: voice-ai-evaluation-framework-openrouter:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.openrouter
+    container_name: openrouter-asr
+    working_dir: /work
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+
   egra-eval:
     <<: *egra_base
     container_name: egra-eval

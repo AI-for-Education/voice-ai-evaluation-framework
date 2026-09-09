@@ -1,6 +1,6 @@
 ## Overview
 
-The purpose of this project is to evaluate locally deployed ASR models on the task of early grade reading assessments (EGRA) for Kiswahili child speech. Inference is currently supported through NVIDIA NeMo, Hugging Face Transformers, ONNX Runtime, Sherpa-ONNX, and a dedicated multimodal generation flow.
+The purpose of this project is to evaluate local and API-hosted ASR models on the task of early grade reading assessments (EGRA) for Kiswahili child speech. Inference is currently supported through NVIDIA NeMo, Hugging Face Transformers, ONNX Runtime, Sherpa-ONNX, multimodal generation, and OpenRouter.
 
 The repository uses five primary terms: **model**, **inference setup**,
 **execution stack**, **run**, and **evaluation**. A **benchmark** is a
@@ -10,7 +10,7 @@ workflow terminology.
 
 **Input (you need to provide)**
 
-- A local ASR model artifact and its tracked inference profile. A first NeMo model is [provided here](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-), and the broader candidate list is documented in the [ASR benchmark candidate-model spreadsheet](https://www.dropbox.com/scl/fi/t4f76nnj14n7gog2zm6du/ASR_benchmark_candidate_models.xlsx?rlkey=62h00z8ks4aan9k70vv03cp7u&st=u2zd2pnu&dl=0).
+- A local ASR model artifact and its tracked inference profile. A first NeMo model is [provided here](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-). The authoritative implementation-status tracker is [ASR_benchmark_candidate_models_updated.xlsx](https://www.dropbox.com/scl/fi/ciew0okh7avrpwci5vqi3) at `/Projects/Gates AI Master/19. QA Facility/4. Benchmarks/FL ASR Benchmarks/4. ASR Models Testing/ASR_benchmark_candidate_models_updated.xlsx`; use this exact updated workbook rather than similarly named older files.
 
 - Dataset of Kiswahili child speech comprising:
   - audio files, 
@@ -33,6 +33,7 @@ contracts:
 - `inference/torch/` contains native TorchScript streaming-transducer inference.
 - `inference/onnxruntime/` contains PC CPU validation of FP32 and INT8 exports plus a separate, controlled Android-parity accuracy proxy for the packaged mobile artifact.
 - `inference/multimodal/` contains prompt-driven audio-to-text generation for multimodal models, beginning with Gemma 4 E2B.
+- `inference/openrouter/` contains fail-closed ZDR inference profiles with explicit global or EU routing for chat-audio and dedicated speech-to-text models.
 - `inference/common.py`, `inference/contracts.py`, and `inference/runner.py` provide the shared input, audio, result, and output behaviour.
 
 Segment audio once with `run_segment.sh`, then pass the same segment manifest
@@ -42,7 +43,7 @@ describing the inference setup and execution stack. Use
 `run_nemo_inference.sh`, `run_transformers_inference.sh`,
 `run_onnxruntime_inference.sh`, `run_onnxruntime_android_inference.sh`,
 `run_sherpa_onnx_inference.sh`, `run_torch_inference.sh`, or
-`run_multimodal_inference.sh` for new runs;
+`run_multimodal_inference.sh`, or `run_openrouter_inference.sh` for new runs;
 root `infer.py` is the only legacy NeMo `--model` API. See the README in each
 inference-library directory for model-specific details.
 
@@ -63,6 +64,83 @@ value with a reason instead of guessing. Extended notes may be kept locally in
 is not versioned.
 New inference runs score the direct adapter hypothesis in `pred_text`; no
 duration or repetition rule truncates model output after decoding.
+
+### OpenRouter ZDR ASR
+
+Every OpenRouter profile explicitly selects either the global gateway or the
+EU gateway; the choice is recorded as `api.routing_region` and must exactly
+match `api.base_url`. EU routing is optional. ZDR is not: every request includes
+`provider: {zdr: true, data_collection: deny}`, and neither the CLI nor the
+profile schema exposes a weaker privacy setting.
+
+Before the runner reads or encodes any audio, backend construction checks the
+exact model against both OpenRouter's live
+[ZDR endpoint catalogue](https://openrouter.ai/api/v1/endpoints/zdr) and the
+profile gateway's ZDR catalogue filtered for audio-input chat or transcription
+output, as appropriate. Declared audio input is required in both cases. A missing,
+ambiguous, malformed, or unreachable check aborts the run. The request-level
+provider policy remains mandatory after the preflight, so a later routing
+change or race also fails closed instead of falling back to a retaining
+endpoint.
+
+All runs must use an API key created inside the **QA facility ASR**
+workspace, whose slug is `qa-facility-asr`. OpenRouter selects the workspace
+from the key's ownership; Chat and Transcriptions requests do not accept a
+workspace override. The standard inference-key API does not expose workspace
+identity, so the repository cannot independently verify this ownership without
+a separate management key. The API key is inherited as `OPENROUTER_API_KEY`,
+forwarded to the container, and never written to profiles, transcripts, or
+metadata. Open a new terminal if the user-level variable was set after the
+current process started.
+
+```bash
+docker compose build openrouter-asr
+./run_openrouter_inference.sh \
+  --inference_profile inference/openrouter/profiles/google-gemini-3.1-flash-lite-sw.yaml \
+  --audio_manifest input_output_data/output/experiments/<dataset>/manifests/ref_manifest.raw_segments.jsonl \
+  --batch_size 4
+```
+
+The already-run Gemini 3.1 and 3.5 Flash Lite profiles remain explicitly on the
+EU gateway to preserve their recorded setup. The prepared comparison profiles
+use the global gateway so EU availability does not exclude an otherwise valid
+ZDR route. They add these standard, non-batch routes:
+
+- newer Gemini chat-audio: `google-gemini-3.6-flash-sw.yaml`,
+  `google-gemini-3.7-flash-sw.yaml`, and
+  `google-gemini-3.8-flash-sw.yaml`;
+- unverified chat-audio families: `thinkingmachines-inkling-small-sw.yaml` and
+  `xiaomi-mimo-v2.5-sw.yaml`;
+- dedicated STT: `microsoft-mai-transcribe-2-sw.yaml`,
+  `google-chirp-3-sw.yaml`, and `fish-audio-transcribe-1-sw.yaml`.
+
+The Chirp 3 and Fish Audio profiles are retained for documentation but are
+excluded from the planned runs because of their current cost.
+
+Batch aliases are not separate language-capability models, Gemini embeddings
+do not return transcripts, and the Inkling free route is excluded because its
+logging terms conflict with this repository's ZDR requirement. The locally
+covered Whisper family is also outside this remote preparation set. To resume
+an interrupted paid run, repeat the command above and add
+`--resume_run input_output_data/output/transcripts/.<run>.in_progress`.
+
+Checkpointed runs keep an `attempts` history in `run_state.json`, copied into
+the final `run_metadata.json`. Each initial or resumed attempt records the same
+timestamps, status, item counts, warnings, adapter statistics, model identity,
+and execution details. `observation_attempt_id` identifies the attempt described
+by the final metadata's adapter, model, execution, repository, warning, and
+pipeline observations; output counts cover the complete run. A killed process
+retains its last saved observations with `observations_complete: false` when
+resumed. Older checkpoints without attempt records are marked with
+`attempt_history_complete: false`. Resume preserves complete, ordered transcript
+rows and removes only an uncommitted, incomplete final row.
+
+Optional account-level defence in depth: assign the key an OpenRouter ZDR
+guardrail. An `allowed_data_regions: ["europe"]` restriction may also be used
+when EU routing is desired, but it is not required by this project. Account
+settings do not replace the live preflight or mandatory request-level policy.
+A one-file paid smoke test is intentionally manual: use any profile command above with
+`--audio_manifest <one-file.jsonl> --smoke_test`; tests never call the live API.
 
 ### Standard output layout
 
@@ -738,13 +816,13 @@ appears as `NaN` in the summary.
 
 ### Inference profiles and launchers
 
-- **Inference profile**: use `--inference_profile <profile.yaml>` with every current inference launcher. Schema v2 profiles define `inference_setup_id`, `inference_library`, adapter, relative model artifact, language/task, loading settings, decoding, and structured parameter evidence. Container images supply compatible dependencies but do not select model-specific behavior.
+- **Inference profile**: use `--inference_profile <profile.yaml>` with every current inference launcher. Schema v2 profiles define the setup, adapter, local artifact or remote model slug, language/task, request or loading settings, decoding, and parameter evidence.
 - **Invocation controls**: batch size, thread/worker counts, input selection, and output roots remain launcher arguments and are recorded in run metadata rather than being hidden in an image or treated as model hyperparameters.
 - **Model storage**: place artifacts below the owning inference library's `models/` directory. `ASR_MODEL_ROOT` overrides that default root; Compose sets it to the read-only `/models` mount.
 - **Input**: provide exactly one of `--audio_manifest <segments.jsonl>` or `--root_audio_dir <audio-directory>`. NeMo retains `--dataset_root` and `--dataset_annotator` for legacy dataset discovery and optional TextGrid segmentation.
 - **Output base**: inference defaults to `input_output_data/output`; `--output_root <directory>` changes that base. The runner creates `transcripts/<inference_setup_id>_<UTC timestamp>/` below it, or `smoke_tests/transcripts/...` with `--smoke_test`.
 - **Execution controls**: NeMo retains its CPU worker, temporary-segment, decoder, and debug controls; Transformers retains `--batch_size`; Sherpa-ONNX adds `--num_threads`. Sources, evidence strength, and hardware assumptions are recorded beside the relevant launcher. Optional extended notes in `docs/inference-execution-parameter-provenance.md` are local-development documentation and are not versioned.
-- **Offline operation**: profiles require local artifacts and `local_files_only: true`; downloading a model is a separate preparation step.
+- **Offline operation**: local-model profiles require local artifacts and `local_files_only: true`; OpenRouter profiles are the explicit remote exception.
 
 Root `infer.py` is the only legacy NeMo API and continues to accept `--model`
 directly. It also remaps the former NeMo model-directory prefix when that old
@@ -800,6 +878,9 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 - **`inference/sherpa_onnx/`**
   Runs streaming ONNX transducers through Sherpa-ONNX while preserving the same profile, manifest, progress, and output contracts.
 
+- **`inference/openrouter/`**
+  Runs the tracked remote models through explicit global-or-EU routing and mandatory, fail-closed ZDR enforcement with retries, bounded concurrency, and resumable checkpoints.
+
 - **`infer.py`**  
   Preserves the legacy NeMo `--model` command and delegates to the reorganized NeMo implementation.
 
@@ -845,12 +926,12 @@ Run `python3 eval_pipeline2.py --help` to see available options. Highlights:
 
 - **`docker-compose.yml`**
   Defines the NeMo, Transformers, Sherpa-ONNX, desktop ONNX, Android-parity
-  ONNX, Gemma, Phi-4, and Qwen inference services, plus ONNX preparation,
+  ONNX, Gemma, Phi-4, Qwen, and OpenRouter inference services, plus ONNX preparation,
   evaluation, and the isolated leaderboard dashboard. Inference services mount
   the repository at `/work`, data at `/io`, and the matching model-artifact
   directory read-only at `/models`.
 
-- **`run_nemo_inference.sh` / `run_transformers_inference.sh` / `run_sherpa_onnx_inference.sh` / `run_multimodal_inference.sh` / `run_phi4_multimodal_inference.sh` / `run_qwen_omni_inference.sh` / `run_segment.sh` / `run_manifest.sh` / `run_eval2.sh`**
+- **`run_nemo_inference.sh` / `run_transformers_inference.sh` / `run_sherpa_onnx_inference.sh` / `run_multimodal_inference.sh` / `run_openrouter_inference.sh` / `run_segment.sh` / `run_manifest.sh` / `run_eval2.sh`**
   Thin wrappers that run the appropriate Compose service and command. Every current inference wrapper requires `--inference_profile`.
 - **`run_nemo_offline_eval.sh`**  
   Generates normalized REF/CAN manifests and runs NVIDIA NeMo’s own `speech_to_text_eval.py` script for REF↔HYP and CAN↔HYP scoring. Handy for cross-checking the internal metrics against the official NeMo implementation.

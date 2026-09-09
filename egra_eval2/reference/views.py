@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -18,6 +17,7 @@ from egra_eval2.reference.g2p import (
     resolve_g2p_system,
 )
 from inference.pipeline_provenance import inference_profile_from_run_metadata
+from inference.provenance import sha256_file
 
 
 SCHEMA_VERSION = 2
@@ -68,14 +68,6 @@ def phonemize_with_africa_g2p(
 def default_output_dir(dataset_root: str | Path) -> Path:
     """Return the dataset-adjacent generated-reference directory."""
     return Path(dataset_root) / "_derived" / "reference_views"
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def ipa_reference_inventory(language: str) -> str:
@@ -212,7 +204,7 @@ def _validate_indexed_view(
         r"[0-9a-f]{64}", recorded_sha256
     ):
         raise ReferenceViewError(f"Indexed {label} has no valid SHA-256 hash")
-    if recorded_sha256 != _sha256(view_path):
+    if recorded_sha256 != sha256_file(view_path):
         raise ReferenceViewError(
             f"Indexed {label} SHA-256 does not match its file: {view_path}"
         )
@@ -321,7 +313,7 @@ def build_reference_views(
     orthographic_path = destination / ORTHOGRAPHIC_VIEW_NAME
     ipa_path = destination / f"phonemic.ipa.{system.system_id}.jsonl"
     metadata_path = destination / METADATA_NAME
-    source_sha256 = _sha256(manifest_path)
+    source_sha256 = sha256_file(manifest_path)
 
     ipa_views: dict[str, dict] = {}
     if metadata_path.exists():
@@ -368,8 +360,8 @@ def build_reference_views(
         )
         if not identity_matches or not (
             orthographic_path.is_file() and ipa_path.is_file()
-        ) or recorded_ipa_sha != _sha256(ipa_path) or (
-            recorded_orthographic_sha != _sha256(orthographic_path)
+        ) or recorded_ipa_sha != sha256_file(ipa_path) or (
+            recorded_orthographic_sha != sha256_file(orthographic_path)
         ):
             raise ReferenceViewError(
                 "The indexed G2P reference view is incomplete or has mismatched "
@@ -397,7 +389,7 @@ def build_reference_views(
     ipa_views[system.system_id] = {
         **expected_identity,
         "rows": len(ipa_rows),
-        "sha256": _sha256(ipa_path),
+        "sha256": sha256_file(ipa_path),
     }
     metadata = {
         "schema_version": SCHEMA_VERSION,
@@ -409,7 +401,7 @@ def build_reference_views(
         "orthographic": {
             "path": orthographic_path.name,
             "rows": len(orthographic_rows),
-            "sha256": _sha256(orthographic_path),
+            "sha256": sha256_file(orthographic_path),
         },
         "ipa_views": ipa_views,
     }

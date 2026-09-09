@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 
 from inference.multimodal.adapters import gemma4_audio
@@ -11,36 +12,41 @@ from inference.multimodal.adapters.gemma4_audio import Gemma4AudioBackend
 from inference.profile import parse_profile
 
 
-def _profile(*, seconds: int = 1):
-    return parse_profile(
-        {
-            "profile_schema_version": 2,
-            "inference_setup_id": "gemma-test",
-            "inference_library": "multimodal",
-            "adapter": "gemma4_audio",
-            "artifact": "gemma-model",
-            "language": "sw",
-            "task": "transcribe",
-            "output_units": "orthographic",
-            "prompt": "Transcribe in Swahili. Output only the transcription.",
-            "loader": {
-                "processor_mode": "auto",
-                "local_files_only": True,
-                "trust_remote_code": False,
-                "torch_dtype": "bfloat16",
-            },
-            "decoding": {
-                "strategy": "generate",
-                "generation_kwargs": {"max_new_tokens": 8},
-            },
-            "audio": {
-                "maximum_seconds": seconds,
-                "long_audio_strategy": "sequential_chunks",
-                "chunk_seconds": seconds,
-                "overlap_seconds": 0,
-            },
+def _profile(*, seconds: int = 1, minimum_gpu_memory_gib: float | None = None):
+    data = {
+        "profile_schema_version": 2,
+        "inference_setup_id": "gemma-test",
+        "inference_library": "multimodal",
+        "adapter": "gemma4_audio",
+        "artifact": "gemma-model",
+        "language": "sw",
+        "task": "transcribe",
+        "output_units": "orthographic",
+        "prompt": "Transcribe in Swahili. Output only the transcription.",
+        "loader": {
+            "processor_mode": "auto",
+            "local_files_only": True,
+            "trust_remote_code": False,
+            "torch_dtype": "bfloat16",
+        },
+        "decoding": {
+            "strategy": "generate",
+            "generation_kwargs": {"max_new_tokens": 8},
+        },
+        "audio": {
+            "maximum_seconds": seconds,
+            "long_audio_strategy": "sequential_chunks",
+            "chunk_seconds": seconds,
+            "overlap_seconds": 0,
+        },
+    }
+    if minimum_gpu_memory_gib is not None:
+        data["hardware"] = {
+            "memory_strategy": "large_gpu_only",
+            "minimum_gpu_memory_gib": minimum_gpu_memory_gib,
+            "output_mode": "text_only",
         }
-    )
+    return parse_profile(data)
 
 
 class _FakeProcessor:
@@ -130,6 +136,22 @@ def test_gemma_loader_is_offline_bfloat16_and_uses_fixed_prompt(
     assert messages[0]["content"][0]["text"] == backend.profile.prompt
     assert messages[0]["content"][1] == {"type": "audio"}
     assert template_kwargs["enable_thinking"] is False
+
+
+def test_gemma_hardware_preflight_fails_before_model_loading(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "gemma-model"
+    model_path.mkdir()
+    monkeypatch.setattr(gemma4_audio, "cuda_memory_gib", lambda device: 15.9)
+
+    with pytest.raises(RuntimeError, match="requires at least 20 GiB"):
+        Gemma4AudioBackend(
+            _profile(minimum_gpu_memory_gib=20),
+            model_path,
+            device=torch.device("cuda:0"),
+        )
 
 
 def test_long_audio_is_chunked_and_rejoined_as_one_result(

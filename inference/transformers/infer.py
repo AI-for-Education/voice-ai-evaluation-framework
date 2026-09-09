@@ -52,6 +52,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "smoke_tests/transcripts/<inference_setup_id>_<UTC timestamp>"
         ),
     )
+    parser.add_argument(
+        "--resume_run",
+        help="Existing .<run>.in_progress directory to resume",
+    )
     return parser.parse_args(argv)
 
 
@@ -90,6 +94,8 @@ def main(argv: Sequence[str] | None = None) -> Path:
             batch_size=args.batch_size,
             smoke_test=args.smoke_test,
             startup_warnings=startup_warnings,
+            checkpoint=True,
+            resume_run=args.resume_run,
         )
     except Exception as exc:
         raise SystemExit(f"Transformers inference failed: {exc}") from exc

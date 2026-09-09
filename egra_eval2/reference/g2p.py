@@ -13,6 +13,8 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from inference.provenance import sha256_file
+
 
 BABYGRUUT_SOURCE_REVISION = "85eadf1743455ba57ccb1baccf39485dc8628c33"
 BABYGRUUT_VERSION = "0.0.7.post4+g85eadf174"
@@ -55,14 +57,6 @@ def system_id_for_identity(identity: Mapping[str, Any]) -> str:
 
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
-
-
-def _sha256_path(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _package_version(name: str) -> str:
@@ -323,8 +317,8 @@ def _resolve_babygruut() -> G2PSystem:
             "gruut-lang-sw": language_version,
         },
         "resources": {
-            "lexicon.db": _sha256_path(lexicon_path),
-            "g2p/model.crf": _sha256_path(model_path),
+            "lexicon.db": sha256_file(lexicon_path),
+            "g2p/model.crf": sha256_file(model_path),
         },
         "configuration": {
             "source": "bundled_sqlite_then_crf",

@@ -15,9 +15,13 @@ from egra_eval2.eval_utils import text_normalize
 from egra_eval2.reference.ipa_inventory_maps import (
     BOOKBOT_GRUUT_TO_AFRICA_G2P,
     BOOKBOT_GRUUT_TO_BABYGRUUT,
+    FACEBOOK_ESPEAK_MAPPING_EVIDENCE,
     IPAInventoryAdapter,
     IPA_INVENTORY_ADAPTERS,
+    XLS_R_ESPEAK_TO_AFRICA_G2P,
+    XLS_R_ESPEAK_TO_BABYGRUUT,
     describe_ipa_inventory_route,
+    ipa_inventory_route_evidence,
 )
 from egra_eval2.reference.g2p import G2PSystem, make_test_system
 from egra_eval2.scoring_text import (
@@ -254,6 +258,31 @@ def test_phoneme_profile_uses_matching_ipa_reference(tmp_path: Path) -> None:
     ]
 
 
+def test_phoneme_conversion_context_keeps_adapter_evidence(tmp_path: Path) -> None:
+    dataset, manifest = _paths(
+        tmp_path,
+        {
+            "output_units": "phoneme",
+            "output_notation": "ipa",
+            "output_inventory": "facebook_espeak_cv_ft_vocab_v1",
+        },
+    )
+    system = _test_system(inventory="africa_g2p_swh_ipa_v1")
+    _write_ipa_view(dataset, system)
+
+    prepared = prepare_scoring_texts(
+        _manifest_df(),
+        dataset_root=dataset,
+        manifest_in=manifest,
+        logger=logging.getLogger("test_scoring_text"),
+        g2p_system=system,
+    )
+
+    assert prepared.context.hypothesis_route_evidence == (
+        FACEBOOK_ESPEAK_MAPPING_EVIDENCE
+    )
+
+
 # Native phoneme inventory alignment
 
 
@@ -295,6 +324,54 @@ def test_bookbot_ipa_inventory_mapping_rejects_unknown_symbols() -> None:
             source="bookbot_gruut_sw_v1",
             target="africa_g2p_swh_ipa_v1",
         )
+
+
+def test_reviewed_xls_r_espeak_mapping_covers_complete_egra_run() -> None:
+    source = (
+        "a aː eɪ i5 oʊ uː b d ɡ dʒ ɟ tɕ r ɹ "
+        "m b m v n d n z n dʒ ŋ ɡ ɲ"
+    )
+
+    assert XLS_R_ESPEAK_TO_AFRICA_G2P.status == "approved"
+    assert len(XLS_R_ESPEAK_TO_AFRICA_G2P.source_tokens) == 95
+    assert align_ipa_inventory(
+        source,
+        source="facebook_espeak_cv_ft_vocab_v1",
+        target="africa_g2p_swh_ipa_v1",
+    ) == (
+        "ɑ ɑ ɛ i ɔ u ɓ ɗ ɠ ʄ ʄ ʧ r r "
+        "ᵐb ᶬv ⁿd ⁿz ⁿdʒ ᵑɡ ɲ"
+    )
+
+
+def test_reviewed_xls_r_espeak_mapping_uses_babygruut_conventions() -> None:
+    assert XLS_R_ESPEAK_TO_BABYGRUUT.status == "approved"
+    assert align_ipa_inventory(
+        "r tʃ m b n d n dʒ ŋ ɡ ɲ",
+        source="facebook_espeak_cv_ft_vocab_v1",
+        target="babygruut_sw_ipa_v1",
+    ) == "ɾ t͡ʃ ᵐɓ ⁿɗ ⁿɗ͡ʒ ᵑg n j"
+
+
+def test_xls_r_espeak_mapping_rejects_lost_token_boundaries() -> None:
+    with pytest.raises(ScoringRepresentationError, match="Unknown"):
+        align_ipa_inventory(
+            "dadʒafanahuː",
+            source="facebook_espeak_cv_ft_vocab_v1",
+            target="africa_g2p_swh_ipa_v1",
+        )
+
+
+def test_xls_r_espeak_mapping_exposes_review_sources() -> None:
+    evidence = ipa_inventory_route_evidence(
+        "facebook_espeak_cv_ft_vocab_v1",
+        "africa_g2p_swh_ipa_v1",
+    )
+
+    assert evidence == FACEBOOK_ESPEAK_MAPPING_EVIDENCE
+    assert all(url.startswith("https://") for url in evidence)
+    assert "arxiv.org" in " ".join(evidence)
+    assert "africa-g2p" in " ".join(evidence)
 
 
 def test_inventory_mapping_is_single_pass(monkeypatch: pytest.MonkeyPatch) -> None:

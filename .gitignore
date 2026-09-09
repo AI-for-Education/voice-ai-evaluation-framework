@@ -12,6 +12,8 @@ inference/onnxruntime/models/**
 !inference/onnxruntime/models/.gitkeep
 inference/multimodal/models/**
 !inference/multimodal/models/.gitkeep
+inference/omnilingual/models/**
+!inference/omnilingual/models/.gitkeep
 inference/multimodal/tmp/**
 !inference/multimodal/tmp/phi4/.gitkeep
 inference/tmp_other/models/**

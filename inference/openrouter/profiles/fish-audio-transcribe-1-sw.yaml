@@ -1,0 +1,50 @@
+profile_schema_version: 2
+inference_setup_id: openrouter-fish-audio-transcribe-1-sw
+inference_library: openrouter
+adapter: stt
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: openrouter_original_wav_upload
+  model_artifact: openrouter_remote_model_slug
+  input_processing: openrouter_provider_managed_audio_frontend
+  execution_stack: openrouter_global_zdr_api
+  chunking: none
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+model:
+  slug: fish-audio/transcribe-1
+api:
+  base_url: https://openrouter.ai/api/v1
+  routing_region: global
+  endpoint_kind: stt
+  api_key_environment_variable: OPENROUTER_API_KEY
+request:
+  stream: false
+  provider:
+    zdr: true
+    data_collection: deny
+  temperature: 0
+decoding:
+  strategy: transcribe
+parameter_evidence:
+  - applies_to: [model.slug, api.endpoint_kind]
+    level: exact
+    source: https://openrouter.ai/fish-audio/transcribe-1
+    rationale: The exact model is a dedicated speech-to-text route with automatic language detection.
+  - applies_to: [language, request.temperature, decoding.strategy]
+    level: supported
+    source: https://openrouter.ai/docs/guides/overview/multimodal/stt
+    rationale: The STT API supports an ISO-639-1 language hint and a deterministic zero temperature.
+  - applies_to:
+      - api.base_url
+      - api.routing_region
+      - api.api_key_environment_variable
+      - request.stream
+      - request.provider.zdr
+      - request.provider.data_collection
+    level: exact
+    source: https://openrouter.ai/docs/guides/features/zdr
+    rationale: Repository policy selects the global gateway while keeping inherited credentials, non-streaming requests, ZDR, and denied data collection mandatory.

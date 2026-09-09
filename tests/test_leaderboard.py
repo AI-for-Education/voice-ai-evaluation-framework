@@ -11,6 +11,10 @@ from egra_eval2.leaderboard import (
     build_leaderboards,
     write_leaderboards,
 )
+from egra_eval2.leaderboard_context import (
+    execution_stack_context,
+    execution_target_label,
+)
 from egra_eval2.reference.g2p import G2PSystem, make_test_system
 from inference.profile import load_profile
 
@@ -507,10 +511,9 @@ def test_writes_isolated_csvs_and_generation_metadata(tmp_path: Path) -> None:
         "model_group · official_model_name [· variant] (decoder)"
     )
     assert metadata["presentation_naming"]["stable_identity_renamed"] is False
-    assert metadata["presentation_naming"]["registered_inference_setups"] == 27
-    # The table includes the uncatalogued evaluated fixture in addition to the
-    # 27 active registry entries.
-    assert metadata["presentation_naming"]["presentation_table"]["rows"] == 28
+    assert metadata["presentation_naming"]["registered_inference_setups"] == 41
+    # The table also includes profile-only and uncatalogued evaluated entries.
+    assert metadata["presentation_naming"]["presentation_table"]["rows"] == 42
     presentation = paths["presentation"].read_text(encoding="utf-8")
     assert "inference_setup_id" in presentation.splitlines()[0]
     assert "execution_target" in presentation.splitlines()[0]
@@ -642,6 +645,80 @@ def test_controlled_onnx_comparison_keeps_three_factors_separate(
     assert controlled.loc["controlled-111", "execution_target"] == (
         "onnxruntime-android-proxy"
     )
+
+
+def test_structured_unavailable_compose_service_uses_contract_fallback() -> None:
+    profile = {
+        "inference_library": "openrouter",
+        "adapter": "openrouter_audio",
+    }
+    run_metadata = {
+        "execution_stack": {
+            "launch_context": {
+                "status": "observed",
+                "compose_service": {
+                    "status": "not_available",
+                    "reason": "The Compose service was not recorded",
+                },
+            }
+        }
+    }
+    references = {"execution_stack": "openrouter_eu_api"}
+
+    stack, observed = execution_stack_context(profile, run_metadata, references)
+
+    assert stack == (
+        "OpenRouter API → eligible EU/ZDR provider → observed container launch"
+    )
+    assert observed is True
+    assert (
+        execution_target_label(profile, run_metadata, references)
+        == "openrouter-eu-zdr"
+    )
+
+
+@pytest.mark.parametrize("region", ["eu", "global", None])
+@pytest.mark.parametrize("observed", [True, False])
+def test_openrouter_labels_use_recorded_region(region, observed) -> None:
+    profile = {"inference_library": "openrouter", "api": {"routing_region": region}}
+    run = {
+        "execution_stack": {
+            "launch_context": {"status": "observed", "compose_service": "openrouter-asr"}
+        }
+    } if observed else {}
+    references = {
+        "execution_stack": {
+            "eu": "openrouter_eu_api", "global": "openrouter_global_zdr_api"
+        }.get(region)
+    }
+    stack, _ = execution_stack_context(profile, run, references)
+    target = execution_target_label(profile, run, references)
+    if region == "eu":
+        assert "EU/ZDR" in stack
+        assert target == "openrouter-eu-zdr"
+    else:
+        assert "EU" not in stack
+        assert "eu" not in target
+        if region == "global":
+            assert "global" in stack
+            assert target == "openrouter-global-zdr"
+
+
+@pytest.mark.parametrize("observed_launch", [True, False])
+def test_openrouter_observed_gateway_takes_precedence_over_profile(observed_launch) -> None:
+    profile = {"inference_library": "openrouter", "api": {"routing_region": "eu"}}
+    run = {
+        "inference_adapter": {"region_enforcement": {"gateway": "global"}},
+        "execution_stack": {
+            "launch_context": {"status": "observed", "compose_service": "openrouter-asr"}
+        },
+    }
+    if not observed_launch:
+        run.pop("execution_stack")
+    references = {"execution_stack": "openrouter_eu_api"}
+    stack, _ = execution_stack_context(profile, run, references)
+    assert "EU" not in stack
+    assert execution_target_label(profile, run, references) == "openrouter-global-zdr"
 
 
 # Presentation registry

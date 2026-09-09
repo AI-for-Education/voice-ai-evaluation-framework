@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib.metadata
 import json
 import os
@@ -13,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from inference.provenance import sha256_file
 
 ARTIFACT_SCHEMA_VERSION = 1
 FP32_MODEL_NAME = "model.onnx"
@@ -32,15 +33,6 @@ ONNX_ASR_SOURCE_REVISION = "b9e0ce0ae3223b3d24ce5a22a5e701a726ca35fc"
 
 class ArtifactError(RuntimeError):
     """Raised when an exported artifact is incomplete or has wrong lineage."""
-
-
-def sha256_file(path: str | Path) -> str:
-    """Return a lower-case SHA-256 digest without loading the whole file."""
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _software_version(distribution: str) -> str | None:

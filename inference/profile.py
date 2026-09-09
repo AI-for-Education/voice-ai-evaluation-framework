@@ -20,6 +20,9 @@ _TOP_LEVEL_KEYS = {
     "inference_library",
     "adapter",
     "artifact",
+    "model",
+    "api",
+    "request",
     "language",
     "task",
     "output_units",
@@ -33,6 +36,30 @@ _TOP_LEVEL_KEYS = {
     "pipeline_contract",
     "parameter_evidence",
 }
+_OPENROUTER_MODEL_KEYS = {"slug"}
+_OPENROUTER_API_KEYS = {
+    "base_url",
+    "routing_region",
+    "endpoint_kind",
+    "api_key_environment_variable",
+}
+_OPENROUTER_REQUEST_KEYS = {
+    "stream",
+    "provider",
+    "temperature",
+    "max_tokens",
+    "seed",
+    "reasoning",
+}
+_OPENROUTER_PROVIDER_KEYS = {"zdr", "data_collection"}
+_OPENROUTER_REASONING_KEYS = {"effort", "exclude"}
+_OPENROUTER_GLOBAL_BASE_URL = "https://openrouter.ai/api/v1"
+_OPENROUTER_EU_BASE_URL = "https://eu.openrouter.ai/api/v1"
+_OPENROUTER_BASE_URLS = {
+    "global": _OPENROUTER_GLOBAL_BASE_URL,
+    "eu": _OPENROUTER_EU_BASE_URL,
+}
+_OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY"
 _LOADER_KEYS = {
     "processor_mode",
     "local_files_only",
@@ -112,7 +139,9 @@ _PIPELINE_CONTRACT_V2_KEYS = {
 _ADAPTERS = {
     "multimodal": {"gemma4_audio", "phi4_audio", "qwen_omni_audio"},
     "nemo": {"nemo"},
+    "omnilingual": {"ctc", "llm"},
     "onnxruntime": {"android_ctc", "ctc"},
+    "openrouter": {"chat_audio", "stt"},
     "sherpa_onnx": {"online_transducer"},
     "torch": {"streaming_transducer"},
     "transformers": {"ctc", "speech_seq2seq"},
@@ -187,6 +216,41 @@ class HardwareConfig:
 
 
 @dataclass(frozen=True)
+class OpenRouterModelConfig:
+    slug: str
+
+
+@dataclass(frozen=True)
+class OpenRouterAPIConfig:
+    base_url: str
+    routing_region: str
+    endpoint_kind: str
+    api_key_environment_variable: str
+
+
+@dataclass(frozen=True)
+class OpenRouterProviderConfig:
+    zdr: bool
+    data_collection: str
+
+
+@dataclass(frozen=True)
+class OpenRouterReasoningConfig:
+    effort: str
+    exclude: bool
+
+
+@dataclass(frozen=True)
+class OpenRouterRequestConfig:
+    stream: bool
+    provider: OpenRouterProviderConfig
+    temperature: float | None = None
+    max_tokens: int | None = None
+    seed: int | None = None
+    reasoning: OpenRouterReasoningConfig | None = None
+
+
+@dataclass(frozen=True)
 class ParameterEvidence:
     applies_to: tuple[str, ...]
     level: str
@@ -211,7 +275,10 @@ class InferenceProfile:
     inference_setup_id: str
     inference_library: str
     adapter: str
-    artifact: str
+    artifact: str | None
+    model: OpenRouterModelConfig | None
+    api: OpenRouterAPIConfig | None
+    request: OpenRouterRequestConfig | None
     language: str | None
     task: str
     output_units: str
@@ -220,7 +287,7 @@ class InferenceProfile:
     prompt: str | None
     audio: AudioConfig | None
     hardware: HardwareConfig | None
-    loader: LoaderConfig
+    loader: LoaderConfig | None
     decoding: DecodingConfig
 
     pipeline_contract: PipelineContract | None = None
@@ -229,13 +296,33 @@ class InferenceProfile:
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload = {"profile_schema_version": 2, **payload}
-        if payload["loader"]["attention_implementation"] is None:
+        if payload["artifact"] is None:
+            del payload["artifact"]
+        if payload["model"] is None:
+            del payload["model"]
+        if payload["api"] is None:
+            del payload["api"]
+        if payload["request"] is None:
+            del payload["request"]
+        else:
+            for optional_request_key in (
+                "temperature",
+                "max_tokens",
+                "seed",
+                "reasoning",
+            ):
+                if payload["request"][optional_request_key] is None:
+                    del payload["request"][optional_request_key]
+        if payload["loader"] is None:
+            del payload["loader"]
+        elif payload["loader"]["attention_implementation"] is None:
             # Profiles created before parameter provenance was introduced keep
             # their existing serialized shape and effective adapter defaults.
             del payload["loader"]["attention_implementation"]
-        for defaulted_loader_key in ("artifact_format", "artifact_precision"):
-            if payload["loader"][defaulted_loader_key] == "auto":
-                del payload["loader"][defaulted_loader_key]
+        if "loader" in payload:
+            for defaulted_loader_key in ("artifact_format", "artifact_precision"):
+                if payload["loader"][defaulted_loader_key] == "auto":
+                    del payload["loader"][defaulted_loader_key]
         if not payload["parameter_evidence"]:
             del payload["parameter_evidence"]
         else:
@@ -300,6 +387,133 @@ def _validate_artifact(value: Any) -> str:
     ):
         raise ProfileError("artifact must be a relative path without '..'")
     return artifact
+
+
+def _build_openrouter_model(value: Any) -> OpenRouterModelConfig:
+    data = _require_mapping(value, "model")
+    _unknown_keys(data, _OPENROUTER_MODEL_KEYS, "model")
+    slug = data.get("slug")
+    if not isinstance(slug, str) or not slug.strip() or any(ch.isspace() for ch in slug):
+        raise ProfileError("model.slug must be a non-empty OpenRouter model slug")
+    return OpenRouterModelConfig(slug=slug.strip())
+
+
+def _build_openrouter_api(
+    value: Any, *, adapter: str
+) -> OpenRouterAPIConfig:
+    data = _require_mapping(value, "api")
+    _unknown_keys(data, _OPENROUTER_API_KEYS, "api")
+    missing = sorted(_OPENROUTER_API_KEYS - set(data))
+    if missing:
+        raise ProfileError("api is missing required key(s): " + ", ".join(missing))
+
+    routing_region = data["routing_region"]
+    if routing_region not in _OPENROUTER_BASE_URLS:
+        raise ProfileError(
+            "OpenRouter api.routing_region must be global or eu"
+        )
+    base_url = data["base_url"]
+    expected_base_url = _OPENROUTER_BASE_URLS[routing_region]
+    if base_url != expected_base_url:
+        raise ProfileError(
+            "OpenRouter api.base_url must exactly match api.routing_region: "
+            f"{expected_base_url}"
+        )
+    endpoint_kind = data["endpoint_kind"]
+    if endpoint_kind != adapter:
+        raise ProfileError(
+            "OpenRouter api.endpoint_kind must match the selected adapter"
+        )
+    key_environment = data["api_key_environment_variable"]
+    if key_environment != _OPENROUTER_API_KEY_ENV:
+        raise ProfileError(
+            "OpenRouter api.api_key_environment_variable must be "
+            f"{_OPENROUTER_API_KEY_ENV}"
+        )
+    return OpenRouterAPIConfig(
+        base_url=base_url,
+        routing_region=routing_region,
+        endpoint_kind=endpoint_kind,
+        api_key_environment_variable=key_environment,
+    )
+
+
+def _build_openrouter_request(
+    value: Any,
+    *,
+    adapter: str,
+) -> OpenRouterRequestConfig:
+    data = _require_mapping(value, "request")
+    _unknown_keys(data, _OPENROUTER_REQUEST_KEYS, "request")
+    if data.get("stream") is not False:
+        raise ProfileError("OpenRouter request.stream must be false")
+
+    provider_data = _require_mapping(data.get("provider"), "request.provider")
+    _unknown_keys(provider_data, _OPENROUTER_PROVIDER_KEYS, "request.provider")
+    if provider_data.get("zdr") is not True:
+        raise ProfileError("OpenRouter request.provider.zdr must be true")
+    if provider_data.get("data_collection") != "deny":
+        raise ProfileError(
+            "OpenRouter request.provider.data_collection must be deny"
+        )
+    provider = OpenRouterProviderConfig(zdr=True, data_collection="deny")
+
+    temperature = data.get("temperature")
+    if temperature is not None:
+        if type(temperature) not in {int, float} or not math.isfinite(
+            float(temperature)
+        ):
+            raise ProfileError("request.temperature must be a finite number")
+        if not 0 <= float(temperature) <= 1:
+            raise ProfileError("request.temperature must be between 0 and 1")
+        temperature = float(temperature)
+
+    max_tokens = data.get("max_tokens")
+    if max_tokens is not None and (type(max_tokens) is not int or max_tokens < 1):
+        raise ProfileError("request.max_tokens must be a positive integer")
+    seed = data.get("seed")
+    if seed is not None and type(seed) is not int:
+        raise ProfileError("request.seed must be an integer")
+
+    reasoning = None
+    if "reasoning" in data:
+        reasoning_data = _require_mapping(data["reasoning"], "request.reasoning")
+        _unknown_keys(
+            reasoning_data, _OPENROUTER_REASONING_KEYS, "request.reasoning"
+        )
+        if reasoning_data.get("effort") not in {
+            "minimal",
+            "low",
+            "medium",
+            "high",
+        }:
+            raise ProfileError(
+                "request.reasoning.effort must be minimal, low, medium, or high"
+            )
+        if reasoning_data.get("exclude") is not True:
+            raise ProfileError("request.reasoning.exclude must be true")
+        reasoning = OpenRouterReasoningConfig(
+            effort=reasoning_data["effort"], exclude=True
+        )
+
+    if adapter == "chat_audio" and max_tokens is None:
+        raise ProfileError("chat_audio requests require request.max_tokens")
+    if adapter == "stt":
+        if max_tokens is not None:
+            raise ProfileError("stt requests cannot define request.max_tokens")
+        if seed is not None:
+            raise ProfileError("stt requests cannot define request.seed")
+        if reasoning is not None:
+            raise ProfileError("stt requests cannot define request.reasoning")
+
+    return OpenRouterRequestConfig(
+        stream=False,
+        provider=provider,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        seed=seed,
+        reasoning=reasoning,
+    )
 
 
 def _build_loader(
@@ -778,6 +992,8 @@ def _build_decoding(
         ("transformers", "speech_seq2seq"): {"generate"},
         ("onnxruntime", "ctc"): {"greedy"},
         ("onnxruntime", "android_ctc"): {"greedy"},
+        ("openrouter", "chat_audio"): {"generate"},
+        ("openrouter", "stt"): {"transcribe"},
         ("sherpa_onnx", "online_transducer"): {
             "greedy_search",
             "modified_beam_search",
@@ -787,6 +1003,8 @@ def _build_decoding(
             "modified_beam_search",
         },
         ("nemo", "nemo"): {"ctc", "rnnt"},
+        ("omnilingual", "ctc"): {"ctc_greedy"},
+        ("omnilingual", "llm"): {"llm_beam_search"},
     }[(inference_library, adapter)]
     if strategy not in expected:
         raise ProfileError(
@@ -861,7 +1079,6 @@ def parse_profile(data: Any) -> InferenceProfile:
         "inference_setup_id": inference_setup_id,
         "inference_library": inference_library,
         "adapter": data.get("adapter"),
-        "artifact": data.get("artifact"),
     }
     for key, value in required_values.items():
         if not isinstance(value, str) or not value.strip():
@@ -903,12 +1120,30 @@ def parse_profile(data: Any) -> InferenceProfile:
             "output_notation and output_inventory are only valid for phoneme output"
         )
 
-    loader = _build_loader(
-        _require_mapping(data.get("loader"), "loader"),
-        allow_trusted_local_code=(inference_library, adapter)
-        == ("multimodal", "phi4_audio"),
-    )
-    if loader.processor_mode in {"wav2vec2_plain", "wav2vec2_with_lm"} and (
+    is_openrouter = inference_library == "openrouter"
+    if is_openrouter:
+        if "artifact" in data:
+            raise ProfileError("OpenRouter profiles use model.slug, not artifact")
+        if "loader" in data:
+            raise ProfileError("OpenRouter profiles cannot define a local loader")
+        artifact = None
+        loader = None
+    else:
+        artifact = _validate_artifact(data.get("artifact"))
+        if any(key in data for key in ("model", "api", "request")):
+            raise ProfileError(
+                "model, api, and request are only valid for OpenRouter profiles"
+            )
+        loader = _build_loader(
+            _require_mapping(data.get("loader"), "loader"),
+            allow_trusted_local_code=(inference_library, adapter)
+            == ("multimodal", "phi4_audio"),
+        )
+
+    if loader is not None and loader.processor_mode in {
+        "wav2vec2_plain",
+        "wav2vec2_with_lm",
+    } and (
         inference_library,
         adapter,
     ) != ("transformers", "ctc"):
@@ -916,10 +1151,11 @@ def parse_profile(data: Any) -> InferenceProfile:
             f"loader.processor_mode '{loader.processor_mode}' is only valid for "
             "transformers/ctc"
         )
-    if inference_library == "nemo" and loader.torch_dtype != "auto":
+    if inference_library == "nemo" and loader is not None and loader.torch_dtype != "auto":
         raise ProfileError("loader.torch_dtype must be auto for the NeMo backend")
     explicit_artifact_loader = (
-        loader.artifact_format != "auto" or loader.artifact_precision != "auto"
+        loader is not None
+        and (loader.artifact_format != "auto" or loader.artifact_precision != "auto")
     )
     if explicit_artifact_loader and inference_library not in {"sherpa_onnx", "torch"}:
         raise ProfileError(
@@ -960,6 +1196,35 @@ def parse_profile(data: Any) -> InferenceProfile:
             raise ProfileError(
                 "phi4_audio requires loader.trust_remote_code: true for its bundled code"
             )
+    elif is_openrouter:
+        if audio_value is not None:
+            raise ProfileError(
+                "OpenRouter sends each source WAV directly and cannot define audio chunking"
+            )
+        audio = None
+        if adapter == "chat_audio":
+            if not isinstance(prompt_value, str) or not prompt_value.strip():
+                raise ProfileError("OpenRouter chat_audio profiles require a prompt")
+            prompt = prompt_value.strip()
+        else:
+            if prompt_value is not None:
+                raise ProfileError("OpenRouter stt profiles cannot define a prompt")
+            prompt = None
+    elif inference_library == "omnilingual":
+        if prompt_value is not None:
+            raise ProfileError("Omnilingual ASR profiles cannot define a prompt")
+        prompt = None
+        if audio_value is None:
+            raise ProfileError("Omnilingual ASR profiles require an audio section")
+        audio = _build_audio(_require_mapping(audio_value, "audio"))
+        if loader.processor_mode != "auto":
+            raise ProfileError("Omnilingual ASR requires loader.processor_mode: auto")
+        if loader.local_files_only is not True:
+            raise ProfileError("Omnilingual ASR inference must be local-files-only")
+        if loader.trust_remote_code is not False:
+            raise ProfileError("Omnilingual ASR cannot enable trust_remote_code")
+        if loader.torch_dtype != "bfloat16":
+            raise ProfileError("Omnilingual ASR requires loader.torch_dtype: bfloat16")
     else:
         if prompt_value is not None:
             raise ProfileError("prompt is only valid for multimodal profiles")
@@ -999,9 +1264,15 @@ def parse_profile(data: Any) -> InferenceProfile:
                 "qwen_omni_audio requires at least 38 GiB in "
                 "hardware.minimum_gpu_memory_gib"
             )
+    elif adapter == "gemma4_audio":
+        if hardware is not None and hardware.memory_strategy != "large_gpu_only":
+            raise ProfileError(
+                "gemma4_audio hardware.memory_strategy must be large_gpu_only"
+            )
     elif hardware is not None:
         raise ProfileError(
-            "hardware is only used by phi4_audio and qwen_omni_audio profiles"
+            "hardware is only used by gemma4_audio, phi4_audio, and "
+            "qwen_omni_audio profiles"
         )
     decoding = _build_decoding(
         _require_mapping(data.get("decoding"), "decoding"),
@@ -1013,14 +1284,16 @@ def parse_profile(data: Any) -> InferenceProfile:
             "audio chunking and decoding.long_form cannot be enabled together"
         )
     if (
-        decoding.strategy == "beam_search"
+        loader is not None
+        and decoding.strategy == "beam_search"
         and loader.processor_mode != "wav2vec2_with_lm"
     ):
         raise ProfileError(
             "CTC beam_search decoding requires loader.processor_mode 'wav2vec2_with_lm'"
         )
     if (
-        loader.processor_mode == "wav2vec2_with_lm"
+        loader is not None
+        and loader.processor_mode == "wav2vec2_with_lm"
         and decoding.strategy != "beam_search"
     ):
         raise ProfileError(
@@ -1030,6 +1303,18 @@ def parse_profile(data: Any) -> InferenceProfile:
     language_value = data.get("language")
     if language_value is not None and not isinstance(language_value, str):
         raise ProfileError("language must be a string or null")
+    language = language_value.strip() if language_value else None
+    if inference_library == "omnilingual" and adapter == "llm" and language is None:
+        raise ProfileError("Omnilingual LLM profiles require a language code")
+    if is_openrouter:
+        model = _build_openrouter_model(data.get("model"))
+        api = _build_openrouter_api(data.get("api"), adapter=adapter)
+        request = _build_openrouter_request(data.get("request"), adapter=adapter)
+    else:
+        model = None
+        api = None
+        request = None
+
     parameter_evidence = _build_parameter_evidence(
         data.get("parameter_evidence"),
         profile_data=data,
@@ -1040,8 +1325,11 @@ def parse_profile(data: Any) -> InferenceProfile:
         inference_setup_id=inference_setup_id.strip(),
         inference_library=inference_library,
         adapter=adapter,
-        artifact=_validate_artifact(data["artifact"]),
-        language=(language_value.strip() if language_value else None),
+        artifact=artifact,
+        model=model,
+        api=api,
+        request=request,
+        language=language,
         task=task,
         output_units=output_units,
         output_notation=output_notation,
@@ -1100,6 +1388,11 @@ def resolve_model_path(
     require_exists: bool = True,
 ) -> Path:
     """Resolve a model artifact below its inference-library model root."""
+    if profile.artifact is None:
+        raise ProfileError(
+            f"Inference setup '{profile.inference_setup_id}' uses a remote model "
+            "and has no local model artifact path"
+        )
     root = (
         Path(model_root)
         if model_root is not None

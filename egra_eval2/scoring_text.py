@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import logging
 import math
 from dataclasses import dataclass
@@ -16,6 +15,7 @@ from egra_eval2.reference.ipa_inventory_maps import (
     IPAInventoryMapError,
     build_ipa_aligner,
     describe_ipa_inventory_route,
+    ipa_inventory_route_evidence,
 )
 from egra_eval2.reference.g2p import G2PSystem, G2PSystemError, resolve_g2p_system
 from egra_eval2.reference.views import (
@@ -25,6 +25,7 @@ from egra_eval2.reference.views import (
     validate_reference_view_index,
 )
 from inference.pipeline_provenance import inference_profile_from_run_metadata
+from inference.provenance import sha256_file
 
 
 ALIGNED_IPA_SUFFIX = ".ipa_aligned"
@@ -64,6 +65,7 @@ class ScoringContext:
     reference_metadata_path: Path | None = None
     aligned_manifest_path: Path | None = None
     hypothesis_route: str = "native orthographic"
+    hypothesis_route_evidence: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -102,14 +104,6 @@ def _load_json_object(path: Path, label: str) -> dict:
     if not isinstance(payload, dict):
         raise ScoringRepresentationError(f"Invalid {label}: {path}")
     return payload
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _run_metadata_path(manifest_in: str | Path) -> Path | None:
@@ -218,7 +212,7 @@ def _load_ipa_reference(
         ) from exc
     if not view_path.is_file():
         raise ScoringRepresentationError(f"IPA reference view not found: {view_path}")
-    if ipa.get("sha256") != _sha256(view_path):
+    if ipa.get("sha256") != sha256_file(view_path):
         raise ScoringRepresentationError(
             f"IPA reference view hash does not match metadata: {view_path}"
         )
@@ -429,6 +423,9 @@ def prepare_scoring_texts(
         hypothesis_route = describe_ipa_inventory_route(
             source_inventory, reference_view.inventory
         )
+        hypothesis_route_evidence = ipa_inventory_route_evidence(
+            source_inventory, reference_view.inventory
+        )
     else:
         phonemize_batch = phonemize or system.phonemize
         try:
@@ -443,6 +440,7 @@ def prepare_scoring_texts(
         hypothesis_route = (
             f"orthographic -> {system.display_name} ({system.system_id})"
         )
+        hypothesis_route_evidence = ()
 
     aligned_path = _write_aligned_ipa_manifest(out, manifest_in, system.system_id)
     logger.info(
@@ -461,5 +459,6 @@ def prepare_scoring_texts(
             reference_metadata_path=reference_view.metadata_path,
             aligned_manifest_path=aligned_path,
             hypothesis_route=hypothesis_route,
+            hypothesis_route_evidence=hypothesis_route_evidence,
         ),
     )

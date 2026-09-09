@@ -16,7 +16,7 @@ from transformers import AutoModelForMultimodalLM, AutoProcessor
 
 from inference.common import load_audio_and_resample
 from inference.contracts import TranscriptionResult
-from inference.multimodal.adapters.common import torch_dtype_from_profile
+from inference.multimodal.adapters.common import cuda_memory_gib, torch_dtype_from_profile
 from inference.profile import InferenceProfile, ProfileError
 from inference.provenance import generation_provenance
 
@@ -24,11 +24,11 @@ from inference.provenance import generation_provenance
 def _select_device() -> torch.device:
     if not torch.cuda.is_available():
         raise RuntimeError(
-            "Gemma 4 E2B inference requires a CUDA GPU for the frozen bfloat16 profile"
+            "Gemma 4 audio inference requires a CUDA GPU for the frozen bfloat16 profile"
         )
     if not torch.cuda.is_bf16_supported():
         raise RuntimeError(
-            "Gemma 4 E2B inference requires a CUDA GPU with bfloat16 support"
+            "Gemma 4 audio inference requires a CUDA GPU with bfloat16 support"
         )
     return torch.device("cuda:0")
 
@@ -94,8 +94,17 @@ class Gemma4AudioBackend:
         self.device = device or _select_device()
         if self.device.type != "cuda":
             raise RuntimeError(
-                "Gemma 4 E2B inference requires CUDA for the frozen bfloat16 profile"
+                "Gemma 4 audio inference requires CUDA for the frozen bfloat16 profile"
             )
+        if profile.hardware is not None:
+            available_gpu_gib = cuda_memory_gib(self.device)
+            required_gpu_gib = profile.hardware.minimum_gpu_memory_gib
+            if available_gpu_gib < required_gpu_gib:
+                raise RuntimeError(
+                    "Gemma 4 audio hardware preflight failed: "
+                    f"profile requires at least {required_gpu_gib:g} GiB GPU memory, "
+                    f"but {available_gpu_gib:.1f} GiB is available"
+                )
 
         common_kwargs = {
             "local_files_only": profile.loader.local_files_only,

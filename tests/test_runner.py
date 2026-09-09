@@ -81,6 +81,31 @@ class DiagnosticBackend(FakeBackend):
         }
 
 
+def test_atomic_json_write_retries_a_transient_windows_file_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "run_state.json"
+    original_replace = Path.replace
+    attempts = 0
+
+    def temporarily_locked(source: Path, target: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("simulated transient Windows file lock")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", temporarily_locked)
+    monkeypatch.setattr(runner_module.time, "sleep", lambda _seconds: None)
+
+    runner_module._write_json_atomic(destination, {"completed_items": 4})
+
+    assert attempts == 3
+    assert json.loads(destination.read_text(encoding="utf-8")) == {
+        "completed_items": 4
+    }
+
+
 class LowCoverageBackend(FakeBackend):
     def transcribe_batch(self, audio_paths: Sequence[str]) -> list[TranscriptionResult]:
         values = {
@@ -561,3 +586,236 @@ def test_runner_closes_backend_when_input_resolution_fails(tmp_path: Path) -> No
         )
 
     assert backend.closed is True
+
+
+def test_checkpoint_retains_interrupted_run_and_resume_skips_completed_rows(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "input.jsonl"
+    _manifest(manifest)
+    output_root = tmp_path / "output"
+    interrupted = ExplodingBackend()
+
+    with pytest.raises(RuntimeError, match="mock catastrophic backend failure"):
+        run_backend(
+            backend=interrupted,
+            profile=_profile(),
+            profile_path="profile.yaml",
+            model_path=None,
+            model_identity={
+                "kind": "remote_api_model",
+                "requested_model": "provider/model",
+            },
+            root_audio_dir=None,
+            audio_manifest=str(manifest),
+            output_root=str(output_root),
+            batch_size=2,
+            checkpoint=True,
+        )
+
+    staging_runs = list((output_root / "transcripts").glob(".*.in_progress"))
+    assert len(staging_runs) == 1
+    staging = staging_runs[0]
+    state = json.loads((staging / "run_state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "in_progress"
+    assert state["completed_items"] == 2
+
+    class RecordingBackend(FakeBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.paths: list[str] = []
+
+        def transcribe_batch(
+            self, audio_paths: Sequence[str]
+        ) -> list[TranscriptionResult]:
+            self.paths.extend(audio_paths)
+            return super().transcribe_batch(audio_paths)
+
+    resumed = RecordingBackend()
+    output = run_backend(
+        backend=resumed,
+        profile=_profile(),
+        profile_path="profile.yaml",
+        model_path=None,
+        model_identity={
+            "kind": "remote_api_model",
+            "requested_model": "provider/model",
+        },
+        root_audio_dir=None,
+        audio_manifest=str(manifest),
+        output_root=str(output_root),
+        batch_size=2,
+        checkpoint=True,
+        resume_run=str(staging),
+    )
+
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    assert [row["audio_filepath"] for row in rows] == [
+        "first.wav",
+        "second.wav",
+        "third.wav",
+    ]
+    assert resumed.paths == ["third.wav"]
+    final_state = json.loads(
+        (output.parent / "run_state.json").read_text(encoding="utf-8")
+    )
+    assert final_state["status"] == "completed"
+    assert final_state["completed_items"] == 3
+    assert not staging.exists()
+
+
+def _checkpoint_arguments(tmp_path: Path) -> dict:
+    manifest = tmp_path / "input.jsonl"
+    _manifest(manifest)
+    return dict(
+        profile=_profile(), profile_path="profile.yaml", model_path=None,
+        model_identity={"kind": "remote_api_model", "requested_model": "provider/model"},
+        root_audio_dir=None, audio_manifest=str(manifest),
+        output_root=str(tmp_path / "output"), batch_size=2, checkpoint=True,
+    )
+
+
+@pytest.mark.parametrize("failure", [KeyboardInterrupt, RuntimeError])
+def test_each_attempt_retains_its_own_observations(tmp_path: Path, failure) -> None:
+    class ObservedBackend(FakeBackend):
+        def __init__(self, *, interrupt: bool):
+            super().__init__()
+            self.interrupt = interrupt
+            self.count = 0
+
+        def transcribe_batch(self, paths):
+            if self.interrupt and self.count:
+                warnings.warn("warning before interruption", RuntimeWarning)
+                raise failure("stop")
+            self.count += len(paths)
+            return super().transcribe_batch(paths)
+
+        def metadata(self):
+            return {
+                "device": "first-device" if self.interrupt else "second-device",
+                "statistics": {
+                    "successful_requests": self.count,
+                    "models_returned": {"provider/model": self.count},
+                    "usage": {"cost": self.count * 0.1},
+                },
+            }
+
+    args = _checkpoint_arguments(tmp_path)
+    with pytest.raises(failure):
+        run_backend(backend=ObservedBackend(interrupt=True), **args)
+    staging = next((tmp_path / "output/transcripts").glob(".*.in_progress"))
+    first = json.loads((staging / "run_state.json").read_text())["attempts"][0]
+    assert first["status"] == ("interrupted" if failure is KeyboardInterrupt else "failed")
+    assert first["failure_type"] == failure.__name__
+    assert first["completed_items"] == 2
+    assert first["observations_complete"] is True
+    assert first["ended_at"] is not None
+    assert first["warnings"][0]["message"] == "warning before interruption"
+
+    output = run_backend(
+        backend=ObservedBackend(interrupt=False), resume_run=str(staging), **args
+    )
+    metadata = json.loads((output.parent / "run_metadata.json").read_text())
+    attempts = metadata["attempts"]
+    assert attempts[0] == first
+    assert [item["attempt_id"] for item in attempts] == [1, 2]
+    assert [item["start_item"] for item in attempts] == [0, 2]
+    assert [item["completed_items"] for item in attempts] == [2, 1]
+    assert attempts[1]["status"] == "completed"
+    for index, count in enumerate((2, 1)):
+        stats = attempts[index]["inference_adapter"]["statistics"]
+        assert stats["successful_requests"] == count
+        assert stats["models_returned"] == {"provider/model": count}
+        assert stats["usage"]["cost"] == pytest.approx(count * 0.1)
+        assert {"execution_stack", "repository", "model_artifact", "started_at", "ended_at"} <= attempts[index].keys()
+    assert metadata["output"]["results"] == 3
+    assert metadata["attempt_history_complete"] is True
+    assert metadata["observation_attempt_id"] == 2
+    assert metadata["inference_adapter"] == attempts[1]["inference_adapter"]
+    assert attempts[0]["inference_adapter"]["device"] == "first-device"
+    assert attempts[1]["inference_adapter"]["device"] == "second-device"
+
+
+@pytest.mark.parametrize("tail", [b"", b'{"audio_filepath": "third', b'{"pred_text": "\xe2\x82'])
+def test_resume_recovers_rows_written_before_checkpoint_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tail: bytes
+) -> None:
+    args = _checkpoint_arguments(tmp_path)
+    original_write = runner_module._write_json_atomic
+
+    def interrupted_write(path, payload):
+        if payload.get("completed_items", 0):
+            raise OSError("storage unavailable after transcript flush")
+        original_write(path, payload)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(runner_module, "_write_json_atomic", interrupted_write)
+        with pytest.raises(OSError, match="storage unavailable"):
+            run_backend(backend=FakeBackend(), **args)
+    staging = next((tmp_path / "output/transcripts").glob(".*.in_progress"))
+    state = json.loads((staging / "run_state.json").read_text())
+    assert state["completed_items"] == 0
+    manifest = staging / "transcriptions.jsonl"
+    with manifest.open("ab") as output:
+        output.write(tail)
+
+    output = run_backend(backend=CompletedStateBackend(), resume_run=str(staging), **args)
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [row["audio_filepath"] for row in rows] == ["first.wav", "second.wav", "third.wav"]
+    metadata = json.loads((output.parent / "run_metadata.json").read_text())
+    first, resumed = metadata["attempts"]
+    assert first["status"] == "interrupted"
+    assert first["completed_items"] == 2
+    assert first["ended_at"] is None
+    assert first["observations_complete"] is False
+    assert resumed["inference_adapter"]["processed"] == 1
+
+
+@pytest.mark.parametrize("committed_items,tail", [(3, b""), (2, b"broken\n")])
+def test_resume_does_not_repair_committed_or_non_tail_corruption(
+    tmp_path: Path, committed_items: int, tail: bytes
+) -> None:
+    args = _checkpoint_arguments(tmp_path)
+    with pytest.raises(RuntimeError):
+        run_backend(backend=ExplodingBackend(), **args)
+    staging = next((tmp_path / "output/transcripts").glob(".*.in_progress"))
+    state_path = staging / "run_state.json"
+    state = json.loads(state_path.read_text())
+    state["completed_items"] = committed_items
+    state_path.write_text(json.dumps(state))
+    manifest = staging / "transcriptions.jsonl"
+    original = manifest.read_bytes() + tail
+    manifest.write_bytes(original)
+    with pytest.raises(ValueError, match="checkpoint"):
+        run_backend(backend=FakeBackend(), resume_run=str(staging), **args)
+    assert manifest.read_bytes() == original
+
+
+def test_resume_can_publish_a_completed_checkpoint_and_marks_missing_old_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _checkpoint_arguments(tmp_path)
+    original_rename = Path.rename
+
+    def fail_publication(path, destination):
+        if path.name.endswith(".in_progress"):
+            raise PermissionError("publication interrupted")
+        return original_rename(path, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "rename", fail_publication)
+        with pytest.raises(PermissionError):
+            run_backend(backend=FakeBackend(), **args)
+    staging = next((tmp_path / "output/transcripts").glob(".*.in_progress"))
+    state_path = staging / "run_state.json"
+    state = json.loads(state_path.read_text())
+    # Reproduce an older checkpoint, killed after completion but before rename.
+    state["status"] = "completed"
+    del state["attempts"], state["attempt_history_complete"]
+    state_path.write_text(json.dumps(state))
+    output = run_backend(backend=CompletedStateBackend(), resume_run=str(staging), **args)
+    metadata = json.loads((output.parent / "run_metadata.json").read_text())
+    assert metadata["output"]["results"] == 3
+    assert metadata["inference_adapter"]["processed"] == 0
+    assert metadata["attempt_history_complete"] is False
+    assert not staging.exists()

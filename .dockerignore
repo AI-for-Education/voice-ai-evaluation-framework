@@ -17,3 +17,4 @@ inference/torch/models/
 inference/onnxruntime/models/
 inference/multimodal/models/
 inference/multimodal/tmp/
+inference/omnilingual/models/

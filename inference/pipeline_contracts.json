@@ -34,6 +34,23 @@
         "source": "https://github.com/AI-for-Education/nemoasr-android/blob/6cd031267aed45e47347bc05a0eb63eee285f0d8/android/NemoAsrDemo/app/src/main/java/com/example/nemoasrdemo/OnnxAsrEngine.kt",
         "rationale": "The local Android-compatible inference adapter reproduces the pinned deployment loader and resampling algorithm."
       }
+    },
+    "openrouter_original_wav_upload": {
+      "summary": "Upload each source WAV unchanged as base64 JSON; audio decoding and feature extraction are performed by the selected OpenRouter provider endpoint.",
+      "loader": "base64_json_wav",
+      "sample_dtype": "provider_managed",
+      "channel_policy": "provider_managed",
+      "resampling": {
+        "policy": "provider_managed",
+        "implementation": "none_in_repository",
+        "target_sample_rate_hz": "provider_managed"
+      },
+      "authority": "project",
+      "evidence": {
+        "level": "exact",
+        "source": "repo:inference/openrouter/backend.py",
+        "rationale": "The backend reads and base64-encodes the original WAV bytes without waveform transformation."
+      }
     }
   },
   "inference": {
@@ -63,6 +80,24 @@
           "level": "exact",
           "source": "repo:inference/onnxruntime/README.md",
           "rationale": "The packaged deployment artifact is selected and hash-checked by the Android-compatible inference adapter."
+        }
+      },
+      "openrouter_remote_model_slug": {
+        "summary": "Select an OpenRouter-hosted model by its exact API slug; no local model artifact is downloaded or hashed.",
+        "authority": "model_owner",
+        "evidence": {
+          "level": "supported",
+          "source": "profile:model.slug",
+          "rationale": "The requested model slug and the model identifier returned by OpenRouter are recorded in run metadata."
+        }
+      },
+      "fairseq2_asset_card_checkpoint": {
+        "summary": "Select the model owner's checkpoint and tokenizer through the exact packaged Fairseq2 asset-card name, with a separate prepared-cache marker required before offline inference.",
+        "authority": "model_owner",
+        "evidence": {
+          "level": "exact",
+          "source": "https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/cards/models/rc_models_v2.yaml",
+          "rationale": "The profile records the packaged asset-card name and run metadata records the owner checkpoint/tokenizer URLs and preparation environment."
         }
       }
     },
@@ -190,6 +225,28 @@
           "source": "https://github.com/k2-fsa/icefall/blob/master/egs/librispeech/ASR/zipformer/jit_pretrained_streaming.py",
           "rationale": "The geometry and tail follow the owner-invoked script; the repository deliberately substitutes kaldi-native-fbank, uses shared downmix/resampling, and pads only otherwise undecodable sub-window inputs."
         }
+      },
+      "openrouter_provider_managed_audio_frontend": {
+        "classification": "provider_managed_frontend",
+        "summary": "Submit original WAV audio and let an eligible ZDR OpenRouter provider on the profile-selected gateway apply its model-specific audio frontend.",
+        "implementation": "openrouter_provider_endpoint",
+        "authority": "provider",
+        "evidence": {
+          "level": "supported",
+          "source": "https://openrouter.ai/docs/features/multimodal/audio",
+          "rationale": "OpenRouter accepts base64 audio and routes it to the selected model provider; effective provider/model observations are recorded when returned."
+        }
+      },
+      "omnilingual_reference_inference_pipeline": {
+        "classification": "canonical_model_frontend",
+        "summary": "Pass pre-decoded mono float32 audio to Omnilingual ASR's reference pipeline, which applies its 16 kHz check, waveform normalization, collation, and model-family decoder.",
+        "implementation": "omnilingual_asr.models.inference.pipeline.ASRInferencePipeline",
+        "authority": "model_owner",
+        "evidence": {
+          "level": "exact",
+          "source": "https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/inference/pipeline.py",
+          "rationale": "The repository adapter calls the owner pipeline directly and records whether LLM language conditioning or CTC greedy decoding was selected."
+        }
       }
     },
     "execution_stacks": {
@@ -283,6 +340,45 @@
           "source": "repo:docker-compose.yml",
           "rationale": "The repository fixes the service and adapter while run metadata records the effective Torch and feature-extractor versions."
         }
+      },
+      "openrouter_eu_api": {
+        "summary": "Call OpenRouter through its explicit EU gateway from the lightweight repository client, using an API key owned by the QA facility ASR workspace while enforcing ZDR and denying data collection at profile, live-preflight, and request levels.",
+        "runner": "repository_inference_runner",
+        "inference_library": "openrouter",
+        "inference_engine": "remote_provider_api",
+        "environment": "openrouter_asr_container",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:inference/openrouter/backend.py",
+          "rationale": "Profile and backend validation fix the EU gateway, live catalogues verify exact ZDR audio eligibility before audio access, and every payload repeats the mandatory privacy policy."
+        }
+      },
+      "openrouter_global_zdr_api": {
+        "summary": "Call OpenRouter through its explicit global gateway from the lightweight repository client while enforcing ZDR and denying data collection at profile, live-preflight, and request levels; EU in-region routing is not required.",
+        "runner": "repository_inference_runner",
+        "inference_library": "openrouter",
+        "inference_engine": "remote_provider_api",
+        "environment": "openrouter_asr_container",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:inference/openrouter/backend.py",
+          "rationale": "Profile and backend validation fix the global gateway, live catalogues verify exact ZDR audio eligibility before audio access, and every payload repeats the mandatory privacy policy."
+        }
+      },
+      "omnilingual_fairseq2_image": {
+        "summary": "Run Omnilingual ASR 0.2.0 through Fairseq2 0.5.2 and the matching PyTorch 2.7.1 CUDA 12.8 binary stack in a dedicated Linux container.",
+        "runner": "repository_inference_runner",
+        "inference_library": "omnilingual_asr",
+        "inference_engine": "fairseq2_pytorch",
+        "environment": "dedicated_omnilingual_container",
+        "authority": "project",
+        "evidence": {
+          "level": "exact",
+          "source": "repo:docker/Dockerfile.omnilingual",
+          "rationale": "The separate image pins the ABI-coupled Fairseq2/PyTorch pair without changing existing inference services."
+        }
       }
     },
     "chunking": {
@@ -309,7 +405,7 @@
         "authority": "project",
         "evidence": {
           "level": "project",
-          "source": "repo:inference/multimodal/adapters/common.py",
+          "source": "repo:inference",
           "rationale": "The need or hardware constraint may come from the model family, but the exact duration and zero-overlap stitching policy are project choices unless separately evidenced."
         }
       }

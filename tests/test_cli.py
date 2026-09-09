@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from inference.nemo import infer as nemo_infer
+from inference.omnilingual import infer as omnilingual_infer
 from inference.onnxruntime import infer as onnxruntime_infer
 from inference.multimodal import infer as multimodal_infer
 from inference.profile import ProfileError
@@ -35,6 +36,7 @@ def _load_eval_manifest(path: Path) -> pd.DataFrame:
     [
         multimodal_infer.parse_args,
         nemo_infer.parse_profile_args,
+        omnilingual_infer.parse_args,
         onnxruntime_infer.parse_args,
         sherpa_infer.parse_args,
         torch_infer.parse_args,
@@ -59,6 +61,7 @@ def test_inference_launchers_require_inference_profile(parse_args) -> None:
     [
         multimodal_infer.parse_args,
         nemo_infer.parse_profile_args,
+        omnilingual_infer.parse_args,
         onnxruntime_infer.parse_args,
         sherpa_infer.parse_args,
         torch_infer.parse_args,
@@ -90,6 +93,25 @@ def test_sherpa_launcher_provider_override_defaults_to_auto() -> None:
 
     assert sherpa_infer.parse_args(common).provider == "auto"
     assert sherpa_infer.parse_args([*common, "--provider", "cpu"]).provider == "cpu"
+
+
+@pytest.mark.parametrize(
+    "parse_args",
+    [omnilingual_infer.parse_args, transformers_infer.parse_args],
+)
+def test_long_local_launchers_accept_resume_checkpoint(parse_args) -> None:
+    args = parse_args(
+        [
+            "--inference_profile",
+            "profile.yaml",
+            "--root_audio_dir",
+            "audio",
+            "--resume_run",
+            ".run.in_progress",
+        ]
+    )
+
+    assert args.resume_run == ".run.in_progress"
 
 
 @pytest.mark.parametrize(
@@ -137,6 +159,7 @@ def test_sherpa_launcher_forwards_provider_override(
     [
         multimodal_infer,
         nemo_infer,
+        omnilingual_infer,
         onnxruntime_infer,
         sherpa_infer,
         torch_infer,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import os
 import re
@@ -19,6 +18,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from egra_eval2.leaderboard_policy import has_required_eligibility_policy
+from inference.provenance import sha256_file
 
 
 class SnapshotError(ValueError):
@@ -75,14 +75,6 @@ def _validate_ranks(path: Path, rows: Sequence[Mapping[str, str]]) -> None:
     observed = [row.get("rank", "") for row in rows]
     if observed != expected:
         raise SnapshotError(f"CSV ranks are not contiguous and ordered: {path}")
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _install_staged_file(staged: Path, destination: Path) -> None:
@@ -420,7 +412,7 @@ def build_snapshot(leaderboards_root: Path, package_root: Path) -> dict[str, Any
     portable = _portable_metadata(metadata)
     portable["package_snapshot"] = {
         "source_file": FILES["metadata"],
-        "source_sha256": _sha256(source_paths["metadata"]),
+        "source_sha256": sha256_file(source_paths["metadata"]),
         "portable_paths": True,
     }
     status = _render_status(

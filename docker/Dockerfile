@@ -117,6 +117,13 @@ RUN if [ "$TORCH_CUDA" = "cpu" ]; then \
 RUN pip3 install kaldi-native-fbank==1.22.3 \
  && pip3 check
 
+# The XLS-R-53 eSpeak comparator uses Transformers' phoneme tokenizer. Keep
+# this additive layer last so established ASR runtimes retain their cache.
+RUN apt-get update && apt-get install -y --no-install-recommends espeak-ng \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip3 install phonemizer==3.4.0 \
+ && pip3 check
+
 # App
 WORKDIR /app
 

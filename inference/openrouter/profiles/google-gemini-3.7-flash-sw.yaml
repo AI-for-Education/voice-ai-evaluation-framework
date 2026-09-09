@@ -1,0 +1,57 @@
+profile_schema_version: 2
+inference_setup_id: openrouter-google-gemini-3.7-flash-sw
+inference_library: openrouter
+adapter: chat_audio
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: openrouter_original_wav_upload
+  model_artifact: openrouter_remote_model_slug
+  input_processing: openrouter_provider_managed_audio_frontend
+  execution_stack: openrouter_global_zdr_api
+  chunking: none
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+model:
+  slug: google/gemini-3.7-flash
+api:
+  base_url: https://openrouter.ai/api/v1
+  routing_region: global
+  endpoint_kind: chat_audio
+  api_key_environment_variable: OPENROUTER_API_KEY
+prompt: >-
+  Transcribe the following speech segment in Swahili. Follow these formatting
+  instructions: output only the transcription with no newlines, and write
+  numbers as digits rather than words.
+request:
+  stream: false
+  provider:
+    zdr: true
+    data_collection: deny
+  max_tokens: 512
+  reasoning:
+    effort: minimal
+    exclude: true
+decoding:
+  strategy: generate
+parameter_evidence:
+  - applies_to: [model.slug, api.endpoint_kind, request.reasoning.effort, request.reasoning.exclude]
+    level: supported
+    source: https://openrouter.ai/google/gemini-3.7-flash
+    rationale: The exact OpenRouter model accepts audio through Chat Completions and supports reasoning controls.
+  - applies_to:
+      - api.base_url
+      - api.routing_region
+      - api.api_key_environment_variable
+      - request.stream
+      - request.provider.zdr
+      - request.provider.data_collection
+    level: exact
+    source: https://openrouter.ai/docs/guides/features/zdr
+    rationale: Repository policy selects the global gateway while keeping inherited credentials, non-streaming requests, ZDR, and denied data collection mandatory.
+  - applies_to: [prompt, request.max_tokens, decoding.strategy]
+    level: project
+    source: repo:inference/multimodal/profiles/gemma-4-E2B-sw.yaml
+    rationale: The comparison preserves the established Swahili transcription prompt and 512-token output limit.

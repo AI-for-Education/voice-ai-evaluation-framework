@@ -23,7 +23,7 @@ from tools.migrations.backfill_pipeline_provenance import _parse_args, backfill
 def test_all_tracked_profiles_resolve_their_declared_contract() -> None:
     repository = Path(__file__).resolve().parents[1]
     paths = sorted((repository / "inference").glob("*/profiles/*.yaml"))
-    assert len(paths) == 29
+    assert len(paths) == 43
     for path in paths:
         profile = load_profile(path)
         payload = profile.to_dict()
@@ -35,6 +35,7 @@ def test_all_tracked_profiles_resolve_their_declared_contract() -> None:
             "canonical_model_frontend",
             "compatible_third_party_frontend",
             "deployment_parity_frontend",
+            "provider_managed_frontend",
         }
         assert resolved["evaluation"]["hypothesis_field"] == "pred_text"
         assert resolved["observation_policy"]["unavailable_value_policy"] == {
@@ -175,6 +176,10 @@ def test_all_profile_launchers_use_the_central_execution_environment_helper() ->
             "qwen-omni-asr",
             "voice-ai-evaluation-framework-qwen-omni:latest",
         ),
+        "run_omnilingual_inference.sh": (
+            "omnilingual-asr",
+            "voice-ai-evaluation-framework-omnilingual:latest",
+        ),
     }
 
     for launcher, (service, image) in expected.items():
@@ -289,6 +294,8 @@ def test_evaluation_metadata_links_the_source_run_and_outputs(
         "kind": "evaluation_source_manifest",
         "source_manifest": pipeline["links"]["source_manifest"],
     }
+    assert "hypothesis_route_evidence" not in payload
+    assert "hypothesis_route_evidence" not in pipeline["effective"]
     assert pipeline["links"]["summary"]["exists"] is True
 
 
@@ -323,6 +330,7 @@ def test_evaluation_reference_identity_does_not_hash_the_mutable_shared_index(
         reference_view_path=reference_view,
         aligned_manifest_path=aligned_manifest,
         g2p_system=g2p_system,
+        hypothesis_route_evidence=("https://example.test/adapter",),
     )
     reference_index.write_text('{"revision": 2}\n', encoding="utf-8")
     second = build_evaluation_provenance(
@@ -335,6 +343,7 @@ def test_evaluation_reference_identity_does_not_hash_the_mutable_shared_index(
         reference_view_path=reference_view,
         aligned_manifest_path=aligned_manifest,
         g2p_system=g2p_system,
+        hypothesis_route_evidence=("https://example.test/adapter",),
     )
 
     assert first["links"]["reference_view_metadata"] == second["links"][
@@ -351,3 +360,6 @@ def test_evaluation_reference_identity_does_not_hash_the_mutable_shared_index(
         "inventory": "target_ipa_v1",
         "reference_view": first["links"]["reference_view"],
     }
+    assert first["effective"]["hypothesis_route_evidence"] == [
+        "https://example.test/adapter"
+    ]

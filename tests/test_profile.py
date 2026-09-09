@@ -643,16 +643,21 @@ def _result_affecting_profile_paths(payload: dict[str, object]) -> set[str]:
         if value:
             add_leaves(value, section)
 
-    loader = payload["loader"]
-    assert isinstance(loader, dict)
-    if loader.get("torch_dtype") != "auto":
-        paths.add("loader.torch_dtype")
-    if loader.get("attention_implementation") is not None:
-        paths.add("loader.attention_implementation")
-    if loader.get("artifact_format", "auto") != "auto":
-        paths.add("loader.artifact_format")
-    if loader.get("artifact_precision", "auto") != "auto":
-        paths.add("loader.artifact_precision")
+    loader = payload.get("loader")
+    if isinstance(loader, dict):
+        if loader.get("torch_dtype") != "auto":
+            paths.add("loader.torch_dtype")
+        if loader.get("attention_implementation") is not None:
+            paths.add("loader.attention_implementation")
+        if loader.get("artifact_format", "auto") != "auto":
+            paths.add("loader.artifact_format")
+        if loader.get("artifact_precision", "auto") != "auto":
+            paths.add("loader.artifact_precision")
+
+    for section in ("model", "api", "request"):
+        value = payload.get(section)
+        if value:
+            add_leaves(value, section)
 
     for field in ("prompt", "output_notation", "output_inventory"):
         if field in payload:
@@ -663,7 +668,7 @@ def _result_affecting_profile_paths(payload: dict[str, object]) -> set[str]:
 def test_all_tracked_profiles_are_valid_and_unique() -> None:
     repo = Path(__file__).resolve().parents[1]
     profile_paths = sorted((repo / "inference").glob("*/profiles/*.yaml"))
-    assert len(profile_paths) == 29
+    assert len(profile_paths) == 43
 
     ids: set[str] = set()
     for path in profile_paths:
@@ -790,6 +795,19 @@ def test_zipformer_decoder_pair_preserves_model_contract() -> None:
     assert beam.decoding.strategy == "modified_beam_search"
     assert beam.decoding.transducer_search_kwargs is not None
     assert beam.decoding.transducer_search_kwargs.max_active_paths == 4
+
+
+def test_xls_r_espeak_profile_preserves_phoneme_token_boundaries() -> None:
+    profile_path = (
+        Path(__file__).resolve().parents[1]
+        / "inference/transformers/profiles/xls-r-53-espeak-phoneme-comparator.yaml"
+    )
+
+    profile = load_profile(profile_path)
+
+    assert profile.loader.processor_mode == "auto"
+    assert profile.output_units == "phoneme"
+    assert profile.output_inventory == "facebook_espeak_cv_ft_vocab_v1"
 
 
 @pytest.mark.parametrize(
@@ -962,3 +980,18 @@ def test_qwen_profile_requires_large_gpu_and_text_only() -> None:
     profile["hardware"]["minimum_gpu_memory_gib"] = 16
     with pytest.raises(ProfileError, match="at least 38 GiB"):
         parse_profile(profile)
+
+
+def test_gemma_profile_accepts_optional_large_gpu_preflight() -> None:
+    profile = copy.deepcopy(MULTIMODAL_PROFILE)
+    profile["hardware"] = {
+        "memory_strategy": "large_gpu_only",
+        "minimum_gpu_memory_gib": 20,
+        "output_mode": "text_only",
+    }
+
+    parsed = parse_profile(profile)
+
+    assert parsed.hardware is not None
+    assert parsed.hardware.memory_strategy == "large_gpu_only"
+    assert parsed.hardware.minimum_gpu_memory_gib == 20.0

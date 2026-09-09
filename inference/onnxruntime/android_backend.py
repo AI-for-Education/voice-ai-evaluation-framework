@@ -6,7 +6,6 @@ desktop baseline and the mobile-behaviour proxy remain distinct measurements.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import platform
@@ -20,6 +19,7 @@ import soundfile as sf
 
 from inference.contracts import TranscriptionResult
 from inference.profile import InferenceProfile, ProfileError
+from inference.provenance import sha256_file
 
 SAMPLE_RATE = 16_000
 FEATURE_DIM = 80
@@ -51,14 +51,6 @@ _EXPECTED_QUANTIZED_OPS = {
     "MatMulInteger": 163,
     "ConvInteger": 60,
 }
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _load_vocab(path: Path) -> dict[int, str]:
@@ -111,7 +103,7 @@ def verify_android_bundle(model_path: str | Path) -> dict[str, Any]:
             f"Android INT8 model size mismatch: expected {ANDROID_MODEL_SIZE}, "
             f"got {selected.stat().st_size}"
         )
-    digest = _sha256_file(selected)
+    digest = sha256_file(selected)
     if digest != ANDROID_MODEL_SHA256:
         raise RuntimeError(
             "Android INT8 model SHA-256 mismatch: "

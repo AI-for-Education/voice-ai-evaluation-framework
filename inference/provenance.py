@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 
 _PACKAGE_DISTRIBUTIONS = {
     "accelerate": "accelerate",
+    "fairseq2": "fairseq2",
     "flash_attn": "flash-attn",
     "huggingface_hub": "huggingface-hub",
     "kenlm": "kenlm",
@@ -24,6 +25,8 @@ _PACKAGE_DISTRIBUTIONS = {
     "onnx": "onnx",
     "onnx_asr": "onnx-asr",
     "onnxruntime": "onnxruntime",
+    "omnilingual_asr": "omnilingual-asr",
+    "requests": "requests",
     "peft": "peft",
     "pyctcdecode": "pyctcdecode",
     "qwen_omni_utils": "qwen-omni-utils",
@@ -55,6 +58,10 @@ _HUGGING_FACE_SOURCES = {
         "google/gemma-4-E2B-it",
         "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
     ),
+    "gemma-4-E4B-it": (
+        "google/gemma-4-E4B-it",
+        "ee0ef6023621cff504d758262d4e04895a5af4a2",
+    ),
     "hubert-large-ls960-ft": (
         "facebook/hubert-large-ls960-ft",
         "ece5fabbf034c1073acae96d5401b25be96709d8",
@@ -78,6 +85,10 @@ _HUGGING_FACE_SOURCES = {
     "w2v-bert-2.0-swahili-asr": (
         "badrex/w2v-bert-2.0-swahili-asr",
         "10e85418ae5978a084c06de2c47448acb1a4e0c8",
+    ),
+    "wav2vec2-xlsr-53-espeak-cv-ft": (
+        "facebook/wav2vec2-xlsr-53-espeak-cv-ft",
+        "2c733782da5604684829819a5eb744c193fe9398",
     ),
     "wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot": (
         "bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-alphabets-phonemes-bookbot",
@@ -124,6 +135,7 @@ _LOCAL_ARTIFACT_SUFFIXES = {
 
 
 def sha256_file(path: str | Path) -> str:
+    """Return a lowercase SHA-256 digest while reading the file in bounded chunks."""
     digest = hashlib.sha256()
     with Path(path).open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):

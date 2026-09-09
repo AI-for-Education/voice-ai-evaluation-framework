@@ -229,6 +229,15 @@ def write_evaluation_metadata(
         "representation_compatible": True,
         "reference_integrity_enforced": True,
         "hypothesis_route": scoring_context.hypothesis_route,
+        **(
+            {
+                "hypothesis_route_evidence": list(
+                    scoring_context.hypothesis_route_evidence
+                )
+            }
+            if scoring_context.hypothesis_route_evidence
+            else {}
+        ),
         "pipeline_provenance": build_evaluation_provenance(
             base=base,
             manifest_in=manifest_in,
@@ -244,6 +253,9 @@ def write_evaluation_metadata(
                 else None
             ),
             hypothesis_route=scoring_context.hypothesis_route,
+            hypothesis_route_evidence=(
+                scoring_context.hypothesis_route_evidence
+            ),
         ),
     }
     if scoring_context.g2p_system is not None:

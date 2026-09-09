@@ -50,6 +50,18 @@
         "source": "artifact:gemma-4-E2B-it/config.json"
       }
     },
+    "gemma-4-E4B-sw": {
+      "model_group": "Gemma",
+      "model_name": "gemma-4-E4B-it",
+      "variant": "",
+      "official_model_url": "https://huggingface.co/google/gemma-4-E4B-it",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Gemma 4 conditional generation with audio encoder",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:gemma-4-E4B-it/config.json"
+      }
+    },
     "hubert-large-ls960-ft-en": {
       "model_group": "HuBERT",
       "model_name": "hubert-large-ls960-ft",
@@ -72,6 +84,150 @@
         "label": "Wav2Vec2 CTC",
         "evidence_status": "artifact_verified",
         "source": "artifact:mms-1b-all/config.json"
+      }
+    },
+    "omniasr-ctc-3b-v2-swh": {
+      "model_group": "Omnilingual ASR",
+      "model_name": "omniASR_CTC_3B_v2",
+      "variant": "Swahili",
+      "official_model_url": "https://github.com/facebookresearch/omnilingual-asr#model-architectures",
+      "official_model_url_note": "Official model family and asset-card listing",
+      "architecture": {
+        "label": "Wav2Vec2 CTC 3B v2",
+        "evidence_status": "owner_documented",
+        "source": "https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/cards/models/rc_models_v2.yaml"
+      }
+    },
+    "omniasr-llm-3b-v2-swh-latn": {
+      "model_group": "Omnilingual ASR",
+      "model_name": "omniASR_LLM_3B_v2",
+      "variant": "Swahili · language-conditioned",
+      "official_model_url": "https://github.com/facebookresearch/omnilingual-asr#model-architectures",
+      "official_model_url_note": "Official model family and asset-card listing",
+      "architecture": {
+        "label": "Wav2Vec2-Llama LLM-ASR 3B v2",
+        "evidence_status": "owner_documented",
+        "source": "https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/cards/models/rc_models_v2.yaml"
+      }
+    },
+    "openrouter-fish-audio-transcribe-1-sw": {
+      "model_group": "Fish Audio",
+      "model_name": "transcribe-1",
+      "variant": "OpenRouter global · ZDR",
+      "official_model_url": "https://openrouter.ai/fish-audio/transcribe-1",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Dedicated speech-to-text model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/fish-audio/transcribe-1"
+      }
+    },
+    "openrouter-google-chirp-3-sw": {
+      "model_group": "Google",
+      "model_name": "chirp-3",
+      "variant": "OpenRouter global · ZDR",
+      "official_model_url": "https://openrouter.ai/google/chirp-3",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Chirp 3 speech-to-text model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/google/chirp-3"
+      }
+    },
+    "openrouter-google-gemini-3.1-flash-lite-sw": {
+      "model_group": "Gemini",
+      "model_name": "gemini-3.1-flash-lite",
+      "variant": "OpenRouter EU · ZDR",
+      "official_model_url": "https://openrouter.ai/google/gemini-3.1-flash-lite",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Gemini audio-capable multimodal model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/google/gemini-3.1-flash-lite"
+      }
+    },
+    "openrouter-google-gemini-3.5-flash-lite-sw": {
+      "model_group": "Gemini",
+      "model_name": "gemini-3.5-flash-lite",
+      "variant": "OpenRouter EU · ZDR",
+      "official_model_url": "https://openrouter.ai/google/gemini-3.5-flash-lite",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Gemini audio-capable multimodal model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/google/gemini-3.5-flash-lite"
+      }
+    },
+    "openrouter-google-gemini-3.6-flash-sw": {
+      "model_group": "Gemini",
+      "model_name": "gemini-3.6-flash",
+      "variant": "OpenRouter global · ZDR",
+      "official_model_url": "https://openrouter.ai/google/gemini-3.6-flash",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Gemini audio-capable multimodal model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/google/gemini-3.6-flash"
+      }
+    },
+    "openrouter-google-gemini-3.7-flash-sw": {
+      "model_group": "Gemini",
+      "model_name": "gemini-3.7-flash",
+      "variant": "OpenRouter global · ZDR",
+      "official_model_url": "https://openrouter.ai/google/gemini-3.7-flash",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Gemini audio-capable multimodal model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/google/gemini-3.7-flash"
+      }
+    },
+    "openrouter-google-gemini-3.8-flash-sw": {
+      "model_group": "Gemini",
+      "model_name": "gemini-3.8-flash",
+      "variant": "OpenRouter global · ZDR",
+      "official_model_url": "https://openrouter.ai/google/gemini-3.8-flash",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Gemini audio-capable multimodal model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/google/gemini-3.8-flash"
+      }
+    },
+    "openrouter-microsoft-mai-transcribe-2-sw": {
+      "model_group": "Microsoft",
+      "model_name": "mai-transcribe-2",
+      "variant": "OpenRouter global · ZDR",
+      "official_model_url": "https://openrouter.ai/microsoft/mai-transcribe-2",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Dedicated speech-to-text model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/microsoft/mai-transcribe-2"
+      }
+    },
+    "openrouter-thinkingmachines-inkling-small-sw": {
+      "model_group": "Thinking Machines",
+      "model_name": "inkling-small",
+      "variant": "OpenRouter global · ZDR",
+      "official_model_url": "https://openrouter.ai/thinkingmachines/inkling-small",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Audio-capable multimodal model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/thinkingmachines/inkling-small"
+      }
+    },
+    "openrouter-xiaomi-mimo-v2.5-sw": {
+      "model_group": "Xiaomi",
+      "model_name": "mimo-v2.5",
+      "variant": "OpenRouter global · ZDR",
+      "official_model_url": "https://openrouter.ai/xiaomi/mimo-v2.5",
+      "official_model_url_note": "OpenRouter model/API listing",
+      "architecture": {
+        "label": "Audio-capable multimodal model",
+        "evidence_status": "owner_documented",
+        "source": "https://openrouter.ai/xiaomi/mimo-v2.5"
       }
     },
     "paza-phi4-multimodal-sw": {
@@ -204,6 +360,18 @@
         "label": "Wav2Vec2-BERT CTC",
         "evidence_status": "artifact_verified",
         "source": "artifact:w2v-bert-2.0-swahili-asr/config.json"
+      }
+    },
+    "xls-r-53-espeak-phoneme-comparator": {
+      "model_group": "XLS-R",
+      "model_name": "wav2vec2-xlsr-53-espeak-cv-ft",
+      "variant": "Swahili evaluation target · multilingual eSpeak phonemes",
+      "official_model_url": "https://huggingface.co/facebook/wav2vec2-xlsr-53-espeak-cv-ft",
+      "official_model_url_note": "Official Hugging Face model listing",
+      "architecture": {
+        "label": "Wav2Vec2/XLS-R CTC",
+        "evidence_status": "artifact_verified",
+        "source": "artifact:wav2vec2-xlsr-53-espeak-cv-ft/config.json"
       }
     },
     "whisper-large-sw": {

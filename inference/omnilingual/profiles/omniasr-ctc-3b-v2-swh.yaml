@@ -1,0 +1,55 @@
+profile_schema_version: 2
+inference_setup_id: omniasr-ctc-3b-v2-swh
+inference_library: omnilingual
+adapter: ctc
+artifact: omniASR_CTC_3B_v2
+language: swh_Latn
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: shared_soundfile_librosa_16khz
+  model_artifact: fairseq2_asset_card_checkpoint
+  input_processing: omnilingual_reference_inference_pipeline
+  execution_stack: omnilingual_fairseq2_image
+  chunking: profile_sequential_zero_overlap
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: bfloat16
+decoding:
+  strategy: ctc_greedy
+  generation_kwargs: {}
+audio:
+  maximum_seconds: 30
+  long_audio_strategy: sequential_chunks
+  chunk_seconds: 30
+  overlap_seconds: 0
+parameter_evidence:
+  - applies_to:
+      - artifact
+      - decoding.strategy
+    level: exact
+    source: https://github.com/facebookresearch/omnilingual-asr/tree/main/src/omnilingual_asr/models/inference
+    rationale: The owner documents this v2 CTC model card and reference argmax CTC decoding path; CTC does not use language conditioning.
+  - applies_to:
+      - loader.torch_dtype
+      - audio.maximum_seconds
+    level: supported
+    source: https://github.com/facebookresearch/omnilingual-asr#model-architectures
+    rationale: The owner's published memory table measures this model in BF16 with batch one and 30-second audio.
+  - applies_to:
+      - language
+    level: project
+    source: repo:inference/omnilingual/README.md
+    rationale: The language value labels the Swahili evaluation target in metadata; it is deliberately not passed to the CTC model.
+  - applies_to:
+      - audio.long_audio_strategy
+      - audio.chunk_seconds
+      - audio.overlap_seconds
+    level: project
+    source: repo:inference/omnilingual/README.md
+    rationale: Sequential 30-second zero-overlap chunks keep every call below the owner's 40-second cap while preserving the repository's existing long-audio convention.
