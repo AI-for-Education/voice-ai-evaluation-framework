@@ -10,7 +10,7 @@ workflow terminology.
 
 **Input (you need to provide)**
 
-- A local ASR model artifact and its tracked inference profile. A first NeMo model is [provided here](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-). The authoritative implementation-status tracker is [ASR_benchmark_candidate_models_updated.xlsx](https://www.dropbox.com/scl/fi/ciew0okh7avrpwci5vqi3) at `/Projects/Gates AI Master/19. QA Facility/4. Benchmarks/FL ASR Benchmarks/4. ASR Models Testing/ASR_benchmark_candidate_models_updated.xlsx`; use this exact updated workbook rather than similarly named older files.
+- A local ASR model artifact and its tracked inference profile. A first NeMo model is [provided here](https://drive.google.com/file/d/1NQTC8532QluX7KXQNGcebKj9FseUzrO-).
 
 - Dataset of Kiswahili child speech comprising:
   - audio files, 
