@@ -1,0 +1,52 @@
+# Source: https://huggingface.co/bookbot/zipformer-streaming-robust-sw-v4
+# Search algorithm: https://github.com/k2-fsa/icefall/blob/master/egs/librispeech/ASR/zipformer/streaming_beam_search.py
+profile_schema_version: 2
+inference_setup_id: zipformer-streaming-robust-sw-v4-torchscript-modified-beam4
+inference_library: torch
+adapter: streaming_transducer
+artifact: zipformer-streaming-robust-sw-v4
+language: sw
+task: transcribe
+output_units: phoneme
+output_notation: ipa
+output_inventory: bookbot_gruut_sw_v1
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: shared_soundfile_librosa_16khz
+  model_artifact: canonical_checkpoint
+  input_processing: bookbot_torchscript_owner_aligned_frontend
+  execution_stack: native_torchscript_image
+  chunking: none
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+  artifact_format: torchscript
+  artifact_precision: fp32
+decoding:
+  strategy: modified_beam_search
+  transducer_search_kwargs:
+    max_active_paths: 4
+parameter_evidence:
+  - applies_to:
+      - output_units
+      - output_notation
+      - output_inventory
+      - loader.artifact_format
+      - loader.artifact_precision
+    level: exact
+    source: https://huggingface.co/bookbot/zipformer-streaming-robust-sw-v4
+    rationale: BookBot publishes the FP32 scripted model and IPA token table together.
+  - applies_to:
+      - decoding.strategy
+    level: unvalidated
+    source: repo:inference/torch/backend.py
+    rationale: The direct JIT modified-beam pairing is a project adaptation; BookBot publishes native-JIT usage only for greedy decoding.
+  - applies_to:
+      - decoding.transducer_search_kwargs.max_active_paths
+    level: supported
+    source: https://github.com/k2-fsa/icefall/blob/master/egs/librispeech/ASR/zipformer/streaming_beam_search.py
+    rationale: Icefall's stateful streaming Zipformer modified beam implementation documents four active paths as its default.

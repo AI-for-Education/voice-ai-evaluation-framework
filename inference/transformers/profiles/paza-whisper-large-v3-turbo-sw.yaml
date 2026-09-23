@@ -1,0 +1,65 @@
+# Source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo
+# The owner requires segmentation above its 448-token input limit but gives no
+# duration. This project uses deterministic 30-second, zero-overlap chunks in
+# memory and keeps the owner's timestamp-disabled decoding configuration.
+profile_schema_version: 2
+inference_setup_id: paza-whisper-large-v3-turbo-sw
+inference_library: transformers
+adapter: speech_seq2seq
+artifact: paza-whisper-large-v3-turbo
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: shared_soundfile_librosa_16khz
+  model_artifact: canonical_checkpoint
+  input_processing: canonical_transformers_auto_processor
+  execution_stack: shared_transformers_image
+  chunking: profile_sequential_zero_overlap
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: generate
+  generation_kwargs:
+    do_sample: false
+    num_beams: 1
+    return_timestamps: false
+    suppress_tokens: []
+  # pred_text is the direct model hypothesis; no text postprocessing is applied.
+audio:
+  maximum_seconds: 30
+  long_audio_strategy: sequential_chunks
+  chunk_seconds: 30
+  overlap_seconds: 0
+
+parameter_evidence:
+  - applies_to:
+      - decoding.generation_kwargs.suppress_tokens
+      - decoding.generation_kwargs.return_timestamps
+    level: exact
+    source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo/blob/main/generation_config.json
+    rationale: The packaged generation configuration sets an empty suppression list and disables timestamp output.
+  - applies_to:
+      - decoding.generation_kwargs.do_sample
+      - decoding.strategy
+      - decoding.generation_kwargs.num_beams
+    level: supported
+    source: https://huggingface.co/docs/transformers/main/generation_strategies
+    rationale: Deterministic greedy generation is the Transformers baseline retained as a separate profile from beam search.
+  # The evaluation uses the direct model hypothesis without a post-decoding guard.
+  - applies_to:
+      - audio.maximum_seconds
+      - audio.long_audio_strategy
+      - audio.chunk_seconds
+      - audio.overlap_seconds
+    level: project
+    source: repo:inference/transformers/README.md
+    rationale: >-
+      The owner requires segmentation above 448 input tokens but publishes no
+      duration; 30-second zero-overlap chunks are the local reproducible policy.

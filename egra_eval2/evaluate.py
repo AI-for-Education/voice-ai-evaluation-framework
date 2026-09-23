@@ -1,8 +1,7 @@
 import logging
-import math
-import re
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 from egra_eval2.eval_utils import (
     aggregate_error_rate,
@@ -63,14 +62,6 @@ def evaluate_rows(df_egra: pd.DataFrame) -> pd.DataFrame:
             "HYP": hyp,
         }
 
-        # # Temp
-        # can = "ga u la e ka ha"
-        # ref = "ga ga u e ka hi hi"
-        # hyp = "ga u la i ka hi ho"
-        # print("CAN", can)
-        # print("REF", ref)
-        # print("HYP", hyp)
-
         # Reference vs hypothesis (required for WER)
         score_ref_hyp = score_error_rate(ref, hyp)
         row.update(
@@ -112,28 +103,34 @@ def evaluate_rows(df_egra: pd.DataFrame) -> pd.DataFrame:
 
 
 def aggregate_row_scores(
-    df_egra: pd.DataFrame, output_dir: Path, detailed=False
+    df_egra: pd.DataFrame,
+    output_dir: Path,
+    detailed: bool = False,
+    scoring_units: str = "orthographic",
 ) -> dict:
 
     logger = logging.getLogger("egra_eval")
     logger.info("Aggregating per-row scores")
     scores_dict = {}
 
-    # Global WER and MER
+    if scoring_units not in {"orthographic", "phoneme"}:
+        raise ValueError(f"Unsupported scoring units: {scoring_units}")
+    error_metric = "per" if scoring_units == "phoneme" else "wer"
+
+    # Global reference-to-hypothesis error rate and MER
     scores_dict["global"] = {}
-    wer = aggregate_error_rate(df_egra, "ref_hyp")
-    scores_dict["global"]["wer"] = wer
+    error_rate = aggregate_error_rate(df_egra, "ref_hyp")
+    scores_dict["global"][error_metric] = error_rate
     mer = aggregate_error_rate(df_egra, "mer")
     scores_dict["global"]["mer"] = mer
 
-    # Per task WER and MER
+    # Per-task reference-to-hypothesis error rate and MER
     for audio_type, df_subset in df_egra.groupby("audio_type"):
         logger.info(f"Calculating scores for {audio_type}")
         scores_dict[audio_type] = {}
 
-        # WER
-        wer = aggregate_error_rate(df_subset, "ref_hyp")
-        scores_dict[audio_type]["wer"] = wer
+        error_rate = aggregate_error_rate(df_subset, "ref_hyp")
+        scores_dict[audio_type][error_metric] = error_rate
 
         # MER
         mer = aggregate_error_rate(df_subset, "mer")

@@ -1,0 +1,85 @@
+# HARDWARE-GATED ON THE CURRENT HOST:
+# The pinned owner card lists a 31.11 GiB theoretical BF16 minimum with no input
+# and says practical use is normally at least 1.2x higher. The tracked 40 GiB
+# gate is a conservative supported value; this 16 GiB GPU stops at preflight.
+profile_schema_version: 2
+inference_setup_id: qwen2.5-omni-7b-sw-text
+inference_library: multimodal
+adapter: qwen_omni_audio
+artifact: Qwen2.5-Omni-7B
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: shared_soundfile_librosa_16khz
+  model_artifact: canonical_checkpoint
+  input_processing: canonical_transformers_auto_processor
+  execution_stack: multimodal_image
+  chunking: profile_sequential_zero_overlap
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+prompt: >-
+  Transcribe the following speech in Swahili. Output only the transcription,
+  with no explanation or formatting.
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: bfloat16
+  attention_implementation: sdpa
+decoding:
+  strategy: generate
+  generation_kwargs:
+    max_new_tokens: 256
+audio:
+  maximum_seconds: 30
+  long_audio_strategy: sequential_chunks
+  chunk_seconds: 30
+  overlap_seconds: 0
+hardware:
+  memory_strategy: large_gpu_only
+  minimum_gpu_memory_gib: 40
+  output_mode: text_only
+
+parameter_evidence:
+  - applies_to:
+      - hardware.output_mode
+      - decoding.strategy
+    level: exact
+    source: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
+    rationale: The model owner documents disable_talker with return_audio false for text-only generation.
+  - applies_to:
+      - loader.torch_dtype
+    level: exact
+    source: artifact:Qwen2.5-Omni-7B/config.json
+    rationale: The pinned checkpoint declares bfloat16 as its model dtype.
+  - applies_to:
+      - loader.attention_implementation
+    level: project
+    source: repo:inference/multimodal/README.md
+    rationale: SDPA is the compatible deterministic backend in the built image; the owner recommends Flash Attention 2 when available.
+  - applies_to:
+      - decoding.generation_kwargs.max_new_tokens
+      - prompt
+    level: project
+    source: repo:inference/multimodal/README.md
+    rationale: The Swahili-only prompt and 256-token cap are frozen benchmark choices rather than owner-published ASR values.
+  - applies_to:
+      - audio.maximum_seconds
+      - audio.chunk_seconds
+      - audio.long_audio_strategy
+      - audio.overlap_seconds
+    level: project
+    source: repo:inference/multimodal/README.md
+    rationale: >-
+      No owner duration is published; deterministic 30-second zero-overlap
+      chunks bound per-call activation memory and preserve source order.
+  - applies_to:
+      - hardware.memory_strategy
+      - hardware.minimum_gpu_memory_gib
+    level: supported
+    source: artifact:Qwen2.5-Omni-7B/README.md
+    rationale: >-
+      The owner lists 31.11 GiB as the no-input BF16 minimum and says practical
+      use is normally at least 1.2x higher; 40 GiB is the conservative gate.

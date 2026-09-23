@@ -1,0 +1,64 @@
+profile_schema_version: 2
+inference_setup_id: gemma-4-E2B-sw
+inference_library: multimodal
+adapter: gemma4_audio
+artifact: gemma-4-E2B-it
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: shared_soundfile_librosa_16khz
+  model_artifact: canonical_checkpoint
+  input_processing: canonical_transformers_auto_processor
+  execution_stack: multimodal_image
+  chunking: profile_sequential_zero_overlap
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+prompt: >-
+  Transcribe the following speech segment in Swahili. Follow these formatting
+  instructions: output only the transcription with no newlines, and write
+  numbers as digits rather than words.
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: bfloat16
+decoding:
+  strategy: generate
+  generation_kwargs:
+    do_sample: false
+    max_new_tokens: 512
+audio:
+  maximum_seconds: 30
+  long_audio_strategy: sequential_chunks
+  chunk_seconds: 30
+  overlap_seconds: 0
+
+
+parameter_evidence:
+  - applies_to:
+      - prompt
+      - decoding.strategy
+      - decoding.generation_kwargs.max_new_tokens
+    level: exact
+    source: https://huggingface.co/google/gemma-4-E2B-it
+    rationale: The model-owner ASR example defines the transcription format and uses a 512-token output cap.
+  - applies_to:
+      - loader.torch_dtype
+      - audio.maximum_seconds
+      - audio.chunk_seconds
+    level: supported
+    source: https://huggingface.co/google/gemma-4-E2B-it-assistant
+    rationale: The official target-plus-assistant audio example loads BF16, and the model documentation limits audio to 30 seconds.
+  - applies_to:
+      - decoding.generation_kwargs.do_sample
+    level: project
+    source: https://huggingface.co/google/gemma-4-E2B-it/blob/main/generation_config.json
+    rationale: Deterministic decoding is an intentional reproducibility override of the packaged sampling configuration.
+  - applies_to:
+      - audio.long_audio_strategy
+      - audio.overlap_seconds
+    level: project
+    source: repo:inference/multimodal/README.md
+    rationale: Sequential non-overlapping chunking is the repository policy for preserving original input files; it is not a model-owner recommendation.

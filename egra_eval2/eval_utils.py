@@ -5,7 +5,12 @@ import re
 import unicodedata
 
 CONSONANTS = set("bcdfghjklmnpqrstvwxyz")
-_punct = re.compile(r"[^\w\s'\u2019\u00C0-\u024F\u1E00-\u1EFF]")
+# Keep Unicode combining marks used by IPA (for example tie bars and
+# nasalization) while still replacing punctuation with spaces.
+_punct = re.compile(
+    r"[^\w\s'\u2019\u00C0-\u024F\u0300-\u036F\u1AB0-\u1AFF"
+    r"\u1DC0-\u1DFF\u1E00-\u1EFF\u20D0-\u20FF\uFE20-\uFE2F]"
+)
 _ws = re.compile(r"\s+")
 
 

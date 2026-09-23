@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Prevent Git Bash/MSYS from rewriting Linux container paths such as /work.
+export MSYS_NO_PATHCONV="${MSYS_NO_PATHCONV:-1}"
+
 usage() {
   cat <<'EOF' >&2
 Usage:
@@ -9,8 +12,17 @@ Usage:
 Example:
   ./run_eval2.sh \
     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
-    --output_root input_output_data/output/experiments/1_Batch2_Data_16spk_subset \
-    --manifest_in input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.segment.clean.jsonl
+    --manifest_in input_output_data/output/evaluations/<model>_<timestamp>/manifests/ref_manifest.clean.jsonl \
+    [--scoring_representation ipa --g2p-tool {africa_g2p|babygruut}]
+
+The default model-native evaluation is written under one of:
+  input_output_data/output/evaluations/<model>_<timestamp>/orthographic/
+  input_output_data/output/evaluations/<model>_<timestamp>/ipa/<g2p_system_id>/
+
+Every IPA evaluation, including an auto-selected native-phoneme run, requires
+exactly one --g2p-tool. Results from different exact systems never share a
+directory or leaderboard.
+
 EOF
   exit 1
 }
@@ -45,18 +57,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# If output root not provided, default to input_output_data/output/experiments/exp_{datetime}
-if [[ -z "$OUTPUT_ROOT" ]]; then
-  DEFAULT_DIR="input_output_data/output/experiments/exp_$(date '+%Y_%m_%d_%H_%M_%S')"
-  echo "No --output_root supplied. Using default: $DEFAULT_DIR"
-  OUTPUT_ROOT="$DEFAULT_DIR"
-fi
-
 if [[ -z "$DATASET_ROOT" || -z "$MANIFEST_IN" ]]; then
   usage
 fi
 
-USER_FLAG=(--user "$(id -u):$(id -g)")
+USER_FLAG=()
+# Git Bash reports a Windows SID-derived UID that Docker Desktop cannot use to
+# write bind-mounted files. Docker Desktop already maps those writes safely.
+if [[ "${OS:-}" != "Windows_NT" ]]; then
+  USER_FLAG=(--user "$(id -u):$(id -g)")
+fi
+OUTPUT_ARGS=()
+if [[ -n "$OUTPUT_ROOT" ]]; then
+  OUTPUT_ARGS=(--output_root "$OUTPUT_ROOT")
+fi
 ENV_VARS=(
   --env HOME=/tmp
   --env MPLCONFIGDIR=/tmp/matplotlib
@@ -70,5 +84,5 @@ docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" \
   egra-eval \
   python3 /work/eval_pipeline2.py \
     --dataset_root "$DATASET_ROOT" \
-    --output_root "$OUTPUT_ROOT" \
+    "${OUTPUT_ARGS[@]}" \
     "${EXTRA_ARGS[@]}"

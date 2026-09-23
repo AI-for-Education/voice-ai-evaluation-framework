@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, json, sys, os
+
+import argparse
+import json
 from pathlib import Path
+
 import pandas as pd
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
+from egra_eval2.eval_utils import text_normalize
 from egra_eval2.linking import add_audio_keys
-from egra_eval2.textgrid_io import add_refs_from_textgrid
 from egra_eval2.passage_merge import attach_passage_texts
-from egra_eval2.nemo_manifest import load_many_manifests
-from egra_eval2.textnorm import normalize
-from egra_eval2.dataset_layout import resolve_dataset_paths, DatasetLayoutError
+from egra_eval2.prediction_manifest import load_prediction_manifests
+from egra_eval2.textgrid_io import add_refs_from_textgrid
 
 
 def _abs_audio_path(audio_root: Path, learner_id: str, audio_file: str) -> str:
@@ -26,7 +29,7 @@ def _write_jsonl(rows, out_path: str):
 def _maybe_norm(s: str, do_norm: bool) -> str:
     if not s:
         return s
-    return normalize(s) if do_norm else s
+    return text_normalize(s) if do_norm else s
 
 
 def main():
@@ -104,7 +107,11 @@ def main():
     ]
 
     # 5) Load HYP (pred_text) from NeMo manifest
-    hyp_df = load_many_manifests([args.nemo_hyp_manifest], audio_key="audio_filepath", hyp_key="pred_text")
+    hyp_df = load_prediction_manifests(
+        [args.nemo_hyp_manifest],
+        audio_key="audio_filepath",
+        hyp_key="pred_text",
+    )
     hyp_map = {str(Path(r["audio_path"]).as_posix()): (r.get("hyp_text") or "") for _, r in hyp_df.iterrows()}
 
     # 6) Build REF manifest

@@ -1,29 +1,226 @@
-version: "3.9"
-
 x-base: &egra_base
-  image: nemo_inference_nemo-asr:latest
+  image: voice-ai-evaluation-framework-asr:latest
   build:
     context: .
     dockerfile: docker/Dockerfile
   working_dir: /work
   environment:
     PYTHONUNBUFFERED: "1"
-  volumes:
-    - ./:/work:rw                               # your repo root (contains main.py, infer.py, etc.)
-    - ./input_output_data:/io:rw                # input/output data root
-    - ./nemo_inference/models:/models:ro        # .nemo models
-    - ./nemo_inference/tmp:/tmp_segments:rw     # temp segments (and kept if debug flag is used)
 
 services:
   nemo-asr:
     <<: *egra_base
     container_name: nemo-asr
-    # GPU access is disabled by default to avoid nvidia-container errors on hosts
-    # without a properly configured NVIDIA driver / toolkit. To enable GPU, uncomment:
-    gpus: "all"
+    gpus: all
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/nemo/models:/models:ro
+      - ./inference/nemo/models:/work/inference/nemo/models:ro
+      - ./inference/nemo/tmp:/tmp_segments:rw
+
+  transformers-asr:
+    <<: *egra_base
+    container_name: transformers-asr
+    gpus: all
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/transformers/models:/models:ro
+      - ./inference/transformers/models:/work/inference/transformers/models:ro
+
+  sherpa-onnx-asr:
+    <<: *egra_base
+    container_name: sherpa-onnx-asr
+    gpus: all
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/sherpa_onnx/models:/models:ro
+      - ./inference/sherpa_onnx/models:/work/inference/sherpa_onnx/models:ro
+
+  torch-asr:
+    <<: *egra_base
+    container_name: torch-asr
+    gpus: all
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/torch/models:/models:ro
+      - ./inference/torch/models:/work/inference/torch/models:ro
+
+  onnxruntime-prepare:
+    <<: *egra_base
+    container_name: onnxruntime-prepare
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./inference/nemo/models:/nemo-models:ro
+      - ./inference/onnxruntime/models:/models:rw
+
+  onnxruntime-asr:
+    <<: *egra_base
+    container_name: onnxruntime-asr
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/onnxruntime/models:/models:ro
+      - ./inference/onnxruntime/models:/work/inference/onnxruntime/models:ro
+
+  onnxruntime-android-asr:
+    image: voice-ai-evaluation-framework-onnxruntime-android:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.onnxruntime-android
+    container_name: onnxruntime-android-asr
+    working_dir: /work
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/onnxruntime/models:/models:ro
+      - ./inference/onnxruntime/models:/work/inference/onnxruntime/models:ro
+  multimodal-asr:
+    <<: *egra_base
+    container_name: multimodal-asr
+    gpus: all
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/multimodal/models:/models:ro
+      - ./inference/multimodal/models:/work/inference/multimodal/models:ro
+
+  phi4-multimodal-asr:
+    <<: *egra_base
+    image: voice-ai-evaluation-framework-phi4:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.multimodal-phi4
+    container_name: phi4-multimodal-asr
+    gpus: all
+    shm_size: "8gb"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+      ASR_OFFLOAD_ROOT: /offload
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/multimodal/models:/models:ro
+      - ./inference/multimodal/models:/work/inference/multimodal/models:ro
+      - ./inference/multimodal/tmp/phi4:/offload:rw
+
+  qwen-omni-asr:
+    <<: *egra_base
+    image: voice-ai-evaluation-framework-qwen-omni:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.multimodal-qwen
+    container_name: qwen-omni-asr
+    profiles: ["large-gpu"]
+    gpus: all
+    shm_size: "8gb"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/multimodal/models:/models:ro
+      - ./inference/multimodal/models:/work/inference/multimodal/models:ro
+
+  omnilingual-prepare:
+    image: voice-ai-evaluation-framework-omnilingual:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.omnilingual
+    container_name: omnilingual-prepare
+    working_dir: /work
+    gpus: all
+    shm_size: "8gb"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:ro
+      - ./inference/omnilingual/models:/models:rw
+
+  omnilingual-asr:
+    image: voice-ai-evaluation-framework-omnilingual:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.omnilingual
+    container_name: omnilingual-asr
+    working_dir: /work
+    network_mode: none
+    gpus: all
+    shm_size: "8gb"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ASR_MODEL_ROOT: /models
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
+      - ./inference/omnilingual/models:/models:ro
+
+  openrouter-asr:
+    image: voice-ai-evaluation-framework-openrouter:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.openrouter
+    container_name: openrouter-asr
+    working_dir: /work
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
 
   egra-eval:
     <<: *egra_base
     container_name: egra-eval
-    gpus: "all"   # not needed for CPU-only eval
+    volumes:
+      - ./:/work:rw
+      - ./input_output_data:/io:rw
 
+  leaderboard:
+    image: voice-ai-evaluation-framework-leaderboard:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: egra-leaderboard
+    profiles: ["dashboard"]
+    working_dir: /work
+    environment:
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+    ports:
+      - "${LEADERBOARD_PORT:-8501}:8501"
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./input_output_data/output:/work/input_output_data/output:ro

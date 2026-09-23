@@ -1,16 +1,27 @@
 # Ignore large model files and common large artifacts
-# Model artifacts produced by NeMo or checkpoints
-nemo_inference/models/**/*.nemo
-nemo_inference/models/**/*.md
-nemo_inference/models/**/.gitattributes
-nemo_inference/models/**/*.ckpt
-nemo_inference/models/*.nemo
-nemo_inference/models/*.ckpt
+# Framework-local model stores. Profiles live beside these directories and are tracked.
+inference/nemo/models/**
+!inference/nemo/models/.gitkeep
+inference/transformers/models/**
+!inference/transformers/models/.gitkeep
+inference/sherpa_onnx/models/**
+!inference/sherpa_onnx/models/.gitkeep
+inference/torch/models/**
+!inference/torch/models/.gitkeep
+inference/onnxruntime/models/**
+!inference/onnxruntime/models/.gitkeep
+inference/multimodal/models/**
+!inference/multimodal/models/.gitkeep
+inference/omnilingual/models/**
+!inference/omnilingual/models/.gitkeep
+inference/multimodal/tmp/**
+!inference/multimodal/tmp/phi4/.gitkeep
+inference/tmp_other/models/**
 
-# ignore heldout data - STRICTLY CONFIDENTIAL
-input_output_data/input/heldout_combined_fixed_20260525/
-input_output_data/input/oral_passages.csv
-input_output_data/output/
+# Never commit audio recordings or confidential evaluation data
+*.[Ww][Aa][Vv]
+input_output_data/output/**
+input_output_data/input/**
 
 
 # Generic binary model files
@@ -18,18 +29,22 @@ input_output_data/output/
 *.ckpt
 
 # Temporary / generated files
-nemo_inference/tmp/
-transformers_inference/models/**
-!transformers_inference/models/.gitkeep
-transformers_inference/tmp/**
-!transformers_inference/tmp/.gitkeep
+/output/
+/outputs/
+inference/nemo/tmp/**
+!inference/nemo/tmp/.gitkeep
+inference/transformers/tmp/**
+!inference/transformers/tmp/.gitkeep
 docker-compose.override.yml
 *.egg-info/
 __pycache__/
+.ipynb_checkpoints/
 .venv*/
 .pytest_cache/
 venv/
 env/
+tmp/
+input_output_data/archive
 *.pyc
 *.pyo
 *.so
@@ -37,3 +52,8 @@ env/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local-development documentation stays in the workspace; only the shared
+# vocabulary contract is versioned.
+/docs/*
+!/docs/vocabulary.md

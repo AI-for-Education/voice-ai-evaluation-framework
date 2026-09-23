@@ -1,0 +1,45 @@
+# Source: https://huggingface.co/facebook/wav2vec2-xlsr-53-espeak-cv-ft/tree/2c733782da5604684829819a5eb744c193fe9398
+profile_schema_version: 2
+inference_setup_id: xls-r-53-espeak-phoneme-comparator
+inference_library: transformers
+adapter: ctc
+artifact: wav2vec2-xlsr-53-espeak-cv-ft
+language: sw
+task: transcribe
+output_units: phoneme
+output_notation: ipa
+output_inventory: facebook_espeak_cv_ft_vocab_v1
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: shared_soundfile_librosa_16khz
+  model_artifact: canonical_checkpoint
+  input_processing: canonical_transformers_auto_processor
+  execution_stack: shared_transformers_image
+  chunking: none
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: greedy
+  generation_kwargs: {}
+
+parameter_evidence:
+  - applies_to:
+      - artifact
+      - output_units
+      - output_notation
+      - output_inventory
+      - loader.processor_mode
+      - decoding.strategy
+    level: exact
+    source: https://huggingface.co/facebook/wav2vec2-xlsr-53-espeak-cv-ft/tree/2c733782da5604684829819a5eb744c193fe9398
+    rationale: The pinned checkpoint is a Wav2Vec2 CTC phoneme recognizer whose published Wav2Vec2PhonemeCTCTokenizer supplies the fixed IPA-like eSpeak vocabulary and preserves model-token boundaries; greedy CTC argmax is its documented baseline.
+  - applies_to:
+      - language
+    level: project
+    source: repo:inference/transformers/README.md
+    rationale: Swahili labels the evaluation target only; the comparator remains free of any external language-model decoder.

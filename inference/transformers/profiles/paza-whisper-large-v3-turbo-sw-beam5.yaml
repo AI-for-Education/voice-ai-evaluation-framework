@@ -1,0 +1,71 @@
+# Source and decoder basis:
+# https://huggingface.co/microsoft/paza-whisper-large-v3-turbo
+# The Microsoft model card publishes num_beams=5, early_stopping=true, and
+# length_penalty=0.8 for its beam-decoding example.
+# The owner requires segmentation above 448 input tokens but gives no duration;
+# this project uses deterministic 30-second, zero-overlap chunks in memory.
+profile_schema_version: 2
+inference_setup_id: paza-whisper-large-v3-turbo-sw-beam5
+inference_library: transformers
+adapter: speech_seq2seq
+artifact: paza-whisper-large-v3-turbo
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: shared_soundfile_librosa_16khz
+  model_artifact: canonical_checkpoint
+  input_processing: canonical_transformers_auto_processor
+  execution_stack: shared_transformers_image
+  chunking: profile_sequential_zero_overlap
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: generate
+  generation_kwargs:
+    do_sample: false
+    num_beams: 5
+    early_stopping: true
+    length_penalty: 0.8
+    return_timestamps: false
+    suppress_tokens: []
+  # pred_text is the direct model hypothesis; no text postprocessing is applied.
+audio:
+  maximum_seconds: 30
+  long_audio_strategy: sequential_chunks
+  chunk_seconds: 30
+  overlap_seconds: 0
+
+parameter_evidence:
+  - applies_to:
+      - decoding.generation_kwargs.num_beams
+      - decoding.generation_kwargs.early_stopping
+      - decoding.generation_kwargs.length_penalty
+      - decoding.generation_kwargs.do_sample
+      - decoding.strategy
+    level: supported
+    source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo
+    rationale: The model card publishes beam five, early stopping, and length penalty 0.8; this profile applies that stated decoder intent to generation.
+  - applies_to:
+      - decoding.generation_kwargs.suppress_tokens
+      - decoding.generation_kwargs.return_timestamps
+    level: exact
+    source: https://huggingface.co/microsoft/paza-whisper-large-v3-turbo/blob/main/generation_config.json
+    rationale: The packaged generation configuration sets an empty suppression list and disables timestamp output.
+  # The evaluation uses the direct model hypothesis without a post-decoding guard.
+  - applies_to:
+      - audio.maximum_seconds
+      - audio.long_audio_strategy
+      - audio.chunk_seconds
+      - audio.overlap_seconds
+    level: project
+    source: repo:inference/transformers/README.md
+    rationale: >-
+      The owner requires segmentation above 448 input tokens but publishes no
+      duration; 30-second zero-overlap chunks are the local reproducible policy.

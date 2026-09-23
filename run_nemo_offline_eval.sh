@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Prevent Git Bash/MSYS from rewriting Linux container paths such as /work.
+export MSYS_NO_PATHCONV="${MSYS_NO_PATHCONV:-1}"
+
 # ------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------
@@ -100,7 +103,7 @@ MANIFEST_PATH="${NEMO_MANIFEST:-$TARGET_DIR/transcriptions.jsonl}"
 # Step 1: Generate normalized manifests (REF and CAN)
 # ------------------------------------------------------------
 docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" nemo-asr \
-  python3 /work/tools/make_nemo_manifests.py \
+  python3 -m tools.make_nemo_manifests \
     --normalize_for_nemo \
     --out_ref "$REF_PATH" \
     --out_can "$CAN_PATH" \
@@ -108,21 +111,7 @@ docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" nemo-
     "$@"
 
 # ------------------------------------------------------------
-# Step 2: Download evaluation scripts if necessary
-# ------------------------------------------------------------
-docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" nemo-asr bash -lc '
-  set -e
-  mkdir -p /work/tools/nemo_examples/asr
-  echo "Downloading NeMo ASR evaluation scripts..."
-  wget -q https://raw.githubusercontent.com/NVIDIA-NeMo/NeMo/refs/tags/v2.4.1/examples/asr/speech_to_text_eval.py \
-      -O /work/tools/nemo_examples/asr/speech_to_text_eval.py
-  wget -q https://raw.githubusercontent.com/NVIDIA-NeMo/NeMo/refs/tags/v2.4.1/examples/asr/transcribe_speech.py \
-      -O /work/tools/nemo_examples/asr/transcribe_speech.py
-  echo "NeMo scripts are ready in /work/tools/nemo_examples/asr/"
-'
-
-# ------------------------------------------------------------
-# Step 3: Score REF vs HYP
+# Step 2: Score REF vs HYP with the tracked NeMo reference script
 # ------------------------------------------------------------
 docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" nemo-asr \
   python3 /work/tools/nemo_examples/asr/speech_to_text_eval.py \
@@ -132,7 +121,7 @@ docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" nemo-
     use_cer=false
 
 # ------------------------------------------------------------
-# Step 4: Score CAN vs HYP
+# Step 3: Score CAN vs HYP with the tracked NeMo reference script
 # ------------------------------------------------------------
 docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" nemo-asr \
   python3 /work/tools/nemo_examples/asr/speech_to_text_eval.py \

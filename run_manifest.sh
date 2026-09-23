@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Prevent Git Bash/MSYS from rewriting Linux container paths such as /work.
+export MSYS_NO_PATHCONV="${MSYS_NO_PATHCONV:-1}"
+
 usage() {
   cat <<'EOF' >&2
 Usage:
-  ./run_manifest.sh --dataset_root PATH --manifest_base_in PATH [extra options]
+  ./run_manifest.sh --dataset_root PATH --audio_manifest PATH [extra options]
 
 Example:
   ./run_manifest.sh \
     --dataset_root input_output_data/input/1_Batch2_Data_16spk_subset \
-    --output_root input_output_data/output/experiments/1_Batch2_Data_16spk_subset \
-    --manifest_base_in input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.raw_segments.jsonl \
-    --asr_manifest input_output_data/output/1_Batch2_Data_16spk_subset/nemo_asr_output_segments/transcriptions.jsonl
+    --audio_manifest input_output_data/output/experiments/1_Batch2_Data_16spk_subset/manifests/ref_manifest.raw_segments.jsonl \
+    --prediction_manifest input_output_data/output/transcripts/<model>_<timestamp>/transcriptions.jsonl \
+    [--g2p-tool {africa_g2p|babygruut}]
+
+With the standard transcript path, output is inferred as:
+  input_output_data/output/evaluations/<model>_<timestamp>/manifests/
+
+Supplying --g2p-tool generates or reuses that exact system's dataset IPA
+reference view. Omit it when only orthographic scoring is needed.
 EOF
   exit 1
 }
 
 DATASET_ROOT=""
 OUTPUT_ROOT=""
-MANIFEST_BASE_IN=""
+AUDIO_MANIFEST=""
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -31,9 +40,9 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_ROOT="$2"
       shift 2
       ;;
-    --manifest_base_in)
-      MANIFEST_BASE_IN="$2"
-      EXTRA_ARGS+=("$1" "$2")
+    --audio_manifest)
+      AUDIO_MANIFEST="$2"
+      EXTRA_ARGS+=(--audio_manifest "$2")
       shift 2
       ;;
     --help|-h)
@@ -46,17 +55,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$OUTPUT_ROOT" ]]; then
-  DEFAULT_DIR="input_output_data/output/experiments/exp_$(date '+%Y_%m_%d_%H_%M_%S')"
-  echo "No --output_root supplied. Using default: $DEFAULT_DIR"
-  OUTPUT_ROOT="$DEFAULT_DIR"
-fi
-
-if [[ -z "$DATASET_ROOT" || -z "$MANIFEST_BASE_IN" ]]; then
+if [[ -z "$DATASET_ROOT" || -z "$AUDIO_MANIFEST" ]]; then
   usage
 fi
 
-USER_FLAG=(--user "$(id -u):$(id -g)")
+USER_FLAG=()
+# Git Bash reports a Windows SID-derived UID that Docker Desktop cannot use to
+# write bind-mounted files. Docker Desktop already maps those writes safely.
+if [[ "${OS:-}" != "Windows_NT" ]]; then
+  USER_FLAG=(--user "$(id -u):$(id -g)")
+fi
+OUTPUT_ARGS=()
+if [[ -n "$OUTPUT_ROOT" ]]; then
+  OUTPUT_ARGS=(--output_root "$OUTPUT_ROOT")
+fi
 ENV_VARS=(
   --env HOME=/tmp
   --env MPLCONFIGDIR=/tmp/matplotlib
@@ -70,5 +82,5 @@ docker compose run --rm "${USER_FLAG[@]}" "${ENV_VARS[@]}" --entrypoint "" \
   egra-eval \
   python3 /work/manifest_pipeline.py \
     --dataset_root "$DATASET_ROOT" \
-    --output_root "$OUTPUT_ROOT" \
+    "${OUTPUT_ARGS[@]}" \
     "${EXTRA_ARGS[@]}"

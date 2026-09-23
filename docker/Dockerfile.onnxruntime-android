@@ -1,0 +1,29 @@
+FROM python:3.11-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Isolated from the shared ASR image so matching Android's ORT version cannot
+# change any existing model backend.
+RUN python3 -m pip install --upgrade \
+      pip==25.1.1 \
+      setuptools==80.9.0 \
+      wheel==0.45.1 \
+ && python3 -m pip install \
+      numpy==1.26.2 \
+      scipy==1.14.1 \
+      soundfile==0.13.1 \
+      tqdm==4.67.1 \
+      PyYAML==6.0.2 \
+      pytest==8.3.5 \
+      onnx==1.17.0 \
+      onnxruntime==1.22.0 \
+ && python3 -m pip check
+
+WORKDIR /work
+ENTRYPOINT ["python3"]

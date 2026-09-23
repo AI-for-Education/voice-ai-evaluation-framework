@@ -1,0 +1,34 @@
+# Source: https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm
+profile_schema_version: 2
+inference_setup_id: bookbot-orthographic-ctc
+inference_library: transformers
+adapter: ctc
+artifact: wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: shared_soundfile_librosa_16khz
+  model_artifact: canonical_checkpoint
+  input_processing: canonical_transformers_auto_processor
+  execution_stack: shared_transformers_image
+  chunking: none
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+loader:
+  processor_mode: wav2vec2_plain
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: greedy
+  generation_kwargs: {}
+
+parameter_evidence:
+  - applies_to:
+      - loader.processor_mode
+      - decoding.strategy
+    level: project
+    source: https://huggingface.co/bookbot/wav2vec2-xls-r-300m-swahili-cv-fleurs-alffa-word-lm
+    rationale: Plain-processor greedy CTC intentionally bypasses the packaged KenLM to provide a separately named acoustic-model baseline.

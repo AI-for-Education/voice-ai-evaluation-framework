@@ -14,7 +14,7 @@ import soundfile as sf
 
 from egra_eval2.dataset_layout import DatasetLayoutError, resolve_dataset_paths
 from egra_eval2.linking import add_audio_keys, attach_hypotheses
-from egra_eval2.nemo_manifest import load_many_manifests
+from egra_eval2.prediction_manifest import load_prediction_manifests
 from egra_eval2.passage_merge import attach_passage_texts
 from egra_eval2.textgrid_io import add_refs_from_textgrid
 from egra_eval2.manifest_builder import (
@@ -23,6 +23,9 @@ from egra_eval2.manifest_builder import (
 )
 from egra_eval2.manifest_cleaner import clean_manifest_jsonl
 from egra_eval2.eval_utils import adjust_letter_canonical_text
+from egra_eval2.manifest_integrity import ReferenceIntegrityError, validate_reference_rows
+from egra_eval2.reference.g2p import SUPPORTED_G2P_TOOLS
+from egra_eval2.reference.views import ReferenceViewError, prepare_ipa_reference_view
 
 
 def setup_logger() -> logging.Logger:
@@ -40,6 +43,23 @@ def setup_logger() -> logging.Logger:
     return logger
 
 
+def _default_evaluation_root(prediction_manifests: list[str] | None) -> Path:
+    """Reuse the model/timestamp directory created by standard inference output."""
+    for manifest in prediction_manifests or []:
+        path = Path(manifest)
+        run_dir = path.parent
+        if path.name == "transcriptions.jsonl" and run_dir.parent.name == "transcripts":
+            return run_dir.parent.parent / "evaluations" / run_dir.name
+
+    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    return (
+        Path("input_output_data")
+        / "output"
+        / "evaluations"
+        / f"evaluation_{timestamp}"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Build and clean EGRA manifest.")
     p.add_argument("--dataset_root", required=True)
@@ -47,19 +67,29 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--egra_csv", default=None)
     p.add_argument("--passages_csv", default=None)
     p.add_argument(
-        "--manifest_base_in",
-        default=None,
-        help="Optional existing base manifest (JSONL/concatenated JSON) to preserve row granularity (e.g., segment-level).",
-    )
-    p.add_argument(
-        "--asr_manifest",
-        "--nemo_manifest",
-        dest="asr_manifest",
-        action="append",
+        "--audio_manifest",
+        dest="audio_manifest",
         default=None,
         help=(
-            "ASR transcriptions.jsonl to attach; repeat for multiple manifests. "
-            "--nemo_manifest remains a backward-compatible alias."
+            "Audio manifest whose rows define the evaluation inputs; normally the "
+            "same segmented manifest supplied to inference."
+        ),
+    )
+    p.add_argument(
+        "--prediction_manifest",
+        dest="prediction_manifests",
+        action="append",
+        default=None,
+        help="Prediction transcriptions.jsonl to attach; repeat for multiple manifests.",
+    )
+    p.add_argument(
+        "--g2p_tool",
+        "--g2p-tool",
+        choices=SUPPORTED_G2P_TOOLS,
+        default=None,
+        help=(
+            "Build this exact G2P tool's IPA reference view. Any later IPA "
+            "evaluation must name the same tool explicitly."
         ),
     )
     p.add_argument("--manifest_audio_key", default="audio_filepath")
@@ -122,6 +152,46 @@ def _safe_text(value: object) -> str:
     return "" if s.lower() == "nan" else s
 
 
+def _safe_hyp_text(value: object) -> str:
+    """Normalize missing values without rewriting literal model output such as 'nan'."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return str(value)
+
+
+def _attach_authoritative_hypotheses(
+    raw_df: pd.DataFrame,
+    asr_df: pd.DataFrame,
+    *,
+    match_on: str,
+    logger: logging.Logger,
+) -> pd.DataFrame:
+    """Attach a supplied ASR run without retaining hypotheses from the base."""
+    base_df = raw_df.rename(columns={"audio_filepath": "audio_file"}).copy()
+    base_df = add_audio_keys(base_df, audio_col="audio_file")
+    # attach_hypotheses fills blank values by design. Blank the base explicitly so
+    # the newly supplied ASR manifest is authoritative, including missing rows.
+    base_df["hyp_text"] = ""
+    merged = attach_hypotheses(base_df, asr_df, match_on=match_on, logger=logger)
+    updated = raw_df.copy()
+    updated["pred_text"] = merged.get("hyp_text", "").apply(_safe_hyp_text)
+    return updated
+
+
+def _validate_reference_dataframe(df: pd.DataFrame, *, source: str) -> None:
+    validate_reference_rows(
+        df.to_dict(orient="records"),
+        text_fields=("ref_text", "can_text"),
+        audio_field="audio_filepath",
+        source=source,
+    )
+
+
 def _compute_duration_if_missing(audio_path: str, duration_value: object) -> float:
     try:
         if duration_value is not None and not pd.isna(duration_value):
@@ -138,7 +208,7 @@ def _compute_duration_if_missing(audio_path: str, duration_value: object) -> flo
 def load_base_manifest_dataframe(path: str, logger: logging.Logger) -> pd.DataFrame:
     in_path = Path(path)
     if not in_path.exists():
-        raise SystemExit(f"--manifest_base_in file not found: {in_path}")
+        raise SystemExit(f"--audio_manifest file not found: {in_path}")
     objs = _load_json_objects(in_path)
     rows = []
     for obj in objs:
@@ -181,13 +251,19 @@ def main() -> None:
     except DatasetLayoutError as exc:
         raise SystemExit(str(exc)) from exc
 
-    if not args.output_root:
-        args.output_root = str(
-            Path("input_output_data")
-            / "output"
-            / "experiments"
-            / f"exp_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}"
+    try:
+        prepare_ipa_reference_view(
+            dataset_root=layout.root,
+            audio_manifest=args.audio_manifest,
+            prediction_manifests=args.prediction_manifests,
+            logger=logger,
+            g2p_tool=args.g2p_tool,
         )
+    except ReferenceViewError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if not args.output_root:
+        args.output_root = str(_default_evaluation_root(args.prediction_manifests))
         logger.info("No --output_root supplied; using default: %s", args.output_root)
 
     args.egra_csv = args.egra_csv or str(layout.canonical_csv)
@@ -204,29 +280,30 @@ def main() -> None:
         else manifests_dir / "ref_manifest.clean.jsonl"
     )
 
-    if args.manifest_base_in:
-        logger.info("Stage A: loading base manifest (preserve granularity) -> %s", args.manifest_base_in)
-        raw_df = load_base_manifest_dataframe(args.manifest_base_in, logger)
+    if args.audio_manifest:
+        logger.info("Stage A: loading audio manifest (preserve granularity) -> %s", args.audio_manifest)
+        raw_df = load_base_manifest_dataframe(args.audio_manifest, logger)
 
-        if args.asr_manifest:
-            logger.info("Loading %d ASR manifest(s) to attach pred_text...", len(args.asr_manifest))
-            asr_df = load_many_manifests(
-                args.asr_manifest,
+        if args.prediction_manifests:
+            logger.info("Loading %d prediction manifest(s) to attach pred_text...", len(args.prediction_manifests))
+            asr_df = load_prediction_manifests(
+                args.prediction_manifests,
                 audio_key=args.manifest_audio_key,
                 hyp_key=args.manifest_hyp_key,
                 can_key=args.manifest_can_key,
                 logger=logger,
             )
-            base_df = raw_df.rename(columns={"audio_filepath": "audio_file"}).copy()
-            base_df = add_audio_keys(base_df, audio_col="audio_file")
-            base_df["hyp_text"] = base_df.get("pred_text", "")
-            merged = attach_hypotheses(base_df, asr_df, match_on=args.match_on, logger=logger)
-            raw_df["pred_text"] = merged.get("hyp_text", "").apply(_safe_text)
+            raw_df = _attach_authoritative_hypotheses(
+                raw_df,
+                asr_df,
+                match_on=args.match_on,
+                logger=logger,
+            )
         else:
-            logger.info("No --asr_manifest supplied; keeping pred_text from base manifest.")
+            logger.info("No --prediction_manifest supplied; keeping pred_text from audio manifest.")
     else:
         if not args.passages_csv:
-            raise SystemExit("--passages_csv is required when --manifest_base_in is not provided.")
+            raise SystemExit("--passages_csv is required when --audio_manifest is not provided.")
         passages_path = Path(args.passages_csv)
         if not passages_path.exists():
             raise SystemExit(f"--passages_csv file not found: {passages_path}")
@@ -236,10 +313,10 @@ def main() -> None:
         df_egra = adjust_letter_canonical_text(df_egra, logger)
         df_egra = add_audio_keys(df_egra, audio_col="audio_file")
 
-        if args.asr_manifest:
-            logger.info("Loading %d ASR manifest(s)...", len(args.asr_manifest))
-            asr_df = load_many_manifests(
-                args.asr_manifest,
+        if args.prediction_manifests:
+            logger.info("Loading %d prediction manifest(s)...", len(args.prediction_manifests))
+            asr_df = load_prediction_manifests(
+                args.prediction_manifests,
                 audio_key=args.manifest_audio_key,
                 hyp_key=args.manifest_hyp_key,
                 can_key=args.manifest_can_key,
@@ -247,7 +324,7 @@ def main() -> None:
             )
             df_egra = attach_hypotheses(df_egra, asr_df, match_on=args.match_on, logger=logger)
         else:
-            logger.info("No --asr_manifest supplied; pred_text will be empty in output manifest.")
+            logger.info("No --prediction_manifest supplied; pred_text will be empty in output manifest.")
             df_egra["hyp_text"] = ""
 
         df_egra = add_refs_from_textgrid(
@@ -267,6 +344,10 @@ def main() -> None:
             path_prefix=args.manifest_path_prefix,
             logger=logger,
         )
+    try:
+        _validate_reference_dataframe(raw_df, source=str(raw_manifest_path))
+    except ReferenceIntegrityError as exc:
+        raise SystemExit(str(exc)) from exc
     write_manifest_jsonl(raw_df, raw_manifest_path)
 
     logger.info(

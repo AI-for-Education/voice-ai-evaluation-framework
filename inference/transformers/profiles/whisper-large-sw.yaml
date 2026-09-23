@@ -1,0 +1,50 @@
+# Source: https://huggingface.co/openai/whisper-large
+profile_schema_version: 2
+inference_setup_id: whisper-large-sw
+inference_library: transformers
+adapter: speech_seq2seq
+artifact: whisper-large
+language: sw
+task: transcribe
+output_units: orthographic
+pipeline_contract:
+  schema_version: 2
+  audio_preparation: shared_soundfile_librosa_16khz
+  model_artifact: canonical_checkpoint
+  input_processing: canonical_transformers_auto_processor
+  execution_stack: shared_transformers_image
+  chunking: whisper_timestamp_long_form
+  evaluation: direct_pred_text_by_output_units
+  observation_policy: observed_effective_values_v2
+loader:
+  processor_mode: auto
+  local_files_only: true
+  trust_remote_code: false
+  torch_dtype: auto
+decoding:
+  strategy: generate
+  generation_kwargs:
+    do_sample: false
+    num_beams: 1
+    return_timestamps: false
+  long_form:
+    strategy: timestamp
+    threshold_seconds: 30.0
+  # pred_text is the direct model hypothesis; no text postprocessing is applied.
+
+parameter_evidence:
+  - applies_to:
+      - decoding.generation_kwargs.do_sample
+      - decoding.strategy
+      - decoding.generation_kwargs.num_beams
+    level: supported
+    source: https://huggingface.co/docs/transformers/main/generation_strategies
+    rationale: Deterministic greedy generation is the Transformers baseline and remains separate from the beam-five profile.
+  - applies_to:
+      - decoding.generation_kwargs.return_timestamps
+      - decoding.long_form.strategy
+      - decoding.long_form.threshold_seconds
+    level: exact
+    source: https://huggingface.co/docs/transformers/model_doc/whisper
+    rationale: Transformers requires timestamp-based long-form generation for audio longer than 30 seconds; the adapter enables it only above this threshold.
+  # The evaluation uses the direct model hypothesis without a post-decoding guard.
